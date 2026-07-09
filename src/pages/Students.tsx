@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { studentService } from "../services/studentService";
 import { classService } from "../services/classService";
@@ -80,6 +80,51 @@ export const Students: React.FC = () => {
   const isLoading = isLoadingStudents || isLoadingClasses || isLoadingYears;
 
   const activeYear = academicYears.find((y) => y.isActive);
+
+  // Sorting students: 1. By Class Name, 2. Alphabetical (Name), 3. NISN/NIS
+  const sortedStudents = useMemo(() => {
+    return [...students].sort((a, b) => {
+      // 1. Class sorting
+      const classA = classes.find((c) => c.id === a.classId);
+      const classB = classes.find((c) => c.id === b.classId);
+
+      // Handle "Tanpa Kelas" (empty classId or class not found)
+      // We sort students with classes first, then without classes at the bottom
+      if (classA && !classB) return -1;
+      if (!classA && classB) return 1;
+      if (!classA && !classB) {
+        // Both are "Tanpa Kelas", sort by name then NISN/NIS
+        const stdNameA = a.name || "";
+        const stdNameB = b.name || "";
+        if (stdNameA.localeCompare(stdNameB, "id", { sensitivity: "base" }) !== 0) {
+          return stdNameA.localeCompare(stdNameB, "id", { sensitivity: "base" });
+        }
+        const nisnA = a.nisn || a.nis || "";
+        const nisnB = b.nisn || b.nis || "";
+        return nisnA.localeCompare(nisnB, "id", { numeric: true });
+      }
+
+      // Both have classes, compare by class name (e.g. "Kelas 7A", "Kelas 8B")
+      const nameA = classA?.name || "";
+      const nameB = classB?.name || "";
+      
+      if (nameA !== nameB) {
+        return nameA.localeCompare(nameB, "id", { numeric: true, sensitivity: "base" });
+      }
+
+      // 2. Alphabetical (Name) sorting within the same class
+      const stdNameA = a.name || "";
+      const stdNameB = b.name || "";
+      if (stdNameA.localeCompare(stdNameB, "id", { sensitivity: "base" }) !== 0) {
+        return stdNameA.localeCompare(stdNameB, "id", { sensitivity: "base" });
+      }
+
+      // 3. NISN/NIS sorting as fallback
+      const idA = a.nisn || a.nis || "";
+      const idB = b.nisn || b.nis || "";
+      return idA.localeCompare(idB, "id", { numeric: true });
+    });
+  }, [students, classes]);
 
   // Forms
   const createForm = useForm<StudentFormValues>({
@@ -295,7 +340,7 @@ export const Students: React.FC = () => {
 
   // Downloads / Exports
   const handleExportExcel = () => {
-    const formatted = students.map((s) => {
+    const formatted = sortedStudents.map((s) => {
       const cls = classes.find((c) => c.id === s.classId);
       const tp = academicYears.find((y) => y.id === s.academicYearId);
       return {
@@ -317,7 +362,7 @@ export const Students: React.FC = () => {
 
   const handleExportPDF = () => {
     const headers = ["NIS", "Nama Lengkap", "Gender", "Kelas", "Status", "Alamat"];
-    const rows = students.map((s) => {
+    const rows = sortedStudents.map((s) => {
       const cls = classes.find((c) => c.id === s.classId);
       return [
         s.nis,
@@ -468,7 +513,7 @@ export const Students: React.FC = () => {
       {/* Main Table Card */}
       <div className="bg-white dark:bg-zinc-900 p-6 rounded-3xl border border-gray-100 dark:border-zinc-800 shadow-xs">
         <DataTable
-          data={students}
+          data={sortedStudents}
           columns={columns}
           rowKey={(s) => s.id}
           searchKeys={["name", "nis", "nisn"]}
