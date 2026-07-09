@@ -18,3 +18,4 @@ View your app in AI Studio: https://ai.studio/apps/a3662cb3-b90c-440a-a3ca-62410
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+# sim-alkarim-rasyid
