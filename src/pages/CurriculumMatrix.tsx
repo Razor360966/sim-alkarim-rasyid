@@ -489,6 +489,26 @@ export const CurriculumMatrixPage: React.FC = () => {
     }
   });
 
+  const updateTeacherJPOverrideMutation = useMutation({
+    mutationFn: ({ teacherId, customJpOverride }: { teacherId: string; customJpOverride: number | null }) => {
+      if (!user) throw new Error("Pengguna tidak terautentikasi!");
+      return teacherService.updateTeacher(
+        teacherId,
+        { customJpOverride: customJpOverride === null ? "" as any : customJpOverride },
+        user.uid,
+        user.displayName || user.email || "Admin"
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["teachers"] });
+      toast("Beban JP Guru berhasil diperbarui!", "success");
+    },
+    onError: (err: any) => {
+      console.error(err);
+      toast(err.message || "Gagal memperbarui JP Guru", "error");
+    }
+  });
+
   // Calculate remaining subjects that haven't been added to curriculum_matrix
   const availableSubjects = useMemo(() => {
     const addedSubjectIds = new Set(matrixItems.map(m => m.subjectId));
@@ -662,6 +682,59 @@ export const CurriculumMatrixPage: React.FC = () => {
       removeSubjectMutation.mutate({ id: selectedItem.id, subjectName: selectedItem.subjectName });
     }
   };
+
+  const teachersLoadData = useMemo(() => {
+    return teachers
+      .filter((t) => t.status && !t.isDeleted)
+      .map((t) => {
+        // Calculate JP from curriculum matrix
+        let calculatedJp = 0;
+        const details: string[] = [];
+        localMatrix.forEach((m) => {
+          if (m.useDifferentTeachers) {
+            if (m.teacherId_vii === t.id && m.jp_vii > 0) {
+              calculatedJp += m.jp_vii;
+              details.push(`${m.subjectName} (VII: ${m.jp_vii} JP)`);
+            }
+            if (m.teacherId_viii === t.id && m.jp_viii > 0) {
+              calculatedJp += m.jp_viii;
+              details.push(`${m.subjectName} (VIII: ${m.jp_viii} JP)`);
+            }
+            if (m.teacherId_ix === t.id && m.jp_ix > 0) {
+              calculatedJp += m.jp_ix;
+              details.push(`${m.subjectName} (IX: ${m.jp_ix} JP)`);
+            }
+          } else {
+            if (m.teacherId === t.id) {
+              const sum = (m.jp_vii || 0) + (m.jp_viii || 0) + (m.jp_ix || 0);
+              if (sum > 0) {
+                calculatedJp += sum;
+                const gradesText = [
+                  m.jp_vii > 0 ? "VII" : "",
+                  m.jp_viii > 0 ? "VIII" : "",
+                  m.jp_ix > 0 ? "IX" : ""
+                ].filter(Boolean).join("/");
+                details.push(`${m.subjectName} (${gradesText}: ${sum} JP)`);
+              }
+            }
+          }
+        });
+
+        const displayJp = t.customJpOverride !== undefined && t.customJpOverride !== null && (t.customJpOverride as any) !== ""
+          ? parseInt(t.customJpOverride as any, 10)
+          : calculatedJp;
+
+        const isOverridden = t.customJpOverride !== undefined && t.customJpOverride !== null && (t.customJpOverride as any) !== "";
+
+        return {
+          teacher: t,
+          calculatedJp,
+          displayJp,
+          isOverridden,
+          details: details.join(", ") || "Tidak ada jam mengajar di matriks"
+        };
+      });
+  }, [teachers, localMatrix]);
 
   // Helper to determine the category of a matrix item
   const getCategory = (item: CurriculumMatrix, subjectsList: Subject[]) => {
@@ -1477,6 +1550,104 @@ export const CurriculumMatrixPage: React.FC = () => {
               </button>
             )}
           </div>
+        </div>
+      </div>
+
+      {/* SECTION: TEACHERS JP MONITORING & OVERRIDES */}
+      <div className="bg-white dark:bg-zinc-900 rounded-3xl border border-gray-100 dark:border-zinc-800 shadow-xs p-6 space-y-4">
+        <div>
+          <h2 className="text-sm font-black text-gray-900 dark:text-white flex items-center gap-2 uppercase tracking-wider">
+            <TableProperties className="h-4.5 w-4.5 text-blue-600 dark:text-blue-500" />
+            Monitoring & Pengaturan Beban Mengajar Guru (Master JP)
+          </h2>
+          <p className="text-xs text-gray-400 dark:text-zinc-500 mt-1 font-medium">
+            Berikut ringkasan akumulasi beban mengajar asatidzah yang dihitung secara otomatis dari penugasan di matriks kurikulum di atas. Anda dapat memasukkan <strong>Override JP (Beban Kustom)</strong> jika jam aktif asatidzah tidak sesuai atau membutuhkan penyesuaian khusus. Nilai ini menjadi master data untuk dashboard Wakakurikulum dan Kepala Sekolah.
+          </p>
+        </div>
+
+        <div className="overflow-x-auto w-full border border-gray-100 dark:border-zinc-850 rounded-2xl">
+          <table className="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr className="bg-slate-50 dark:bg-zinc-950/20 text-gray-500 dark:text-zinc-400 font-bold border-b border-gray-150 dark:border-zinc-850">
+                <th className="p-3 w-[25%]">Nama Guru</th>
+                <th className="p-3 w-[45%]">Rincian Mengajar (Matriks)</th>
+                <th className="p-3 w-[12%] text-center">Hitung Otomatis</th>
+                <th className="p-3 w-[18%] text-center">Beban Master Aktif</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-zinc-850/60 font-semibold text-gray-700 dark:text-zinc-300">
+              {teachersLoadData.map(({ teacher, calculatedJp, displayJp, isOverridden, details }) => {
+                return (
+                  <tr key={teacher.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-850/10 transition-colors">
+                    <td className="p-3">
+                      <div className="font-bold text-gray-950 dark:text-white">
+                        {teacher.frontTitle ? `${teacher.frontTitle} ` : ""}{teacher.name}{teacher.backTitle ? `, ${teacher.backTitle}` : ""}
+                      </div>
+                      <div className="text-[10px] text-gray-400 dark:text-zinc-500 mt-0.5">NIY: {teacher.niy || "-"}</div>
+                    </td>
+                    <td className="p-3 text-gray-500 dark:text-zinc-400 text-[11px] leading-relaxed break-words font-medium">
+                      {details}
+                    </td>
+                    <td className="p-3 text-center font-bold text-slate-500 dark:text-zinc-400">
+                      {calculatedJp} JP
+                    </td>
+                    <td className="p-3">
+                      <div className="flex items-center justify-center gap-2">
+                        <input
+                          type="number"
+                          placeholder={String(calculatedJp)}
+                          value={teacher.customJpOverride !== undefined && teacher.customJpOverride !== null ? teacher.customJpOverride : ""}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            queryClient.setQueryData<Teacher[]>(["teachers"], (old) => {
+                              if (!old) return old;
+                              return old.map((t) =>
+                                t.id === teacher.id
+                                  ? { ...t, customJpOverride: val === "" ? undefined : parseInt(val, 10) }
+                                  : t
+                              );
+                            });
+                          }}
+                          onBlur={(e) => {
+                            const val = e.target.value;
+                            if (val === "") {
+                              updateTeacherJPOverrideMutation.mutate({ teacherId: teacher.id, customJpOverride: null });
+                            } else {
+                              updateTeacherJPOverrideMutation.mutate({ teacherId: teacher.id, customJpOverride: parseInt(val, 10) });
+                            }
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.currentTarget.blur();
+                            }
+                          }}
+                          className="w-16 bg-slate-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-850 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-lg text-center px-2 py-1.5 text-xs font-bold text-gray-800 dark:text-zinc-100 focus:outline-none"
+                        />
+                        <span className={`px-2 py-1 rounded-md font-bold text-[10px] shrink-0 ${
+                          isOverridden
+                            ? "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400 border border-amber-200 dark:border-amber-900/30"
+                            : "bg-blue-50 text-blue-800 dark:bg-blue-950/40 dark:text-blue-400 border border-blue-100 dark:border-blue-900/20"
+                        }`}>
+                          {displayJp} JP {isOverridden ? "(Kustom)" : "(Matriks)"}
+                        </span>
+                        {isOverridden && (
+                          <button
+                            onClick={() => {
+                              updateTeacherJPOverrideMutation.mutate({ teacherId: teacher.id, customJpOverride: null });
+                            }}
+                            className="p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-zinc-800 rounded-md transition-colors cursor-pointer shrink-0"
+                            title="Hapus Override & Kembali ke Hitung Otomatis"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       </div>
 

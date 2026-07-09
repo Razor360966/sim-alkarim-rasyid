@@ -36,6 +36,7 @@ export interface Teacher {
   employmentStatus?: string;
   joinDate?: Timestamp | string | any;
   photoUrl?: string;
+  customJpOverride?: number;
 }
 
 export interface ActivityLog {

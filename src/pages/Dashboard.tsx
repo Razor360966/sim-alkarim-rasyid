@@ -182,7 +182,6 @@ export const Dashboard: React.FC = () => {
   // Leadership / Admin Tab and Filter States
   const [activeTab, setActiveTab] = React.useState("summary");
   const [selectedSupTeacherId, setSelectedSupTeacherId] = React.useState("");
-  const [expandedJPTeacherId, setExpandedJPTeacherId] = React.useState<string>("");
 
   // Queries
   const { data: students = [], isLoading: isLoadingStudents } = useQuery({
@@ -366,9 +365,9 @@ export const Dashboard: React.FC = () => {
     const list: { subjectId: string; subjectName: string; classId: string; className: string }[] = [];
     
     curriculumMatrix.forEach((m: any) => {
-      const isTeacherVii = (m.teacherId === teacherId || m.teacherId_vii === teacherId) && m.jp_vii > 0;
-      const isTeacherViii = (m.teacherId_viii === teacherId) && m.jp_viii > 0;
-      const isTeacherIx = (m.teacherId_ix === teacherId) && m.jp_ix > 0;
+      const isTeacherVii = (m.useDifferentTeachers ? m.teacherId_vii === teacherId : m.teacherId === teacherId) && m.jp_vii > 0;
+      const isTeacherViii = (m.useDifferentTeachers ? m.teacherId_viii === teacherId : m.teacherId === teacherId) && m.jp_viii > 0;
+      const isTeacherIx = (m.useDifferentTeachers ? m.teacherId_ix === teacherId : m.teacherId === teacherId) && m.jp_ix > 0;
 
       classes.forEach((c) => {
         if (c.status === "Aktif" && !c.isDeleted) {
@@ -423,64 +422,6 @@ export const Dashboard: React.FC = () => {
     };
   }, [teacherAssignments, allAnnualPrograms, allSemesterPrograms, allLessonPlans]);
 
-  // ==========================================
-  // Total JP Mengajar (Beban Mengajar) — computed ONLY from the final PUBLISHED schedule
-  // (the "schedules" collection, same data used by Admin's Publish Jadwal and read via
-  // scheduleService.getSchedules() as `allSchedules` above). Does NOT use teacher data,
-  // Struktur Kurikulum (curriculum_matrix), Program Tahunan, or Program Semester.
-  //
-  // Rule: every document in "schedules" represents exactly ONE published JP slot for ONE
-  // teacher, in ONE class, for ONE subject. Total JP for a teacher = the count of schedule
-  // documents where teacherId matches, summed across every class and every subject they teach.
-  //
-  // Because each schedule slot already belongs to exactly one teacherId, a subject taught by
-  // two different teachers on different grades (e.g. Guru A teaches Aqidah VII, Guru B teaches
-  // Aqidah VIII & IX) is handled automatically with no double counting — each slot is only ever
-  // counted once, for whichever teacher actually owns that slot in the published schedule.
-  // ==========================================
-  interface JPSubjectBreakdown {
-    subjectId: string;
-    subjectName: string;
-    vii: number;
-    viii: number;
-    ix: number;
-    total: number;
-  }
-
-  const teacherScheduleJPMap = React.useMemo(() => {
-    // Map classId -> gradeLevel, used only to break the JP total down by grade for the
-    // expandable detail view. This does not affect the Total JP number itself.
-    const classGradeMap: Record<string, string> = {};
-    classes.forEach((c: any) => {
-      classGradeMap[c.id] = c.gradeLevel;
-    });
-
-    const map: Record<string, { totalJP: number; bySubject: Record<string, JPSubjectBreakdown> }> = {};
-
-    allSchedules.forEach((s: any) => {
-      const tId = s.teacherId;
-      if (!tId) return;
-
-      if (!map[tId]) map[tId] = { totalJP: 0, bySubject: {} };
-      const bucket = map[tId];
-
-      if (!bucket.bySubject[s.subjectId]) {
-        bucket.bySubject[s.subjectId] = { subjectId: s.subjectId, subjectName: s.subjectName, vii: 0, viii: 0, ix: 0, total: 0 };
-      }
-      const entry = bucket.bySubject[s.subjectId];
-      const grade = classGradeMap[s.classId];
-
-      // Each published schedule slot = 1 JP, counted exactly once for its assigned teacher.
-      if (grade === "VII") entry.vii += 1;
-      else if (grade === "VIII") entry.viii += 1;
-      else if (grade === "IX") entry.ix += 1;
-      entry.total += 1;
-      bucket.totalJP += 1;
-    });
-
-    return map;
-  }, [allSchedules, classes]);
-
   // Pre-calculate statistics/monitoring lists for all active teachers
   const teachersPlanningData = React.useMemo(() => {
     return teachers
@@ -489,9 +430,9 @@ export const Dashboard: React.FC = () => {
         // Find this teacher's assignments
         const assignments: { subjectId: string; subjectName: string; classId: string; className: string }[] = [];
         curriculumMatrix.forEach((m: any) => {
-          const isTeacherVii = (m.teacherId === t.id || m.teacherId_vii === t.id) && m.jp_vii > 0;
-          const isTeacherViii = (m.teacherId_viii === t.id) && m.jp_viii > 0;
-          const isTeacherIx = (m.teacherId_ix === t.id) && m.jp_ix > 0;
+          const isTeacherVii = (m.useDifferentTeachers ? m.teacherId_vii === t.id : m.teacherId === t.id) && m.jp_vii > 0;
+          const isTeacherViii = (m.useDifferentTeachers ? m.teacherId_viii === t.id : m.teacherId === t.id) && m.jp_viii > 0;
+          const isTeacherIx = (m.useDifferentTeachers ? m.teacherId_ix === t.id : m.teacherId === t.id) && m.jp_ix > 0;
 
           classes.forEach((c) => {
             if (c.status === "Aktif" && !c.isDeleted) {
@@ -507,6 +448,29 @@ export const Dashboard: React.FC = () => {
         });
 
         // Compute completions
+        let totalJp = 0;
+        if (t.customJpOverride !== undefined && t.customJpOverride !== null && (t.customJpOverride as any) !== "") {
+          const num = parseInt(t.customJpOverride as any, 10);
+          if (!isNaN(num)) {
+            totalJp = num;
+          }
+        }
+
+        if (totalJp === 0) {
+          // Fallback to calculated from curriculum matrix sum
+          curriculumMatrix.forEach((m: any) => {
+            if (m.useDifferentTeachers) {
+              if (m.teacherId_vii === t.id && m.jp_vii > 0) totalJp += m.jp_vii;
+              if (m.teacherId_viii === t.id && m.jp_viii > 0) totalJp += m.jp_viii;
+              if (m.teacherId_ix === t.id && m.jp_ix > 0) totalJp += m.jp_ix;
+            } else {
+              if (m.teacherId === t.id) {
+                totalJp += (m.jp_vii || 0) + (m.jp_viii || 0) + (m.jp_ix || 0);
+              }
+            }
+          });
+        }
+
         let protaCount = 0;
         let prosemCount = 0;
         let lessonPlanCount = 0;
@@ -553,18 +517,11 @@ export const Dashboard: React.FC = () => {
           performanceColor = "text-amber-700 bg-amber-50 dark:bg-amber-950/20 border-amber-250";
         }
 
-        // Total JP Mengajar — sourced strictly from the published schedule (teacherScheduleJPMap).
-        // A teacher with no published schedule slots correctly shows 0 JP, not a fabricated value.
-        const jpData = teacherScheduleJPMap[t.id];
-        const totalJP = jpData ? jpData.totalJP : 0;
-        const jpBySubject: JPSubjectBreakdown[] = jpData
-          ? Object.values(jpData.bySubject).sort((a, b) => a.subjectName.localeCompare(b.subjectName))
-          : [];
-
         return {
           teacher: t,
           assignments,
           totalRequired,
+          totalJp,
           protaCount,
           prosemCount,
           lessonPlanCount,
@@ -575,12 +532,10 @@ export const Dashboard: React.FC = () => {
           journals: teacherJournals,
           performanceScore,
           performanceLabel,
-          performanceColor,
-          totalJP,
-          jpBySubject
+          performanceColor
         };
       });
-  }, [teachers, classes, curriculumMatrix, allAnnualPrograms, allSemesterPrograms, allLessonPlans, allTeachingJournals, teacherScheduleJPMap]);
+  }, [teachers, classes, curriculumMatrix, allAnnualPrograms, allSemesterPrograms, allLessonPlans, allTeachingJournals]);
 
   // Real performance score/label for the logged-in teacher (replaces the old hardcoded "87.5 / 100 Sangat Baik").
   const myPerformance = teachersPlanningData.find((t) => t.teacher.id === teacherId) || null;
@@ -1880,7 +1835,7 @@ export const Dashboard: React.FC = () => {
               <thead>
                 <tr className="border-b border-slate-100 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950/20">
                   <th className="p-3 font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider">Nama Guru</th>
-                  <th className="p-3 font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider">Total JP Mengajar</th>
+                  <th className="p-3 font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider">Beban Mengajar</th>
                   <th className="p-3 font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider text-center">Prota (Annual)</th>
                   <th className="p-3 font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider text-center">Prosem (Semester)</th>
                   <th className="p-3 font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider text-center">Modul Ajar (RPP)</th>
@@ -1888,137 +1843,75 @@ export const Dashboard: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-zinc-850/80">
-                {teachersPlanningData.map((tData) => {
-                  const isExpanded = expandedJPTeacherId === tData.teacher.id;
-                  const hasMultipleSubjects = tData.jpBySubject.length > 1;
-                  return (
-                    <React.Fragment key={tData.teacher.id}>
-                      <tr className="hover:bg-slate-50/50 dark:hover:bg-zinc-850/30 transition-colors">
-                        <td className="p-3">
-                          <div className="font-bold text-slate-700 dark:text-zinc-250">{tData.teacher.name}</div>
-                          <div className="text-[10px] text-slate-400 mt-0.5">{tData.teacher.nip || "NIP Belum Diatur"}</div>
-                        </td>
-                        <td className="p-3">
-                          <button
-                            type="button"
-                            onClick={() => hasMultipleSubjects && setExpandedJPTeacherId(isExpanded ? "" : tData.teacher.id)}
-                            title={tData.jpBySubject.map((s) => `${s.subjectName}: VII=${s.vii}, VIII=${s.viii}, IX=${s.ix} (Total ${s.total} JP)`).join(" | ")}
-                            className={`font-semibold text-slate-600 dark:text-zinc-300 bg-slate-100 dark:bg-zinc-800 px-2 py-1 rounded-md inline-flex items-center gap-1 ${
-                              hasMultipleSubjects ? "cursor-pointer hover:bg-slate-200 dark:hover:bg-zinc-750" : "cursor-default"
-                            }`}
-                          >
-                            {tData.totalJP} JP
-                            {hasMultipleSubjects && (
-                              <ChevronRight className={`h-3 w-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
-                            )}
-                          </button>
-                        </td>
-                        <td className="p-3 text-center">
-                          {tData.totalRequired === 0 ? (
-                            <span className="text-slate-400 text-[10px]">Bukan Pengampu</span>
-                          ) : (
-                            <div className="flex flex-col items-center gap-1">
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                tData.protaPct === 100
-                                  ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-400"
-                                  : tData.protaPct > 0
-                                  ? "bg-amber-50 text-amber-700 dark:bg-amber-950/20 dark:text-amber-400"
-                                  : "bg-rose-50 text-rose-700 dark:bg-rose-950/20 dark:text-rose-400"
-                              }`}>
-                                {tData.protaPct}% ({tData.protaCount}/{tData.totalRequired})
-                              </span>
-                            </div>
-                          )}
-                        </td>
-                        <td className="p-3 text-center">
-                          {tData.totalRequired === 0 ? (
-                            <span className="text-slate-400 text-[10px]">Bukan Pengampu</span>
-                          ) : (
-                            <div className="flex flex-col items-center gap-1">
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                tData.prosemPct === 100
-                                  ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-400"
-                                  : tData.prosemPct > 0
-                                  ? "bg-amber-50 text-amber-700 dark:bg-amber-950/20 dark:text-amber-400"
-                                  : "bg-rose-50 text-rose-700 dark:bg-rose-950/20 dark:text-rose-400"
-                              }`}>
-                                {tData.prosemPct}% ({tData.prosemCount}/{tData.totalRequired})
-                              </span>
-                            </div>
-                          )}
-                        </td>
-                        <td className="p-3 text-center">
-                          {tData.totalRequired === 0 ? (
-                            <span className="text-slate-400 text-[10px]">Bukan Pengampu</span>
-                          ) : (
-                            <div className="flex flex-col items-center gap-1">
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                tData.lessonPlanPct === 100
-                                  ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-400"
-                                  : tData.lessonPlanPct > 0
-                                  ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/20 dark:text-indigo-400"
-                                  : "bg-rose-50 text-rose-700 dark:bg-rose-950/20 dark:text-rose-400"
-                              }`}>
-                                {tData.lessonPlanPct}% ({tData.lessonPlanCount}/{tData.totalRequired})
-                              </span>
-                            </div>
-                          )}
-                        </td>
-                        <td className="p-3 text-center">
-                          <span className="font-bold font-mono text-slate-700 dark:text-zinc-300">
-                            {tData.journalCount} Entri Jurnal
+                {teachersPlanningData.map((tData) => (
+                  <tr key={tData.teacher.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-850/30 transition-colors">
+                    <td className="p-3">
+                      <div className="font-bold text-slate-700 dark:text-zinc-250">{tData.teacher.name}</div>
+                      <div className="text-[10px] text-slate-400 mt-0.5">{tData.teacher.nip || "NIP Belum Diatur"}</div>
+                    </td>
+                    <td className="p-3">
+                      <span className="font-semibold text-slate-600 dark:text-zinc-300 bg-slate-100 dark:bg-zinc-800 px-2 py-1 rounded-md">
+                        {tData.totalJp} JP
+                      </span>
+                    </td>
+                    <td className="p-3 text-center">
+                      {tData.totalRequired === 0 ? (
+                        <span className="text-slate-400 text-[10px]">Bukan Pengampu</span>
+                      ) : (
+                        <div className="flex flex-col items-center gap-1">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            tData.protaPct === 100
+                              ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-400"
+                              : tData.protaPct > 0
+                              ? "bg-amber-50 text-amber-700 dark:bg-amber-950/20 dark:text-amber-400"
+                              : "bg-rose-50 text-rose-700 dark:bg-rose-950/20 dark:text-rose-400"
+                          }`}>
+                            {tData.protaPct}% ({tData.protaCount}/{tData.totalRequired})
                           </span>
-                        </td>
-                      </tr>
-                      {isExpanded && hasMultipleSubjects && (
-                        <tr className="bg-slate-50/70 dark:bg-zinc-950/30">
-                          <td colSpan={6} className="p-0">
-                            <div className="p-4">
-                              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">
-                                Rincian JP per Mata Pelajaran — {tData.teacher.name}
-                              </p>
-                              <table className="w-full text-left border-collapse text-[11px]">
-                                <thead>
-                                  <tr className="border-b border-slate-200 dark:border-zinc-800">
-                                    <th className="p-2 font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider">Mata Pelajaran</th>
-                                    <th className="p-2 font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider text-center">VII</th>
-                                    <th className="p-2 font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider text-center">VIII</th>
-                                    <th className="p-2 font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider text-center">IX</th>
-                                    <th className="p-2 font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider text-center">Total JP</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100 dark:divide-zinc-850/60">
-                                  {tData.jpBySubject.map((s) => (
-                                    <tr key={s.subjectId}>
-                                      <td className="p-2 font-semibold text-slate-700 dark:text-zinc-300">{s.subjectName}</td>
-                                      <td className="p-2 text-center font-mono text-slate-600 dark:text-zinc-400">{s.vii}</td>
-                                      <td className="p-2 text-center font-mono text-slate-600 dark:text-zinc-400">{s.viii}</td>
-                                      <td className="p-2 text-center font-mono text-slate-600 dark:text-zinc-400">{s.ix}</td>
-                                      <td className="p-2 text-center font-mono font-bold text-slate-800 dark:text-white">{s.total}</td>
-                                    </tr>
-                                  ))}
-                                  <tr className="border-t border-slate-200 dark:border-zinc-800">
-                                    <td className="p-2 font-black text-slate-800 dark:text-white">Total</td>
-                                    <td className="p-2 text-center font-mono font-bold text-slate-800 dark:text-white">
-                                      {tData.jpBySubject.reduce((sum, s) => sum + s.vii, 0)}
-                                    </td>
-                                    <td className="p-2 text-center font-mono font-bold text-slate-800 dark:text-white">
-                                      {tData.jpBySubject.reduce((sum, s) => sum + s.viii, 0)}
-                                    </td>
-                                    <td className="p-2 text-center font-mono font-bold text-slate-800 dark:text-white">
-                                      {tData.jpBySubject.reduce((sum, s) => sum + s.ix, 0)}
-                                    </td>
-                                    <td className="p-2 text-center font-mono font-black text-slate-900 dark:text-white">{tData.totalJP}</td>
-                                  </tr>
-                                </tbody>
-                              </table>
-                            </div>
-                          </td>
-                        </tr>
+                        </div>
                       )}
-                    </React.Fragment>
-                  );
-                })}
+                    </td>
+                    <td className="p-3 text-center">
+                      {tData.totalRequired === 0 ? (
+                        <span className="text-slate-400 text-[10px]">Bukan Pengampu</span>
+                      ) : (
+                        <div className="flex flex-col items-center gap-1">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            tData.prosemPct === 100
+                              ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-400"
+                              : tData.prosemPct > 0
+                              ? "bg-amber-50 text-amber-700 dark:bg-amber-950/20 dark:text-amber-400"
+                              : "bg-rose-50 text-rose-700 dark:bg-rose-950/20 dark:text-rose-400"
+                          }`}>
+                            {tData.prosemPct}% ({tData.prosemCount}/{tData.totalRequired})
+                          </span>
+                        </div>
+                      )}
+                    </td>
+                    <td className="p-3 text-center">
+                      {tData.totalRequired === 0 ? (
+                        <span className="text-slate-400 text-[10px]">Bukan Pengampu</span>
+                      ) : (
+                        <div className="flex flex-col items-center gap-1">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            tData.lessonPlanPct === 100
+                              ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-400"
+                              : tData.lessonPlanPct > 0
+                              ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/20 dark:text-indigo-400"
+                              : "bg-rose-50 text-rose-700 dark:bg-rose-950/20 dark:text-rose-400"
+                          }`}>
+                            {tData.lessonPlanPct}% ({tData.lessonPlanCount}/{tData.totalRequired})
+                          </span>
+                        </div>
+                      )}
+                    </td>
+                    <td className="p-3 text-center">
+                      <span className="font-bold font-mono text-slate-700 dark:text-zinc-300">
+                        {tData.journalCount} Entri Jurnal
+                      </span>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
