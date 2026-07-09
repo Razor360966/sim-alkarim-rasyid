@@ -1,0 +1,49 @@
+{
+  "entities": {
+    "MasterJabatan": {
+      "title": "MasterJabatan",
+      "description": "Definisi master peran atau jabatan di lingkungan sekolah dan pesantren",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "ID unik jabatan (e.g., guru, musrif, wakakur)" },
+        "name": { "type": "string", "description": "Nama resmi jabatan" },
+        "description": { "type": "string", "description": "Uraian tugas pokok dan fungsi jabatan" }
+      },
+      "required": ["id", "name"]
+    },
+    "SDMPerformanceEvaluation": {
+      "title": "SDMPerformanceEvaluation",
+      "description": "Entitas lembar rapor penilaian kinerja sdm guru atau staf",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Format unik: teacherId_roleId_academicYear_semester" },
+        "teacherId": { "type": "string", "description": "ID Pendidik atau Tenaga Kependidikan" },
+        "teacherName": { "type": "string", "description": "Nama Pendidik/Staf yang dinilai" },
+        "niy": { "type": "string", "description": "Nomor Induk Yayasan" },
+        "roleId": { "type": "string", "description": "ID Jabatan yang dinilai" },
+        "roleName": { "type": "string", "description": "Nama Jabatan yang dinilai" },
+        "academicYear": { "type": "string", "description": "Tahun Pelajaran (e.g., 2025/2026)" },
+        "semester": { "type": "string", "description": "Semester (e.g., Ganjil)" },
+        "evaluatorId": { "type": "string", "description": "ID Penilai (UID/TeacherID)" },
+        "evaluatorName": { "type": "string", "description": "Nama lengkap penilai" },
+        "evaluatorRole": { "type": "string", "description": "Jabatan fungsional penilai" },
+        "status": { "type": "string", "enum": ["Draft", "Submitted"] },
+        "overallComment": { "type": "string", "description": "Komentar evaluasi menyeluruh" },
+        "recommendation": { "type": "string", "description": "Rekomendasi tindak lanjut pengembangan" },
+        "finalScore": { "type": "number", "description": "Skor akhir nilai konversi (0-100)" },
+        "category": { "type": "string", "description": "Predikat kinerja (Sangat Baik, Baik, dsb.)" }
+      },
+      "required": ["id", "teacherId", "roleId", "academicYear", "semester", "status"]
+    }
+  },
+  "firestore": {
+    "master_jabatans": {
+      "schema": "MasterJabatan",
+      "description": "Penyimpanan daftar master peran/jabatan resmi asatidzah"
+    },
+    "sdm_performance_evaluations": {
+      "schema": "SDMPerformanceEvaluation",
+      "description": "Daftar rapor penilaian kinerja berkala guru dan pengasuh"
+    }
+  }
+}

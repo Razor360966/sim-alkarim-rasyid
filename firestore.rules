@@ -1,0 +1,41 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Master Jabatans Rules
+    match /master_jabatans/{jabatanId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+    
+    // SDM Performance Evaluations Rules
+    match /sdm_performance_evaluations/{evalId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Supervision Academic Rules
+    match /supervision_academic/{supervisionId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Supervision Managerial Rules
+    match /supervision_managerial/{supervisionId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Supervision Central Schedules Rules
+    match /supervision_schedules/{scheduleId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Supervision Assessment Instruments Rules
+    match /supervision_instruments/{instrumentId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Default permissive catch-all for existing tables to prevent regressions
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
