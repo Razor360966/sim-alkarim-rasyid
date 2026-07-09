@@ -424,18 +424,19 @@ export const Dashboard: React.FC = () => {
   }, [teacherAssignments, allAnnualPrograms, allSemesterPrograms, allLessonPlans]);
 
   // ==========================================
-  // Total JP Mengajar (Beban Mengajar) — computed ONLY from Struktur Kurikulum (curriculum_matrix).
-  // Does NOT use Jadwal, Program Tahunan, Program Semester, or any cached dashboard value.
+  // Total JP Mengajar (Beban Mengajar) — computed ONLY from the final PUBLISHED schedule
+  // (the "schedules" collection, same data used by Admin's Publish Jadwal and read via
+  // scheduleService.getSchedules() as `allSchedules` above). Does NOT use teacher data,
+  // Struktur Kurikulum (curriculum_matrix), Program Tahunan, or Program Semester.
   //
-  // Rule per record in curriculum_matrix:
-  //   - If useDifferentTeachers is true: each grade (VII/VIII/IX) is taught by its own
-  //     teacherId_vii / teacherId_viii / teacherId_ix, so that grade's JP is attributed
-  //     ONLY to that specific teacher.
-  //   - If useDifferentTeachers is false: a single teacherId teaches all three grades for
-  //     that subject, so jp_vii + jp_viii + jp_ix are all attributed to that one teacher.
+  // Rule: every document in "schedules" represents exactly ONE published JP slot for ONE
+  // teacher, in ONE class, for ONE subject. Total JP for a teacher = the count of schedule
+  // documents where teacherId matches, summed across every class and every subject they teach.
   //
-  // This guarantees no double counting: a given grade's JP for a subject is always
-  // attributed to exactly one teacher.
+  // Because each schedule slot already belongs to exactly one teacherId, a subject taught by
+  // two different teachers on different grades (e.g. Guru A teaches Aqidah VII, Guru B teaches
+  // Aqidah VIII & IX) is handled automatically with no double counting — each slot is only ever
+  // counted once, for whichever teacher actually owns that slot in the published schedule.
   // ==========================================
   interface JPSubjectBreakdown {
     subjectId: string;
@@ -446,33 +447,39 @@ export const Dashboard: React.FC = () => {
     total: number;
   }
 
-  const teacherJPMap = React.useMemo(() => {
+  const teacherScheduleJPMap = React.useMemo(() => {
+    // Map classId -> gradeLevel, used only to break the JP total down by grade for the
+    // expandable detail view. This does not affect the Total JP number itself.
+    const classGradeMap: Record<string, string> = {};
+    classes.forEach((c: any) => {
+      classGradeMap[c.id] = c.gradeLevel;
+    });
+
     const map: Record<string, { totalJP: number; bySubject: Record<string, JPSubjectBreakdown> }> = {};
 
-    const addJP = (tId: string, subjectId: string, subjectName: string, grade: "vii" | "viii" | "ix", jp: number) => {
-      if (!tId || !jp) return;
+    allSchedules.forEach((s: any) => {
+      const tId = s.teacherId;
+      if (!tId) return;
+
       if (!map[tId]) map[tId] = { totalJP: 0, bySubject: {} };
       const bucket = map[tId];
-      if (!bucket.bySubject[subjectId]) {
-        bucket.bySubject[subjectId] = { subjectId, subjectName, vii: 0, viii: 0, ix: 0, total: 0 };
+
+      if (!bucket.bySubject[s.subjectId]) {
+        bucket.bySubject[s.subjectId] = { subjectId: s.subjectId, subjectName: s.subjectName, vii: 0, viii: 0, ix: 0, total: 0 };
       }
-      bucket.bySubject[subjectId][grade] += jp;
-      bucket.bySubject[subjectId].total += jp;
-      bucket.totalJP += jp;
-    };
+      const entry = bucket.bySubject[s.subjectId];
+      const grade = classGradeMap[s.classId];
 
-    curriculumMatrix.forEach((m: any) => {
-      const teacherForVii = m.useDifferentTeachers ? m.teacherId_vii : m.teacherId;
-      const teacherForViii = m.useDifferentTeachers ? m.teacherId_viii : m.teacherId;
-      const teacherForIx = m.useDifferentTeachers ? m.teacherId_ix : m.teacherId;
-
-      addJP(teacherForVii, m.subjectId, m.subjectName, "vii", m.jp_vii || 0);
-      addJP(teacherForViii, m.subjectId, m.subjectName, "viii", m.jp_viii || 0);
-      addJP(teacherForIx, m.subjectId, m.subjectName, "ix", m.jp_ix || 0);
+      // Each published schedule slot = 1 JP, counted exactly once for its assigned teacher.
+      if (grade === "VII") entry.vii += 1;
+      else if (grade === "VIII") entry.viii += 1;
+      else if (grade === "IX") entry.ix += 1;
+      entry.total += 1;
+      bucket.totalJP += 1;
     });
 
     return map;
-  }, [curriculumMatrix]);
+  }, [allSchedules, classes]);
 
   // Pre-calculate statistics/monitoring lists for all active teachers
   const teachersPlanningData = React.useMemo(() => {
@@ -546,8 +553,9 @@ export const Dashboard: React.FC = () => {
           performanceColor = "text-amber-700 bg-amber-50 dark:bg-amber-950/20 border-amber-250";
         }
 
-        // Total JP Mengajar — sourced strictly from teacherJPMap (Struktur Kurikulum only)
-        const jpData = teacherJPMap[t.id];
+        // Total JP Mengajar — sourced strictly from the published schedule (teacherScheduleJPMap).
+        // A teacher with no published schedule slots correctly shows 0 JP, not a fabricated value.
+        const jpData = teacherScheduleJPMap[t.id];
         const totalJP = jpData ? jpData.totalJP : 0;
         const jpBySubject: JPSubjectBreakdown[] = jpData
           ? Object.values(jpData.bySubject).sort((a, b) => a.subjectName.localeCompare(b.subjectName))
@@ -572,7 +580,7 @@ export const Dashboard: React.FC = () => {
           jpBySubject
         };
       });
-  }, [teachers, classes, curriculumMatrix, allAnnualPrograms, allSemesterPrograms, allLessonPlans, allTeachingJournals, teacherJPMap]);
+  }, [teachers, classes, curriculumMatrix, allAnnualPrograms, allSemesterPrograms, allLessonPlans, allTeachingJournals, teacherScheduleJPMap]);
 
   // Real performance score/label for the logged-in teacher (replaces the old hardcoded "87.5 / 100 Sangat Baik").
   const myPerformance = teachersPlanningData.find((t) => t.teacher.id === teacherId) || null;
