@@ -342,7 +342,9 @@ export const Dashboard: React.FC = () => {
       unfilledStudents,
       tahsinOkPct,
       adabOkPct,
-      totalTahfizhSetoran
+      totalTahfizhSetoran,
+      totalAdabRatings,
+      totalTahsinRatings
     };
   }, [viewingRole, myGroups, allMembers, myJournals, allJournalDetails, todayStr]);
 
@@ -1198,7 +1200,7 @@ export const Dashboard: React.FC = () => {
             </div>
           </Link>
 
-          {/* Rapor Kinerja */}
+          {/* Kepatuhan Ruhiyah Card */}
           <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-150 dark:border-zinc-800 p-5 flex items-center gap-4 hover:shadow-md transition-all shadow-xs">
             <div className="h-12 w-12 rounded-xl bg-rose-50 dark:bg-rose-950/20 flex items-center justify-center text-rose-600 dark:text-rose-400 shrink-0">
               <Award className="h-6 w-6" />
@@ -1206,9 +1208,11 @@ export const Dashboard: React.FC = () => {
             <div>
               <p className="text-[10px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">Kepatuhan Ruhiyah</p>
               <h3 className="text-lg font-black text-slate-800 dark:text-white mt-1">
-                {musrifStats?.adabOkPct || 100}%
+                {musrifStats && musrifStats.totalAdabRatings > 0 ? `${musrifStats.adabOkPct}%` : "-"}
               </h3>
-              <p className="text-[9px] text-slate-500 font-medium mt-1">Sikap adab/akhlak santri binaan</p>
+              <p className="text-[9px] text-slate-500 font-medium mt-1">
+                {musrifStats && musrifStats.totalAdabRatings > 0 ? "Sikap adab/akhlak santri binaan" : "Belum ada inputan adab"}
+              </p>
             </div>
           </div>
         </div>
@@ -1305,11 +1309,17 @@ export const Dashboard: React.FC = () => {
                     <Activity className="h-4 w-4 text-blue-600" />
                   </div>
                   <div className="space-y-2">
-                    <h3 className="text-3xl font-black text-slate-800 dark:text-white">{musrifStats?.tahsinOkPct || 0}%</h3>
-                    <p className="text-[10px] text-slate-500 dark:text-zinc-400">Santri binaan berpredikat tajwid & makhraj Baik/Sangat Baik</p>
-                    <div className="h-1.5 w-full bg-slate-100 dark:bg-zinc-800 rounded-full overflow-hidden">
-                      <div className="h-full bg-blue-500 rounded-full" style={{ width: `${musrifStats?.tahsinOkPct || 0}%` }} />
-                    </div>
+                    <h3 className="text-3xl font-black text-slate-800 dark:text-white">
+                      {musrifStats && musrifStats.totalTahsinRatings > 0 ? `${musrifStats.tahsinOkPct}%` : "-"}
+                    </h3>
+                    <p className="text-[10px] text-slate-500 dark:text-zinc-400">
+                      {musrifStats && musrifStats.totalTahsinRatings > 0 ? "Santri binaan berpredikat tajwid & makhraj Baik/Sangat Baik" : "Belum ada inputan tahsin"}
+                    </p>
+                    {musrifStats && musrifStats.totalTahsinRatings > 0 && (
+                      <div className="h-1.5 w-full bg-slate-100 dark:bg-zinc-800 rounded-full overflow-hidden">
+                        <div className="h-full bg-blue-500 rounded-full" style={{ width: `${musrifStats.tahsinOkPct}%` }} />
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1320,11 +1330,17 @@ export const Dashboard: React.FC = () => {
                     <Heart className="h-4 w-4 text-purple-600" />
                   </div>
                   <div className="space-y-2">
-                    <h3 className="text-3xl font-black text-slate-800 dark:text-white">{musrifStats?.adabOkPct || 0}%</h3>
-                    <p className="text-[10px] text-slate-500 dark:text-zinc-400">Santri binaan berpredikat disiplin & sopan santun Baik/Sangat Baik</p>
-                    <div className="h-1.5 w-full bg-slate-100 dark:bg-zinc-800 rounded-full overflow-hidden">
-                      <div className="h-full bg-purple-500 rounded-full" style={{ width: `${musrifStats?.adabOkPct || 0}%` }} />
-                    </div>
+                    <h3 className="text-3xl font-black text-slate-800 dark:text-white">
+                      {musrifStats && musrifStats.totalAdabRatings > 0 ? `${musrifStats.adabOkPct}%` : "-"}
+                    </h3>
+                    <p className="text-[10px] text-slate-500 dark:text-zinc-400">
+                      {musrifStats && musrifStats.totalAdabRatings > 0 ? "Santri binaan berpredikat disiplin & sopan santun Baik/Sangat Baik" : "Belum ada inputan adab/akhlak"}
+                    </p>
+                    {musrifStats && musrifStats.totalAdabRatings > 0 && (
+                      <div className="h-1.5 w-full bg-slate-100 dark:bg-zinc-800 rounded-full overflow-hidden">
+                        <div className="h-full bg-purple-500 rounded-full" style={{ width: `${musrifStats.adabOkPct}%` }} />
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
