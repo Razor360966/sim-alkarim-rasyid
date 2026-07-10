@@ -17,6 +17,8 @@ import { useAuth } from "../contexts/AuthContext";
 import { Link } from "react-router-dom";
 import { academicPlanningService } from "../services/academicPlanning.service";
 import { executiveDashboardService } from "../services/executiveDashboard.service";
+import { halaqahGroupService } from "../services/halaqahGroupService";
+import { musrifJournalService } from "../services/musrifJournalService";
 import { WakasisDashboard } from "../components/dashboard/WakasisDashboard";
 import { WakasarprasDashboard } from "../components/dashboard/WakasarprasDashboard";
 import { 
@@ -255,6 +257,94 @@ export const Dashboard: React.FC = () => {
     queryKey: ["lessonPeriods"],
     queryFn: () => lessonPeriodService.getLessonPeriods()
   });
+
+  // Musrif specific data queries
+  const { data: myGroups = [] } = useQuery({
+    queryKey: ["myHalaqahGroups", user?.userId],
+    queryFn: () => halaqahGroupService.getGroups(user?.userId),
+    enabled: viewingRole === "musrif" && !!user?.userId
+  });
+
+  const { data: allMembers = [] } = useQuery({
+    queryKey: ["allHalaqahMembers"],
+    queryFn: () => halaqahGroupService.getAllMembers(),
+    enabled: viewingRole === "musrif"
+  });
+
+  const { data: myJournals = [] } = useQuery({
+    queryKey: ["myMusrifJournals", user?.userId],
+    queryFn: () => musrifJournalService.getByMusrif(user?.userId || ""),
+    enabled: viewingRole === "musrif" && !!user?.userId
+  });
+
+  const { data: allJournalDetails = [] } = useQuery({
+    queryKey: ["allJournalDetails"],
+    queryFn: () => musrifJournalService.getAllJournalDetails(),
+    enabled: viewingRole === "musrif"
+  });
+
+  // Compute Musrif Stats
+  const musrifStats = React.useMemo(() => {
+    if (viewingRole !== "musrif") return null;
+
+    const myGroupIds = myGroups.map(g => g.id);
+    const myStudentsList = allMembers.filter(m => myGroupIds.includes(m.groupId));
+    const totalMyStudents = myStudentsList.length;
+
+    // Mutabaah Hari Ini
+    const todayMyJournals = myJournals.filter(j => j.date === todayStr);
+    const todayJournalIds = todayMyJournals.map(j => j.id);
+    const todayDetails = allJournalDetails.filter(d => todayJournalIds.includes(d.journalId));
+    const studentsFilledToday = Array.from(new Set(todayDetails.map(d => d.studentId)));
+    const countFilledToday = studentsFilledToday.length;
+
+    // Santri Belum Diisi Hari Ini
+    const unfilledStudents = myStudentsList.filter(m => !studentsFilledToday.includes(m.studentId));
+
+    // Ringkasan Perkembangan Santri (Tahsin, Tahfizh, Adab)
+    const myStudentsDetails = allJournalDetails.filter(d => myStudentsList.some(s => s.studentId === d.studentId));
+    
+    let totalTahsinRatings = 0;
+    let goodTahsinRatings = 0;
+    myStudentsDetails.forEach(d => {
+      if (d.tajwid) {
+        totalTahsinRatings++;
+        if (d.tajwid === "Sangat Baik" || d.tajwid === "Baik") goodTahsinRatings++;
+      }
+      if (d.makhraj) {
+        totalTahsinRatings++;
+        if (d.makhraj === "Sangat Baik" || d.makhraj === "Baik") goodTahsinRatings++;
+      }
+      if (d.fluency) {
+        totalTahsinRatings++;
+        if (d.fluency === "Sangat Baik" || d.fluency === "Baik") goodTahsinRatings++;
+      }
+    });
+    const tahsinOkPct = totalTahsinRatings > 0 ? Math.round((goodTahsinRatings / totalTahsinRatings) * 100) : 0;
+
+    let totalAdabRatings = 0;
+    let goodAdabRatings = 0;
+    myStudentsDetails.forEach(d => {
+      if (d.behavior) {
+        totalAdabRatings++;
+        if (d.behavior === "Sangat Baik" || d.behavior === "Baik") goodAdabRatings++;
+      }
+    });
+    const adabOkPct = totalAdabRatings > 0 ? Math.round((goodAdabRatings / totalAdabRatings) * 100) : 0;
+
+    const totalTahfizhSetoran = myStudentsDetails.filter(d => d.memorizationAchievement && d.memorizationAchievement.trim() !== "").length;
+
+    return {
+      totalGroups: myGroups.length,
+      totalStudents: totalMyStudents,
+      myStudentsList,
+      countFilledToday,
+      unfilledStudents,
+      tahsinOkPct,
+      adabOkPct,
+      totalTahfizhSetoran
+    };
+  }, [viewingRole, myGroups, allMembers, myJournals, allJournalDetails, todayStr]);
 
   const isLoading = isLoadingStudents || isLoadingTeachers || isLoadingClasses || isLoadingSubjects || isLoadingYears;
 
@@ -1028,6 +1118,18 @@ export const Dashboard: React.FC = () => {
   // 2. MUSRIF DASHBOARD VIEW
   // ==========================================
   if (viewingRole === "musrif") {
+    const totalMyGroups = musrifStats?.totalGroups || 0;
+    const totalMyStudents = musrifStats?.totalStudents || 0;
+    const countFilledToday = musrifStats?.countFilledToday || 0;
+    const unfilledStudents = musrifStats?.unfilledStudents || [];
+    const todayEvents = events.filter(e => {
+      const start = e.startDate || e.date || "";
+      const end = e.endDate || e.date || "";
+      return todayStr >= start && todayStr <= end;
+    });
+
+    const fillPercentage = totalMyStudents > 0 ? Math.round((countFilledToday / totalMyStudents) * 100) : 0;
+
     return wrapWithSwitcher(
       <div className="space-y-8 animate-fade-in">
         {/* Welcome Banner */}
@@ -1038,161 +1140,268 @@ export const Dashboard: React.FC = () => {
           <div className="max-w-2xl space-y-3 relative z-10">
             <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-white/10 backdrop-blur-md rounded-full text-xs font-semibold tracking-wide">
               <Sparkles className="h-3.5 w-3.5 text-amber-300 animate-pulse" />
-              <span>Dashboard Personal Musrif & Pembina Asrama</span>
+              <span>Pusat Aktivitas Musrif & Pembina Asrama</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
               Ahlan Wa Sahlan, Ustadz {user?.displayName}!
             </h1>
             <p className="text-sm text-blue-50 leading-relaxed font-light">
-              SMP Alkarim Rasyid Boarding School didukung penuh oleh bimbingan asrama (Halaqah) asuhan Anda. Evaluasi setoran hafalan santri, muroja'ah, jurnal harian halaqah, dan rapor kinerja kesantrian Anda.
+              Selamat datang di Dashboard Operasional Halaqah Anda. Kelola mutabaah harian, evaluasi tahfidz, tahsin, serta pantau agenda harian santri asuhan Anda secara terpusat.
             </p>
           </div>
         </div>
 
         {/* Stats Bento Grid for Musrif */}
-        <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Kelompok Halaqah */}
-          <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-150 dark:border-zinc-800 p-4 flex items-center gap-3.5 hover:shadow-md transition-all shadow-xs">
-            <div className="h-10 w-10 rounded-xl bg-blue-50 dark:bg-blue-950/20 flex items-center justify-center text-blue-600 dark:text-blue-400 shrink-0">
-              <School className="h-5 w-5" />
+          <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-150 dark:border-zinc-800 p-5 flex items-center gap-4 hover:shadow-md transition-all shadow-xs">
+            <div className="h-12 w-12 rounded-xl bg-blue-50 dark:bg-blue-950/20 flex items-center justify-center text-blue-600 dark:text-blue-400 shrink-0">
+              <School className="h-6 w-6" />
             </div>
             <div>
-              <p className="text-[9px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">Halaqah</p>
-              {/* No halaqah-assignment service is wired up yet — show an honest placeholder instead of a fabricated group name */}
-              <h3 className="text-sm font-bold text-slate-800 dark:text-white mt-0.5 truncate">Belum Ditugaskan</h3>
-              <span className="text-[8px] text-blue-600 font-bold bg-blue-50 dark:bg-blue-950/40 px-1 py-0.5 rounded mt-1 inline-block">Belum ada data</span>
+              <p className="text-[10px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">Kelompok Halaqah</p>
+              <h3 className="text-lg font-black text-slate-800 dark:text-white mt-1">
+                {totalMyGroups} {totalMyGroups > 0 ? "Kelompok" : "Belum Ditugaskan"}
+              </h3>
+              <p className="text-[10px] text-slate-500 dark:text-zinc-400 mt-1">
+                {myGroups.map(g => g.groupName).join(", ") || "Belum ada kelompok binaan"}
+              </p>
             </div>
           </div>
 
           {/* Santri Binaan */}
-          <Link to="/students" className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-150 dark:border-zinc-800 p-4 flex items-center gap-3.5 hover:shadow-md hover:border-indigo-500/30 transition-all shadow-xs">
-            <div className="h-10 w-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
-              <Users className="h-5 w-5" />
+          <Link to="/musrif-journals?tab=kelompok" className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-150 dark:border-zinc-800 p-5 flex items-center gap-4 hover:shadow-md hover:border-indigo-500/30 transition-all shadow-xs">
+            <div className="h-12 w-12 rounded-xl bg-indigo-50 dark:bg-indigo-950/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
+              <Users className="h-6 w-6" />
             </div>
             <div>
-              <p className="text-[9px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">Santri Binaan</p>
-              {/* No musrif-to-santri assignment data is wired up yet — show real 0 instead of a fabricated count */}
-              <h3 className="text-sm font-bold text-slate-800 dark:text-white mt-0.5">0 Santri</h3>
-              <span className="text-[8px] text-indigo-600 font-bold bg-indigo-50 dark:bg-indigo-950/40 px-1 py-0.5 rounded mt-1 inline-block">Belum ada data</span>
+              <p className="text-[10px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">Santri Binaan</p>
+              <h3 className="text-lg font-black text-slate-800 dark:text-white mt-1">{totalMyStudents} Santri</h3>
+              <p className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold mt-1 hover:underline">Kelola Kelompok &rarr;</p>
             </div>
           </Link>
 
-          {/* Agenda Hari Ini */}
-          <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-150 dark:border-zinc-800 p-4 flex items-center gap-3.5 hover:shadow-md transition-all shadow-xs">
-            <div className="h-10 w-10 rounded-xl bg-purple-50 dark:bg-purple-950/20 flex items-center justify-center text-purple-600 dark:text-purple-400 shrink-0">
-              <Calendar className="h-5 w-5" />
+          {/* Mutabaah Hari Ini */}
+          <Link to="/musrif-journals?tab=jurnal" className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-150 dark:border-zinc-800 p-5 flex items-center gap-4 hover:shadow-md hover:border-purple-500/30 transition-all shadow-xs">
+            <div className="h-12 w-12 rounded-xl bg-purple-50 dark:bg-purple-950/20 flex items-center justify-center text-purple-600 dark:text-purple-400 shrink-0">
+              <BookOpenCheck className="h-6 w-6" />
             </div>
             <div>
-              <p className="text-[9px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">Agenda Halaqah</p>
-              {/* No halaqah daily-agenda service is wired up yet — show an honest placeholder instead of a fabricated agenda */}
-              <h3 className="text-sm font-bold text-slate-800 dark:text-white mt-0.5">-</h3>
-              <span className="text-[8px] text-purple-600 font-bold bg-purple-50 dark:bg-purple-950/40 px-1 py-0.5 rounded mt-1 inline-block">Belum ada data</span>
+              <p className="text-[10px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">Mutaba'ah Hari Ini</p>
+              <h3 className="text-lg font-black text-slate-800 dark:text-white mt-1">{countFilledToday} / {totalMyStudents}</h3>
+              <div className="flex items-center gap-1.5 mt-1">
+                <div className="h-1.5 w-16 bg-slate-100 dark:bg-zinc-800 rounded-full overflow-hidden shrink-0">
+                  <div className="h-full bg-purple-500 rounded-full" style={{ width: `${fillPercentage}%` }} />
+                </div>
+                <span className="text-[9px] font-bold text-purple-600 dark:text-purple-400">{fillPercentage}%</span>
+              </div>
             </div>
-          </div>
-
-          {/* Target Tahfidz */}
-          <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-150 dark:border-zinc-800 p-4 flex items-center gap-3.5 hover:shadow-md transition-all shadow-xs">
-            <div className="h-10 w-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/20 flex items-center justify-center text-emerald-600 dark:text-emerald-400 shrink-0">
-              <TrendingUp className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-[9px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">Tahfidz</p>
-              {/* No tahfidz-tracking service is wired up yet — show real 0 instead of a fabricated value */}
-              <h3 className="text-sm font-bold text-slate-800 dark:text-white mt-0.5">0 Juz/Sem</h3>
-              <span className="text-[8px] text-emerald-600 font-bold bg-emerald-50 dark:bg-emerald-950/40 px-1 py-0.5 rounded mt-1 inline-block">Belum ada data</span>
-            </div>
-          </div>
-
-          {/* Target Tahsin */}
-          <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-150 dark:border-zinc-800 p-4 flex items-center gap-3.5 hover:shadow-md transition-all shadow-xs">
-            <div className="h-10 w-10 rounded-xl bg-amber-50 dark:bg-amber-950/20 flex items-center justify-center text-amber-600 dark:text-amber-400 shrink-0">
-              <Activity className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-[9px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">Tahsin</p>
-              {/* No tahsin-tracking service is wired up yet — show an honest placeholder instead of a fabricated level */}
-              <h3 className="text-sm font-bold text-slate-800 dark:text-white mt-0.5">-</h3>
-              <span className="text-[8px] text-amber-600 font-bold bg-amber-50 dark:bg-amber-950/40 px-1 py-0.5 rounded mt-1 inline-block">Belum ada data</span>
-            </div>
-          </div>
+          </Link>
 
           {/* Rapor Kinerja */}
-          <Link to="/sdm-performance" className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-150 dark:border-zinc-800 p-4 flex items-center gap-3.5 hover:shadow-md hover:border-rose-500/30 transition-all shadow-xs">
-            <div className="h-10 w-10 rounded-xl bg-rose-50 dark:bg-rose-950/20 flex items-center justify-center text-rose-600 dark:text-rose-400 shrink-0">
-              <Award className="h-5 w-5" />
+          <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-150 dark:border-zinc-800 p-5 flex items-center gap-4 hover:shadow-md transition-all shadow-xs">
+            <div className="h-12 w-12 rounded-xl bg-rose-50 dark:bg-rose-950/20 flex items-center justify-center text-rose-600 dark:text-rose-400 shrink-0">
+              <Award className="h-6 w-6" />
             </div>
             <div>
-              <p className="text-[9px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">Kinerja Musrif</p>
-              <h3 className="text-sm font-bold text-slate-800 dark:text-white mt-0.5">{myManagerialAvgScore} / 100</h3>
-              <span className="text-[8px] text-rose-600 font-bold bg-rose-50 dark:bg-rose-950/40 px-1 py-0.5 rounded mt-1 inline-block uppercase">{myManagerialLabel}</span>
+              <p className="text-[10px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">Kepatuhan Ruhiyah</p>
+              <h3 className="text-lg font-black text-slate-800 dark:text-white mt-1">
+                {musrifStats?.adabOkPct || 100}%
+              </h3>
+              <p className="text-[9px] text-slate-500 font-medium mt-1">Sikap adab/akhlak santri binaan</p>
             </div>
-          </Link>
+          </div>
         </div>
 
         {/* Content Section */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Santri Binaan list */}
-          <div className="lg:col-span-2 bg-white dark:bg-zinc-900 border border-slate-150 dark:border-zinc-800 rounded-3xl p-6 shadow-xs">
-            <div className="flex items-center justify-between mb-5">
-              <div>
-                <h3 className="font-bold text-slate-800 dark:text-white text-sm">Status Tahfidz & Tahsin Santri Binaan</h3>
-                <p className="text-xs text-slate-400 dark:text-zinc-500 mt-0.5">Ringkasan hafalan terkini halaqah bimbingan Anda</p>
+          {/* LEFT COLUMN: Operational Status, Agenda & Unfilled Students */}
+          <div className="lg:col-span-2 space-y-6">
+            
+            {/* Mutabaah & Attendance Tracker */}
+            <div className="bg-white dark:bg-zinc-900 border border-slate-150 dark:border-zinc-800 rounded-3xl p-6 shadow-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 pb-4 border-b border-slate-100 dark:border-zinc-800">
+                <div>
+                  <h3 className="font-bold text-slate-800 dark:text-white text-sm">Mutaba'ah & Jurnal Harian</h3>
+                  <p className="text-xs text-slate-400 dark:text-zinc-500 mt-0.5">Daftar santri yang belum memperoleh input perkembangan/mutaba'ah hari ini</p>
+                </div>
+                <Link
+                  to="/musrif-journals?tab=jurnal"
+                  className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs shrink-0 cursor-pointer text-center"
+                >
+                  Buka Jurnal & Input Mutaba'ah
+                </Link>
+              </div>
+
+              {unfilledStudents.length === 0 ? (
+                <div className="p-8 bg-emerald-50/50 dark:bg-emerald-950/10 border border-emerald-100/30 dark:border-emerald-900/30 rounded-2xl text-center flex flex-col items-center justify-center space-y-2">
+                  <CheckCircle className="h-8 w-8 text-emerald-600 dark:text-emerald-400 animate-bounce" />
+                  <h4 className="text-xs font-black text-emerald-800 dark:text-emerald-400">Alhamdulillah, Tugas Selesai!</h4>
+                  <p className="text-[11px] text-slate-500 dark:text-zinc-400 leading-relaxed max-w-sm">
+                    Seluruh {totalMyStudents} santri binaan Anda sudah diisi mutaba'ah hari ini ({new Date().toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long" })}).
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-rose-600 dark:text-rose-400 uppercase bg-rose-50 dark:bg-rose-950/20 px-2.5 py-1 rounded-full border border-rose-100 dark:border-rose-900/30">
+                      Perlu Diisi ({unfilledStudents.length} Santri)
+                    </span>
+                    <span className="text-[10px] text-slate-400">Mutaba'ah Tanggal: {todayStr}</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {unfilledStudents.slice(0, 12).map((member, idx) => (
+                      <div key={idx} className="p-3 bg-slate-50 dark:bg-zinc-800/40 border border-slate-100 dark:border-zinc-850 rounded-2xl flex flex-col justify-between hover:shadow-xs transition-shadow">
+                        <span className="text-xs font-bold text-slate-800 dark:text-zinc-200 truncate">{member.studentName}</span>
+                        <div className="flex items-center justify-between mt-2 pt-1 border-t border-slate-200/40 dark:border-zinc-800/40 text-[9px] text-slate-400">
+                          <span>{member.className || "Tanpa Kelas"}</span>
+                          <Link to="/musrif-journals?tab=jurnal" className="text-blue-600 dark:text-blue-400 font-bold hover:underline">Isi &rarr;</Link>
+                        </div>
+                      </div>
+                    ))}
+                    {unfilledStudents.length > 12 && (
+                      <Link to="/musrif-journals?tab=jurnal" className="p-3 bg-slate-50 hover:bg-slate-100 dark:bg-zinc-800/30 dark:hover:bg-zinc-800/50 border border-slate-100 dark:border-zinc-850 rounded-2xl flex items-center justify-center font-bold text-xs text-blue-600 dark:text-blue-400 cursor-pointer">
+                        + {unfilledStudents.length - 12} Santri Lainnya
+                      </Link>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Ringkasan Perkembangan Santri (Tahsin, Tahfizh, Adab) */}
+            <div className="bg-white dark:bg-zinc-900 border border-slate-150 dark:border-zinc-800 rounded-3xl p-6 shadow-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 pb-4 border-b border-slate-100 dark:border-zinc-800">
+                <div>
+                  <h3 className="font-bold text-slate-800 dark:text-white text-sm">Rangkuman Perkembangan Santri Binaan</h3>
+                  <p className="text-xs text-slate-400 dark:text-zinc-500 mt-0.5">Analitik kumulatif dari pencapaian halaqah bimbingan Anda</p>
+                </div>
+                <Link
+                  to="/musrif-journals?tab=rekap"
+                  className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5 cursor-pointer"
+                >
+                  Detail Rekap Santri &rarr;
+                </Link>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                {/* Tahfizh Widget */}
+                <div className="p-4 bg-emerald-50/20 dark:bg-emerald-950/5 border border-slate-100 dark:border-zinc-850 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-emerald-800 dark:text-emerald-400">I. Tahfizh</span>
+                    <TrendingUp className="h-4 w-4 text-emerald-600" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <h3 className="text-3xl font-black text-slate-800 dark:text-white">{musrifStats?.totalTahfizhSetoran || 0}</h3>
+                    <p className="text-[10px] text-slate-500 dark:text-zinc-400">Total setoran hafalan tercatat selama semester ini</p>
+                  </div>
+                </div>
+
+                {/* Tahsin Widget */}
+                <div className="p-4 bg-blue-50/20 dark:bg-blue-950/5 border border-slate-100 dark:border-zinc-850 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-blue-800 dark:text-blue-400">II. Tahsin</span>
+                    <Activity className="h-4 w-4 text-blue-600" />
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="text-3xl font-black text-slate-800 dark:text-white">{musrifStats?.tahsinOkPct || 0}%</h3>
+                    <p className="text-[10px] text-slate-500 dark:text-zinc-400">Santri binaan berpredikat tajwid & makhraj Baik/Sangat Baik</p>
+                    <div className="h-1.5 w-full bg-slate-100 dark:bg-zinc-800 rounded-full overflow-hidden">
+                      <div className="h-full bg-blue-500 rounded-full" style={{ width: `${musrifStats?.tahsinOkPct || 0}%` }} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Adab / Akhlak Widget */}
+                <div className="p-4 bg-purple-50/20 dark:bg-purple-950/5 border border-slate-100 dark:border-zinc-850 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-purple-800 dark:text-purple-400">III. Adab & Akhlak</span>
+                    <Heart className="h-4 w-4 text-purple-600" />
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="text-3xl font-black text-slate-800 dark:text-white">{musrifStats?.adabOkPct || 0}%</h3>
+                    <p className="text-[10px] text-slate-500 dark:text-zinc-400">Santri binaan berpredikat disiplin & sopan santun Baik/Sangat Baik</p>
+                    <div className="h-1.5 w-full bg-slate-100 dark:bg-zinc-800 rounded-full overflow-hidden">
+                      <div className="h-full bg-purple-500 rounded-full" style={{ width: `${musrifStats?.adabOkPct || 0}%` }} />
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
-            {/* No hafalan/tahfidz-tracking service is wired up yet — show an honest empty state
-                instead of a fabricated list of named santri and scores. */}
-            <div className="p-8 bg-slate-50 dark:bg-zinc-950/35 border border-slate-100 dark:border-zinc-850 rounded-2xl text-center text-xs text-slate-400 font-medium">
-              Belum ada data hafalan santri binaan yang terintegrasi ke sistem.
-            </div>
           </div>
 
-          {/* Kegiatan Pesantren Pekan Ini */}
-          <div className="bg-white dark:bg-zinc-900 border border-slate-150 dark:border-zinc-800 rounded-3xl p-6 shadow-xs mt-6">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="font-bold text-slate-800 dark:text-white text-sm">Kegiatan Pesantren Pekan Ini</h3>
-                <p className="text-xs text-slate-400 dark:text-zinc-500 mt-0.5">Daftar agenda kegiatan kesantrian dan pesantren selama satu pekan ke depan</p>
-              </div>
-              <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1 rounded-full border border-emerald-100 dark:border-emerald-900/30">
-                Kesantrian
-              </span>
+          {/* RIGHT COLUMN: My Halaqah Groups & Managerial Supervision */}
+          <div className="space-y-6">
+            
+            {/* Kelompok Halaqah List */}
+            <div className="bg-white dark:bg-zinc-900 border border-slate-150 dark:border-zinc-800 rounded-3xl p-6 shadow-xs">
+              <h3 className="font-bold text-slate-800 dark:text-white text-sm mb-4">Daftar Kelompok Halaqah Saya</h3>
+              
+              {myGroups.length === 0 ? (
+                <div className="p-6 bg-slate-50 dark:bg-zinc-950/35 border border-slate-100 dark:border-zinc-850 rounded-2xl text-center text-xs text-slate-400">
+                  Belum ada kelompok halaqah yang ditugaskan kepada Anda.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {myGroups.map((grp) => {
+                    const groupStudents = allMembers.filter(m => m.groupId === grp.id);
+                    return (
+                      <div key={grp.id} className="p-4 bg-slate-50 dark:bg-zinc-800/40 border border-slate-100 dark:border-zinc-850 rounded-2xl space-y-1">
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-bold text-slate-800 dark:text-zinc-200 text-xs">{grp.groupName}</h4>
+                          <span className="text-[10px] font-mono font-bold text-blue-600 bg-blue-50 dark:bg-blue-950/30 px-2 py-0.5 rounded-md">
+                            {groupStudents.length} Santri
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          Lokasi: {grp.location || "-"} | Deskripsi: {grp.description || "-"}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
-            {weeklyPesantrenEvents.length === 0 ? (
-              <div className="p-6 bg-slate-50 dark:bg-zinc-950/35 border border-slate-100 dark:border-zinc-850 rounded-2xl text-center text-xs text-slate-400 font-medium">
-                Tidak ada agenda kegiatan khusus pesantren/halaqah dalam pekan ini.
+            {/* Agenda Pesantren Pekan Ini */}
+            <div className="bg-white dark:bg-zinc-900 border border-slate-150 dark:border-zinc-800 rounded-3xl p-6 shadow-xs">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-bold text-slate-800 dark:text-white text-sm">Agenda Sekolah Hari Ini</h3>
+                <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-0.5 rounded-full border border-emerald-100 dark:border-emerald-900/30 shrink-0">
+                  Kalender Akademik
+                </span>
               </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {weeklyPesantrenEvents.map((evt, idx) => {
-                  const styles = getCategoryStyles(evt.categoryName || evt.categoryId);
-                  return (
-                    <div key={idx} className="flex gap-3 p-3.5 bg-slate-50 dark:bg-zinc-800/45 border border-slate-100 dark:border-zinc-850 rounded-2xl">
-                      <div className="w-1.5 rounded-full shrink-0" style={{ backgroundColor: styles.color }} />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between gap-1.5">
+
+              {todayEvents.length === 0 ? (
+                <div className="p-6 bg-slate-50 dark:bg-zinc-950/35 border border-slate-100 dark:border-zinc-850 rounded-2xl text-center text-xs text-slate-400">
+                  Tidak ada agenda kegiatan khusus hari ini.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {todayEvents.map((evt, idx) => {
+                    const styles = getCategoryStyles(evt.categoryName || evt.categoryId);
+                    return (
+                      <div key={idx} className="flex gap-3 p-3.5 bg-slate-50 dark:bg-zinc-800/45 border border-slate-100 dark:border-zinc-850 rounded-2xl">
+                        <div className="w-1.5 rounded-full shrink-0" style={{ backgroundColor: styles.color }} />
+                        <div className="flex-1 min-w-0">
                           <span className={`px-2 py-0.5 rounded text-[8px] font-extrabold uppercase border ${styles.bg} ${styles.text} ${styles.border}`}>
                             {evt.categoryName || "Pesantren"}
                           </span>
-                          <span className="text-[9px] font-mono font-medium text-slate-400 shrink-0">
-                            {evt.startDate === evt.endDate ? evt.startDate : `${evt.startDate} s/d ${evt.endDate}`}
-                          </span>
+                          <h4 className="text-xs font-bold text-slate-800 dark:text-white mt-1.5 truncate">{evt.title}</h4>
+                          {evt.description && (
+                            <p className="text-[10px] text-slate-400 dark:text-zinc-500 mt-0.5 line-clamp-1">{evt.description}</p>
+                          )}
                         </div>
-                        <h4 className="text-xs font-bold text-slate-800 dark:text-white mt-1.5 truncate">{evt.title}</h4>
-                        {evt.description && (
-                          <p className="text-[10px] text-slate-400 dark:text-zinc-500 mt-0.5 line-clamp-1">{evt.description}</p>
-                        )}
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
 
-          {/* Agenda & Mutabaah Asrama */}
-          <div className="space-y-6">
+            {/* Supervisi Manajerial */}
             <div className="bg-white dark:bg-zinc-900 border border-slate-150 dark:border-zinc-800 rounded-3xl p-6 shadow-xs">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-bold text-slate-800 dark:text-white text-sm">Supervisi Manajerial Saya</h3>
@@ -1212,12 +1421,6 @@ export const Dashboard: React.FC = () => {
                     <div><span className="text-slate-400 font-medium">Supervisor:</span> <strong>{nextManagerialSupervision.supervisorName}</strong></div>
                     <div><span className="text-slate-400 font-medium">Aspek:</span> <strong>{nextManagerialSupervision.instrumentName}</strong></div>
                   </div>
-                  <Link
-                    to="/supervision-managerial"
-                    className="block text-center text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-xl mt-2 transition-colors"
-                  >
-                    Lihat Lembar Penilaian
-                  </Link>
                 </div>
               ) : (
                 <div className="p-4 bg-slate-50 dark:bg-zinc-950/30 border border-slate-100 dark:border-zinc-850 rounded-2xl text-center text-xs text-slate-400">
@@ -1249,39 +1452,6 @@ export const Dashboard: React.FC = () => {
               ) : null}
             </div>
 
-            <div className="bg-white dark:bg-zinc-900 border border-slate-150 dark:border-zinc-800 rounded-3xl p-6 shadow-xs">
-              <h3 className="font-bold text-slate-800 dark:text-white text-sm mb-3">Agenda Halaqah Asrama</h3>
-              {/* No halaqah-agenda service is wired up yet — show an honest empty state
-                  instead of a fabricated routine schedule. */}
-              <div className="p-6 bg-slate-50 dark:bg-zinc-950/35 border border-slate-100 dark:border-zinc-850 rounded-2xl text-center text-xs text-slate-400 font-medium">
-                Belum ada agenda halaqah asrama.
-              </div>
-            </div>
-
-            <div className="bg-white dark:bg-zinc-900 border border-slate-150 dark:border-zinc-800 rounded-3xl p-6 shadow-xs">
-              <h3 className="font-bold text-slate-800 dark:text-white text-sm mb-3.5">Target & Realisasi Bulanan</h3>
-              {/* No ziyadah/kehadiran-tracking service is wired up yet — show real 0% instead of fabricated percentages. */}
-              <div className="space-y-4">
-                <div>
-                  <div className="flex justify-between text-xs font-medium text-slate-500 mb-1">
-                    <span>Realisasi Setoran Ziyadah</span>
-                    <span className="font-bold text-slate-800 dark:text-white">0%</span>
-                  </div>
-                  <div className="h-1.5 w-full bg-slate-100 dark:bg-zinc-850 rounded-full overflow-hidden">
-                    <div className="h-full bg-emerald-500" style={{ width: "0%" }} />
-                  </div>
-                </div>
-                <div>
-                  <div className="flex justify-between text-xs font-medium text-slate-500 mb-1">
-                    <span>Kehadiran Shalat Subuh Santri</span>
-                    <span className="font-bold text-slate-800 dark:text-white">0%</span>
-                  </div>
-                  <div className="h-1.5 w-full bg-slate-100 dark:bg-zinc-850 rounded-full overflow-hidden">
-                    <div className="h-full bg-blue-500" style={{ width: "0%" }} />
-                  </div>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       </div>

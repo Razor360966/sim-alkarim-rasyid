@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import { Dialog } from "../components/Dialog";
@@ -95,8 +96,22 @@ export const MusrifJournals: React.FC = () => {
     enabled: isAdmin
   });
 
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab");
+
   // Tab State
   const [activeTab, setActiveTab] = useState<"kelompok" | "jurnal" | "rekap">("kelompok");
+
+  useEffect(() => {
+    if (tabParam === "kelompok" || tabParam === "jurnal" || tabParam === "rekap") {
+      setActiveTab(tabParam);
+    }
+  }, [tabParam]);
+
+  const handleTabChange = (tab: "kelompok" | "jurnal" | "rekap") => {
+    setActiveTab(tab);
+    setSearchParams({ tab });
+  };
 
   // --- TAB 3: REKAP PERKEMBANGAN SANTRI STATE ---
   const [selectedRecapStudentId, setSelectedRecapStudentId] = useState<string>("");
@@ -687,7 +702,7 @@ export const MusrifJournals: React.FC = () => {
       {/* Tabs */}
       <div className="flex border-b border-slate-200 dark:border-zinc-800 overflow-x-auto">
         <button
-          onClick={() => setActiveTab("kelompok")}
+          onClick={() => handleTabChange("kelompok")}
           className={`px-5 py-3 font-semibold text-sm transition-colors border-b-2 -mb-px flex items-center gap-2 cursor-pointer whitespace-nowrap ${
             activeTab === "kelompok"
               ? "border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400"
@@ -698,7 +713,7 @@ export const MusrifJournals: React.FC = () => {
           Kelompok Halaqah
         </button>
         <button
-          onClick={() => setActiveTab("jurnal")}
+          onClick={() => handleTabChange("jurnal")}
           className={`px-5 py-3 font-semibold text-sm transition-colors border-b-2 -mb-px flex items-center gap-2 cursor-pointer whitespace-nowrap ${
             activeTab === "jurnal"
               ? "border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400"
@@ -709,7 +724,7 @@ export const MusrifJournals: React.FC = () => {
           Jurnal Halaqah
         </button>
         <button
-          onClick={() => setActiveTab("rekap")}
+          onClick={() => handleTabChange("rekap")}
           className={`px-5 py-3 font-semibold text-sm transition-colors border-b-2 -mb-px flex items-center gap-2 cursor-pointer whitespace-nowrap ${
             activeTab === "rekap"
               ? "border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400"

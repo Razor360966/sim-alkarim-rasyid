@@ -97,12 +97,12 @@ export const MainLayout: React.FC = () => {
 
     // Supervisi
     { name: "Supervisi Akademik", path: "/supervision-academic", icon: Shield, roles: ["admin", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan", "guru"], group: "Supervisi" },
-    { name: "Supervisi Manajerial", path: "/supervision-managerial", icon: Shield, roles: ["admin", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan", "musrif"], group: "Supervisi" },
+    { name: "Supervisi Manajerial", path: "/supervision-managerial", icon: Shield, roles: ["admin", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan"], group: "Supervisi" },
     { name: "Instrumen Supervisi", path: "/supervision-instruments", icon: FileCheck, roles: ["admin", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan"], group: "Supervisi" },
 
-    { name: "Rapor Kinerja SDM", path: "/sdm-performance", icon: Award, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "tata usaha", "operator", "ketua yayasan"], group: "Evaluasi Kinerja" },
+    { name: "Rapor Kinerja SDM", path: "/sdm-performance", icon: Award, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Evaluasi Kinerja" },
 
-    { name: "Profil Saya", path: "/profile", icon: UserIcon, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "tata usaha", "operator", "ketua yayasan"], group: "Akun Saya" },
+    { name: "Profil Saya", path: "/profile", icon: UserIcon, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Akun Saya" },
 
     { name: "Pengaturan Sekolah", path: "/settings", icon: SettingsIcon, roles: ["admin", "kepala sekolah", "operator"], group: "Pengaturan Sekolah" },
     { name: "Agenda Rutin", path: "/settings/agendas", icon: Calendar, roles: ["admin", "kepala sekolah", "operator"], group: "Pengaturan Sekolah" },
@@ -110,7 +110,18 @@ export const MainLayout: React.FC = () => {
 
   // Filter menu based on user multi-roles array
   const userRoles = user.roles || [user.role];
-  const allowedMenuItems = menuItems.filter(item => item.roles.some(r => userRoles.includes(r)));
+  let allowedMenuItems = menuItems.filter(item => item.roles.some(r => userRoles.includes(r)));
+
+  if (user.role === "musrif") {
+    allowedMenuItems = [
+      { name: "Dashboard", path: "/", icon: LayoutDashboard, roles: ["musrif"] },
+      { name: "Kelompok Halaqah", path: "/musrif-journals?tab=kelompok", icon: Users, roles: ["musrif"], group: "Halaqah Musrif" },
+      { name: "Mutabaah Harian", path: "/musrif-journals?tab=jurnal", icon: BookOpen, roles: ["musrif"], group: "Halaqah Musrif" },
+      { name: "Rekap Perkembangan Santri", path: "/musrif-journals?tab=rekap", icon: Award, roles: ["musrif"], group: "Halaqah Musrif" },
+      { name: "Profil Saya", path: "/profile", icon: UserIcon, roles: ["musrif"], group: "Akun Saya" },
+      { name: "Pengaturan Akun", path: "/change-password", icon: SettingsIcon, roles: ["musrif"], group: "Akun Saya" }
+    ];
+  }
 
   const handleLogout = async () => {
     try {
