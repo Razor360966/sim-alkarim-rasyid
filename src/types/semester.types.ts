@@ -19,4 +19,21 @@ export interface Semester {
   isDeleted: boolean;
   deletedAt: string | null;
   deletedBy: string | null;
+
+  // Weeks Configuration fields
+  manualWeeksConfigured?: boolean;
+  totalWeeks?: number;
+  effectiveWeeks?: number;
+  ineffectiveWeeks?: number;
+  assessmentWeeks?: number;
+  pasPatWeeks?: number;
+  projectWeeks?: number;
+  otherWeeks?: number;
+  details?: {
+    month: string;
+    totalWeeks: number;
+    effectiveWeeks: number;
+    effectiveWeeksByGrade?: Record<string, number>;
+    notes?: string;
+  }[];
 }

@@ -132,7 +132,16 @@ export const semesterService = {
             updatedBy: data.updatedBy || "",
             isDeleted: data.isDeleted || false,
             deletedAt: data.deletedAt ? toDateString(data.deletedAt) : null,
-            deletedBy: data.deletedBy || null
+            deletedBy: data.deletedBy || null,
+            manualWeeksConfigured: data.manualWeeksConfigured || false,
+            totalWeeks: data.totalWeeks || 0,
+            effectiveWeeks: data.effectiveWeeks || 0,
+            ineffectiveWeeks: data.ineffectiveWeeks || 0,
+            assessmentWeeks: data.assessmentWeeks || 0,
+            pasPatWeeks: data.pasPatWeeks || 0,
+            projectWeeks: data.projectWeeks || 0,
+            otherWeeks: data.otherWeeks || 0,
+            details: data.details || []
           } as Semester);
         }
       });

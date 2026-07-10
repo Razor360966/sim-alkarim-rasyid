@@ -46,6 +46,7 @@ export interface EffectiveWeeksAnalysis {
     month: string; // "Juli", "Agustus", etc.
     totalWeeks: number;
     effectiveWeeks: number;
+    effectiveWeeksByGrade?: Record<string, number>;
     ineffectiveWeeks: number;
     notes: string;
   }[];

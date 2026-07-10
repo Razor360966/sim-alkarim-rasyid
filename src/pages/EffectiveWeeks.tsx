@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { academicPlanningService } from "../services/academicPlanning.service";
 import { semesterService } from "../services/semester.service";
+import { classService } from "../services/classService";
 import { Semester, EffectiveWeeksAnalysis } from "../types";
 import { useToast } from "../contexts/ToastContext";
 import { useAuth } from "../contexts/AuthContext";
@@ -32,6 +33,8 @@ export const EffectiveWeeks: React.FC = () => {
   const [selectedSemesterId, setSelectedSemesterId] = useState<string>("");
   const [analysis, setAnalysis] = useState<EffectiveWeeksAnalysis | null>(null);
   const [loading, setLoading] = useState(true);
+  const [gradeLevels, setGradeLevels] = useState<string[]>(["VII", "VIII", "IX"]);
+  const [selectedGrade, setSelectedGrade] = useState<string>("VII");
 
   // Manual weeks config states
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
@@ -51,11 +54,22 @@ export const EffectiveWeeks: React.FC = () => {
                          currentUser?.role?.toLowerCase().includes("wakil") || 
                          currentUser?.role?.toLowerCase().includes("kurikulum");
 
-  // Load Semesters
+  // Load Semesters and Class Levels
   useEffect(() => {
-    semesterService.getSemesters()
-      .then((sems) => {
+    setLoading(true);
+    Promise.all([
+      semesterService.getSemesters(),
+      classService.getClasses().catch(() => [])
+    ])
+      .then(([sems, clss]) => {
         setSemesters(sems);
+        const uniqueGrades = Array.from(new Set(clss.map((c: any) => c.gradeLevel).filter(Boolean)));
+        const sortedGrades = uniqueGrades.length > 0 ? uniqueGrades.sort() : ["VII", "VIII", "IX"];
+        setGradeLevels(sortedGrades);
+        if (sortedGrades.length > 0) {
+          setSelectedGrade(sortedGrades[0]);
+        }
+        
         const active = sems.find(s => s.isActive);
         if (active) {
           setSelectedSemesterId(active.id);
@@ -63,7 +77,8 @@ export const EffectiveWeeks: React.FC = () => {
           setSelectedSemesterId(sems[0].id);
         }
       })
-      .catch((err) => showToast("Gagal memuat semester: " + err.message, "error"));
+      .catch((err) => showToast("Gagal memuat master data: " + err.message, "error"))
+      .finally(() => setLoading(false));
   }, []);
 
   const currentSemester = semesters.find(s => s.id === selectedSemesterId);
@@ -219,6 +234,14 @@ export const EffectiveWeeks: React.FC = () => {
     }
   };
 
+  const computedEffectiveWeeks = analysis
+    ? (analysis.details || []).reduce((sum, item) => sum + (item.effectiveWeeksByGrade?.[selectedGrade] ?? item.effectiveWeeks), 0)
+    : 0;
+
+  const computedIneffectiveWeeks = analysis
+    ? Math.max(0, analysis.totalWeeks - computedEffectiveWeeks)
+    : 0;
+
   return (
     <div className="space-y-6" id="effective-weeks-container">
       {/* Header */}
@@ -247,6 +270,25 @@ export const EffectiveWeeks: React.FC = () => {
         </div>
       </div>
 
+      {/* Grade Level Selector Tabs */}
+      {analysis && gradeLevels.length > 1 && (
+        <div className="flex border-b border-slate-200 dark:border-zinc-800 gap-2">
+          {gradeLevels.map(grade => (
+            <button
+              key={grade}
+              onClick={() => setSelectedGrade(grade)}
+              className={`pb-2.5 px-4 text-xs font-extrabold border-b-2 transition-all cursor-pointer ${
+                selectedGrade === grade
+                  ? "border-indigo-600 text-indigo-600 dark:text-indigo-400"
+                  : "border-transparent text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-300"
+              }`}
+            >
+              Jenjang {grade}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* KPI Stats Cards */}
       {analysis && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
@@ -269,8 +311,8 @@ export const EffectiveWeeks: React.FC = () => {
           <div className="bg-emerald-50/40 dark:bg-emerald-950/5 border border-emerald-100 dark:border-emerald-900/40 p-5 rounded-2xl shadow-xs relative overflow-hidden">
             <div className="flex justify-between items-start">
               <div>
-                <p className="text-xs font-bold text-emerald-600/80 dark:text-emerald-400 uppercase tracking-wider">Pekan Efektif Belajar</p>
-                <h3 className="text-3xl font-extrabold text-emerald-700 dark:text-emerald-300 mt-1">{analysis.effectiveWeeks} Pekan</h3>
+                <p className="text-xs font-bold text-emerald-600/80 dark:text-emerald-400 uppercase tracking-wider">Pekan Efektif Belajar ({selectedGrade})</p>
+                <h3 className="text-3xl font-extrabold text-emerald-700 dark:text-emerald-300 mt-1">{computedEffectiveWeeks} Pekan</h3>
               </div>
               <div className="h-10 w-10 rounded-xl bg-emerald-100 dark:bg-emerald-950/45 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
                 <TrendingUp className="h-5 w-5" />
@@ -285,8 +327,8 @@ export const EffectiveWeeks: React.FC = () => {
           <div className="bg-rose-50/40 dark:bg-rose-950/5 border border-rose-100 dark:border-rose-900/40 p-5 rounded-2xl shadow-xs relative overflow-hidden">
             <div className="flex justify-between items-start">
               <div>
-                <p className="text-xs font-bold text-rose-600/80 dark:text-rose-400 uppercase tracking-wider">Pekan Tidak Efektif</p>
-                <h3 className="text-3xl font-extrabold text-rose-700 dark:text-rose-300 mt-1">{analysis.ineffectiveWeeks} Pekan</h3>
+                <p className="text-xs font-bold text-rose-600/80 dark:text-rose-400 uppercase tracking-wider">Pekan Tidak Efektif ({selectedGrade})</p>
+                <h3 className="text-3xl font-extrabold text-rose-700 dark:text-rose-300 mt-1">{computedIneffectiveWeeks} Pekan</h3>
               </div>
               <div className="h-10 w-10 rounded-xl bg-rose-100 dark:bg-rose-950/45 flex items-center justify-center text-rose-600 dark:text-rose-400">
                 <TrendingDown className="h-5 w-5" />
@@ -366,32 +408,36 @@ export const EffectiveWeeks: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-zinc-850">
-                {analysis.details.map((row, idx) => (
-                  <tr key={row.month} className="hover:bg-slate-50/30 dark:hover:bg-zinc-900/30 transition-colors">
-                    <td className="p-4 text-sm font-medium text-slate-500 dark:text-zinc-500">{idx + 1}</td>
-                    <td className="p-4 text-sm font-semibold text-slate-800 dark:text-zinc-200">{row.month}</td>
-                    <td className="p-4 text-sm font-bold text-slate-800 dark:text-zinc-200 text-center bg-slate-50/40 dark:bg-zinc-950/20">{row.totalWeeks}</td>
-                    <td className="p-4 text-sm font-bold text-emerald-600 dark:text-emerald-400 text-center">{row.effectiveWeeks}</td>
-                    <td className="p-4 text-sm font-bold text-rose-500 text-center">{row.ineffectiveWeeks}</td>
-                    <td className="p-4">
-                      <div className="flex items-center gap-1 text-xs text-slate-600 dark:text-zinc-400">
-                        {row.ineffectiveWeeks > 0 ? (
-                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-rose-500 flex-shrink-0" />
-                        ) : (
-                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 flex-shrink-0" />
-                        )}
-                        <span className="truncate max-w-md" title={row.notes}>{row.notes}</span>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {analysis.details.map((row, idx) => {
+                  const effWeeks = row.effectiveWeeksByGrade?.[selectedGrade] ?? row.effectiveWeeks;
+                  const ineffWeeks = Math.max(0, row.totalWeeks - effWeeks);
+                  return (
+                    <tr key={row.month} className="hover:bg-slate-50/30 dark:hover:bg-zinc-900/30 transition-colors">
+                      <td className="p-4 text-sm font-medium text-slate-500 dark:text-zinc-500">{idx + 1}</td>
+                      <td className="p-4 text-sm font-semibold text-slate-800 dark:text-zinc-200">{row.month}</td>
+                      <td className="p-4 text-sm font-bold text-slate-800 dark:text-zinc-200 text-center bg-slate-50/40 dark:bg-zinc-950/20">{row.totalWeeks}</td>
+                      <td className="p-4 text-sm font-bold text-emerald-600 dark:text-emerald-400 text-center">{effWeeks}</td>
+                      <td className="p-4 text-sm font-bold text-rose-500 text-center">{ineffWeeks}</td>
+                      <td className="p-4">
+                        <div className="flex items-center gap-1 text-xs text-slate-600 dark:text-zinc-400">
+                          {ineffWeeks > 0 ? (
+                            <span className="inline-block h-1.5 w-1.5 rounded-full bg-rose-500 flex-shrink-0" />
+                          ) : (
+                            <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 flex-shrink-0" />
+                          )}
+                          <span className="truncate max-w-md" title={row.notes}>{row.notes}</span>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
               <tfoot>
                 <tr className="bg-slate-50/75 dark:bg-zinc-800/40 font-bold border-t border-slate-200 dark:border-zinc-800 text-slate-800 dark:text-zinc-100">
                   <td className="p-4 text-sm text-center" colSpan={2}>JUMLAH / TOTAL</td>
                   <td className="p-4 text-sm text-center bg-slate-50/60 dark:bg-zinc-950/35">{analysis.totalWeeks}</td>
-                  <td className="p-4 text-sm text-center text-emerald-600 dark:text-emerald-400">{analysis.effectiveWeeks}</td>
-                  <td className="p-4 text-sm text-center text-rose-500">{analysis.ineffectiveWeeks}</td>
+                  <td className="p-4 text-sm text-center text-emerald-600 dark:text-emerald-400">{computedEffectiveWeeks}</td>
+                  <td className="p-4 text-sm text-center text-rose-500">{computedIneffectiveWeeks}</td>
                   <td className="p-4 text-xs text-slate-400 font-semibold italic">Perhitungan Tersertifikasi System RPE</td>
                 </tr>
               </tfoot>

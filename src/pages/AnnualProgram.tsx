@@ -177,7 +177,13 @@ export const AnnualProgram: React.FC = () => {
       )
     )
       .then((analyses) => {
-        const totalWeeks = analyses.reduce((sum, current) => sum + current.effectiveWeeks, 0);
+        const totalWeeks = analyses.reduce((sum, current) => {
+          const levelEffectiveWeeks = current.details?.reduce((s: number, m: any) => {
+            const ew = m.effectiveWeeksByGrade?.[gradeLevel] ?? m.effectiveWeeks;
+            return s + ew;
+          }, 0) ?? current.effectiveWeeks;
+          return sum + levelEffectiveWeeks;
+        }, 0);
         setEffectiveWeeksYear(totalWeeks);
 
         const currentWeeklyJp = selectedSubjectObj ? selectedSubjectObj.jp : 0;
@@ -190,7 +196,7 @@ export const AnnualProgram: React.FC = () => {
       })
       .catch((err) => showToast("Gagal menganalisis JP Efektif: " + err.message, "error"))
       .finally(() => setLoading(false));
-  }, [selectedAcademicYearId, selectedClassId, selectedSubjectId, semesters, selectedSubjectId]);
+  }, [selectedAcademicYearId, selectedClassId, selectedSubjectId, semesters, selectedSubjectId, gradeLevel]);
 
   // Load the annual program (Prota) from Firestore
   useEffect(() => {

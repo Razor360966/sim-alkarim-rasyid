@@ -649,8 +649,8 @@ export const academicPlanningService = {
               id: eventId,
               startDate: evt.startDate || day.date,
               endDate: evt.endDate || day.date,
-              academicYearId,
-              semesterId,
+              academicYearId: (evt as any).academicYearId || day.academicYearId || academicYearId,
+              semesterId: (evt as any).semesterId || day.semesterId || semesterId,
               updatedAt: serverTimestamp()
             }
           });
@@ -910,6 +910,11 @@ export const academicPlanningService = {
         month: monthKey,
         totalWeeks: totalInMonth,
         effectiveWeeks: effectiveInMonth,
+        effectiveWeeksByGrade: {
+          "VII": effectiveInMonth,
+          "VIII": effectiveInMonth,
+          "IX": effectiveInMonth
+        },
         ineffectiveWeeks: ineffectiveInMonth,
         notes: holidayNotes.length > 0 ? holidayNotes.join(", ") : "Hari efektif belajar penuh"
       });
@@ -975,24 +980,34 @@ export const academicPlanningService = {
     const weeklyJpViiiMulti = weeklyJpViii * rombuls.VIII;
     const weeklyJpIxMulti = weeklyJpIx * rombuls.IX;
 
+    const getLevelWeeks = (grade: string) => {
+      return weeksAnalysis.details?.reduce((sum: number, m: any) => {
+        return sum + (m.effectiveWeeksByGrade?.[grade] ?? m.effectiveWeeks);
+      }, 0) ?? weeksAnalysis.effectiveWeeks;
+    };
+
+    const weeksVII = getLevelWeeks("VII");
+    const weeksVIII = getLevelWeeks("VIII");
+    const weeksIX = getLevelWeeks("IX");
+
     const byGrade: EffectiveJpAnalysis["byGrade"] = [
       {
         gradeLevel: "VII",
         totalWeeklyJp: weeklyJpViiMulti,
-        effectiveJpSemester: weeklyJpViiMulti * effWeeksSemester,
-        effectiveJpYear: weeklyJpViiMulti * effWeeksYear
+        effectiveJpSemester: weeklyJpViiMulti * weeksVII,
+        effectiveJpYear: weeklyJpViiMulti * (weeksVII * 2)
       },
       {
         gradeLevel: "VIII",
         totalWeeklyJp: weeklyJpViiiMulti,
-        effectiveJpSemester: weeklyJpViiiMulti * effWeeksSemester,
-        effectiveJpYear: weeklyJpViiiMulti * effWeeksYear
+        effectiveJpSemester: weeklyJpViiiMulti * weeksVIII,
+        effectiveJpYear: weeklyJpViiiMulti * (weeksVIII * 2)
       },
       {
         gradeLevel: "IX",
         totalWeeklyJp: weeklyJpIxMulti,
-        effectiveJpSemester: weeklyJpIxMulti * effWeeksSemester,
-        effectiveJpYear: weeklyJpIxMulti * effWeeksYear
+        effectiveJpSemester: weeklyJpIxMulti * weeksIX,
+        effectiveJpYear: weeklyJpIxMulti * (weeksIX * 2)
       }
     ];
 
@@ -1017,8 +1032,11 @@ export const academicPlanningService = {
         (subjectWeeklyViii * rombuls.VIII) + 
         (subjectWeeklyIx * rombuls.IX);
 
-      const effectiveSemesterGanjil = totalWeeklyJpWithRombel * effWeeksSemester;
-      const effectiveSemesterGenap = totalWeeklyJpWithRombel * effWeeksSemester; // standard projection
+      const effectiveSemesterGanjil = 
+        (subjectWeeklyVii * rombuls.VII * weeksVII) + 
+        (subjectWeeklyViii * rombuls.VIII * weeksVIII) + 
+        (subjectWeeklyIx * rombuls.IX * weeksIX);
+      const effectiveSemesterGenap = effectiveSemesterGanjil; // standard projection
       const effectiveTahunan = effectiveSemesterGanjil + effectiveSemesterGenap;
 
       return {

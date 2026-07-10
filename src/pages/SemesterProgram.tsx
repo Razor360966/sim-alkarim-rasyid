@@ -335,8 +335,12 @@ export const SemesterProgram: React.FC = () => {
       });
       setWeekColumns(cols);
     } else if (weeksAnalysis) {
-      setEffectiveWeeksCount(weeksAnalysis.effectiveWeeks);
-      setEffectiveJpSemester(currentWeeklyJp * weeksAnalysis.effectiveWeeks);
+      const levelEffectiveWeeks = weeksAnalysis.details.reduce((sum: number, m: any) => {
+        const ew = m.effectiveWeeksByGrade?.[gradeLevel] ?? m.effectiveWeeks;
+        return sum + ew;
+      }, 0);
+      setEffectiveWeeksCount(levelEffectiveWeeks);
+      setEffectiveJpSemester(currentWeeklyJp * levelEffectiveWeeks);
 
       const cols: WeekColumn[] = [];
       weeksAnalysis.details.forEach((m: any) => {
@@ -351,7 +355,7 @@ export const SemesterProgram: React.FC = () => {
       });
       setWeekColumns(cols);
     }
-  }, [weeksAnalysis, isManualWeeks, customWeeksConfig, selectedSubjectObj]);
+  }, [weeksAnalysis, isManualWeeks, customWeeksConfig, selectedSubjectObj, gradeLevel]);
 
   // Load Prota (source master) and Promes
   useEffect(() => {
@@ -425,7 +429,10 @@ export const SemesterProgram: React.FC = () => {
   const isWeekEffective = (monthName: string, weekIndex: number, weekKey: string): boolean => {
     const quota = isManualWeeks
       ? customWeeksConfig.find(m => m.month === monthName)?.effectiveWeeks
-      : weeksAnalysis?.details?.find((m: any) => m.month === monthName)?.effectiveWeeks;
+      : (() => {
+          const m = weeksAnalysis?.details?.find((m: any) => m.month === monthName);
+          return m ? (m.effectiveWeeksByGrade?.[gradeLevel] ?? m.effectiveWeeks) : undefined;
+        })();
 
     if (quota === undefined || quota === null) return false;
 
@@ -537,7 +544,7 @@ export const SemesterProgram: React.FC = () => {
         const initialConfig = weeksAnalysis.details.map((m: any) => ({
           month: m.month,
           totalWeeks: m.totalWeeks,
-          effectiveWeeks: m.effectiveWeeks,
+          effectiveWeeks: m.effectiveWeeksByGrade?.[gradeLevel] ?? m.effectiveWeeks,
           notes: m.notes || ""
         }));
         setCustomWeeksConfig(initialConfig);
@@ -673,7 +680,12 @@ export const SemesterProgram: React.FC = () => {
     for (let w = 0; w < weekColumns.length; w++) {
       if (currentMateriIndex >= flatMateris.length) break;
 
-      const weekKey = weekColumns[w].key;
+      const nextCol = weekColumns[w];
+      if (!isWeekEffective(nextCol.month, nextCol.weekIndex, nextCol.key)) {
+        continue;
+      }
+
+      const weekKey = nextCol.key;
       let weekCapacity = weeklyJp;
 
       while (weekCapacity > 0 && currentMateriIndex < flatMateris.length) {

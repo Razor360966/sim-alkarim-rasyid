@@ -3,9 +3,13 @@ import { academicPlanningService } from "../services/academicPlanning.service";
 import { semesterService } from "../services/semester.service";
 import { academicYearService } from "../services/academicYearService";
 import { schoolSettingsService } from "../services/schoolSettings.service";
-import { Semester, AcademicYear, AcademicReference, AcademicCalendarDay, AcademicEvent } from "../types";
+import { Semester, AcademicYear, AcademicReference, AcademicCalendarDay, AcademicEvent, Teacher } from "../types";
+import { teacherService } from "../services/teacherService";
+import { classService } from "../services/classService";
+import ExcelJS from "exceljs";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
+import { exportAcademicCalendarExcel } from "../utils/excel/calendar.export";
 import { 
   Calendar, 
   List, 
@@ -259,8 +263,11 @@ export const AcademicCalendar: React.FC = () => {
   // Semesters & Years
   const [semesters, setSemesters] = useState<Semester[]>([]);
   const [selectedSemesterId, setSelectedSemesterId] = useState<string>("");
+  const [weeksConfigSemesterId, setWeeksConfigSemesterId] = useState<string>("");
   const [activeSemester, setActiveSemester] = useState<Semester | null>(null);
   const [references, setReferences] = useState<AcademicReference[]>([]);
+  const [teachers, setTeachers] = useState<Teacher[]>([]);
+  const [gradeLevels, setGradeLevels] = useState<string[]>(["VII", "VIII", "IX"]);
   
   // Current calendar day state
   const [calendarDays, setCalendarDays] = useState<AcademicCalendarDay[]>([]);
@@ -271,6 +278,7 @@ export const AcademicCalendar: React.FC = () => {
     month: string;
     totalWeeks: number;
     effectiveWeeks: number;
+    effectiveWeeksByGrade?: Record<string, number>;
     notes?: string;
   }[]>([]);
   const [isWeeksConfigLoading, setIsWeeksConfigLoading] = useState(false);
@@ -362,13 +370,21 @@ export const AcademicCalendar: React.FC = () => {
   const loadInitialData = async () => {
     setLoading(true);
     try {
-      const [sems, refs, settings] = await Promise.all([
+      const [sems, refs, settings, tchs, clss] = await Promise.all([
         semesterService.getSemesters(),
         academicPlanningService.getReferences(),
-        schoolSettingsService.getSettings()
+        schoolSettingsService.getSettings(),
+        teacherService.getTeachers().catch(() => []),
+        classService.getClasses().catch(() => [])
       ]);
       setSemesters(sems);
       setReferences(refs);
+      setTeachers(tchs);
+      
+      const uniqueGrades = Array.from(new Set(clss.map((c: any) => c.gradeLevel).filter(Boolean)));
+      const sortedGrades = uniqueGrades.length > 0 ? uniqueGrades.sort() : ["VII", "VIII", "IX"];
+      setGradeLevels(sortedGrades);
+
       if (settings?.activeDays) {
         setActiveDays(settings.activeDays);
       }
@@ -378,9 +394,11 @@ export const AcademicCalendar: React.FC = () => {
       if (active) {
         setActiveSemester(active);
         setSelectedSemesterId(active.id);
+        setWeeksConfigSemesterId(active.id);
         setCurrentDate(new Date(active.startDate));
       } else if (sems.length > 0) {
         setSelectedSemesterId(sems[0].id);
+        setWeeksConfigSemesterId(sems[0].id);
         setCurrentDate(new Date(sems[0].startDate));
       }
 
@@ -408,7 +426,21 @@ export const AcademicCalendar: React.FC = () => {
         semesterObj.academicYearId,
         semesterObj.id
       );
-      setWeeksConfig(analysis.details || []);
+      
+      const processedDetails = (analysis.details || []).map((item: any) => {
+        const gradeMap: Record<string, number> = { ...(item.effectiveWeeksByGrade || {}) };
+        gradeLevels.forEach(grade => {
+          if (gradeMap[grade] === undefined) {
+            gradeMap[grade] = item.effectiveWeeks;
+          }
+        });
+        return {
+          ...item,
+          effectiveWeeks: item.effectiveWeeks !== undefined ? item.effectiveWeeks : (gradeMap[gradeLevels[0]] || 0),
+          effectiveWeeksByGrade: gradeMap
+        };
+      });
+      setWeeksConfig(processedDetails);
     } catch (error: any) {
       console.error("Gagal memuat konfigurasi pekan:", error);
     } finally {
@@ -417,7 +449,7 @@ export const AcademicCalendar: React.FC = () => {
   };
 
   const handleSaveWeeksConfig = async () => {
-    const sem = semesters.find(s => s.id === selectedSemesterId);
+    const sem = semesters.find(s => s.id === weeksConfigSemesterId);
     if (!sem) return;
     try {
       setLoading(true);
@@ -455,23 +487,40 @@ export const AcademicCalendar: React.FC = () => {
     loadInitialData();
   }, []);
 
-  // Reload calendar events when selectedSemesterId changes
+  // Reload calendar events when selectedSemesterId changes (loads full academic year events)
   useEffect(() => {
     if (selectedSemesterId) {
       const sem = semesters.find(s => s.id === selectedSemesterId);
       if (sem) {
         setLoading(true);
-        academicPlanningService.getCalendarDays(sem.academicYearId, sem.id)
+        academicPlanningService.getCalendarDays(sem.academicYearId)
           .then((days) => {
             setCalendarDays(days);
             setCurrentDate(new Date(sem.startDate));
-            loadWeeksConfig(sem);
+            // Keep weeksConfigSemesterId aligned or initialize it
+            setWeeksConfigSemesterId(prev => {
+              const prevSem = semesters.find(s => s.id === prev);
+              if (!prev || (prevSem && prevSem.academicYearId !== sem.academicYearId)) {
+                return sem.id;
+              }
+              return prev;
+            });
           })
           .catch((err) => showToast("Gagal memuat kalender: " + err.message, "error"))
           .finally(() => setLoading(false));
       }
     }
   }, [selectedSemesterId, semesters]);
+
+  // Reload weeks config when weeksConfigSemesterId changes
+  useEffect(() => {
+    if (weeksConfigSemesterId) {
+      const sem = semesters.find(s => s.id === weeksConfigSemesterId);
+      if (sem) {
+        loadWeeksConfig(sem);
+      }
+    }
+  }, [weeksConfigSemesterId, semesters]);
 
   const handleUpdateActiveDays = async (newActiveDays: string[]) => {
     try {
@@ -572,12 +621,17 @@ export const AcademicCalendar: React.FC = () => {
       // Prepare payload for bulk import
       const updatedCalendarDays: AcademicCalendarDay[] = [];
       dayEventsMap.forEach((events, date) => {
+        const resolvedSemId = getSemesterIdForDate(date, currentSemester.id);
         updatedCalendarDays.push({
           id: date,
           date,
-          events,
+          events: events.map(e => ({
+            ...e,
+            academicYearId: currentSemester.academicYearId,
+            semesterId: resolvedSemId
+          })),
           academicYearId: currentSemester.academicYearId,
-          semesterId: currentSemester.id
+          semesterId: resolvedSemId
         });
       });
 
@@ -590,7 +644,7 @@ export const AcademicCalendar: React.FC = () => {
       );
 
       // Reload events locally
-      const refreshedDays = await academicPlanningService.getCalendarDays(currentSemester.academicYearId, currentSemester.id);
+      const refreshedDays = await academicPlanningService.getCalendarDays(currentSemester.academicYearId);
       setCalendarDays(refreshedDays);
 
       showToast(`Berhasil menyinkronkan ${syncedCount} hari besar & libur nasional!`, "success");
@@ -634,6 +688,21 @@ export const AcademicCalendar: React.FC = () => {
   };
 
   const currentSemester = semesters.find(s => s.id === selectedSemesterId);
+
+  const getSemesterIdForDate = (dateStr: string, defaultSemId: string): string => {
+    if (!dateStr || semesters.length === 0) return defaultSemId;
+    const targetDate = new Date(dateStr);
+    const matched = semesters.find(s => {
+      if (!s.startDate || !s.endDate) return false;
+      const start = new Date(s.startDate);
+      const end = new Date(s.endDate);
+      return targetDate >= start && targetDate <= end;
+    });
+    return matched ? matched.id : defaultSemId;
+  };
+
+  const weeksConfigSemester = semesters.find(s => s.id === weeksConfigSemesterId) || currentSemester;
+  const academicYearSemesters = currentSemester ? semesters.filter(s => s.academicYearId === currentSemester.academicYearId) : [];
 
   // Filter references by Category
   const eventCategories = references.filter(r => r.category === "Kategori Event" || r.category === "Kategori Kalender");
@@ -747,8 +816,7 @@ export const AcademicCalendar: React.FC = () => {
 
       // Panggil sinkronisasi database di background
       const freshDays = await academicPlanningService.getCalendarDays(
-        currentSemester?.academicYearId || "",
-        currentSemester?.id || ""
+        currentSemester?.academicYearId || ""
       );
       setCalendarDays(freshDays);
       
@@ -803,15 +871,14 @@ export const AcademicCalendar: React.FC = () => {
       await academicPlanningService.saveCalendarEvent(
         eventPayload,
         currentSemester?.academicYearId || "",
-        currentSemester?.id || "",
+        getSemesterIdForDate(eventPayload.startDate, currentSemester?.id || ""),
         user?.uid || "",
         user?.displayName || "System"
       );
 
       // Refresh calendar days
       const freshDays = await academicPlanningService.getCalendarDays(
-        currentSemester?.academicYearId || "",
-        currentSemester?.id || ""
+        currentSemester?.academicYearId || ""
       );
       setCalendarDays(freshDays);
 
@@ -833,36 +900,30 @@ export const AcademicCalendar: React.FC = () => {
   };
 
   // EXCEL EXPORT
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
     try {
-      const dataToExport: any[] = [];
-      
-      calendarDays.forEach((day) => {
-        day.events.forEach((evt) => {
-          dataToExport.push({
-            "Tanggal": day.date,
-            "Hari": indonesianDays[new Date(day.date).getDay()],
-            "Judul Event": evt.title,
-            "Kategori": evt.categoryName || evt.categoryId,
-            "Status": evt.statusName || evt.statusId,
-            "Prioritas": evt.priority,
-            "Deskripsi": evt.description,
-            "Hari Efektif Belajar": evt.isEffectiveDay ? "Ya" : "Tidak",
-            "Kurangi Jam Pelajaran": evt.reduceLesson ? "Ya" : "Tidak",
-            "Durasi Jam Khusus (Menit)": evt.specialLessonDuration,
-            "Berpengaruh ke Rencana Akad": evt.affectsAcademicPlanning ? "Ya" : "Tidak",
-            "Berpengaruh ke Jadwal": evt.affectsScheduler ? "Ya" : "Tidak"
-          });
-        });
+      if (!currentSemester) {
+        showToast("Silakan pilih semester terlebih dahulu!", "error");
+        return;
+      }
+
+      showToast("Sedang menyiapkan dokumen Excel...", "info");
+
+      // Load active school settings to get accurate active school days
+      const settings = await schoolSettingsService.getSettings();
+
+      await exportAcademicCalendarExcel({
+        currentSemester,
+        calendarDays,
+        weeksConfig,
+        teachers,
+        user,
+        schoolSettings: settings
       });
 
-      const ws = XLSX.utils.json_to_sheet(dataToExport);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Kalender Akademik");
-      
-      XLSX.writeFile(wb, `Kalender_Akademik_${currentSemester?.academicYearName.replace("/", "_")}_${currentSemester?.code}.xlsx`);
-      showToast("Unduh data Excel berhasil!", "success");
+      showToast("Unduh Kalender Pendidikan Excel berhasil!", "success");
     } catch (error: any) {
+      console.error("Export Excel error: ", error);
       showToast("Gagal export Excel: " + error.message, "error");
     }
   };
@@ -975,12 +1036,17 @@ export const AcademicCalendar: React.FC = () => {
 
         const formattedDays: AcademicCalendarDay[] = [];
         importedDaysMap.forEach((events, date) => {
+          const resolvedSemId = getSemesterIdForDate(date, currentSemester?.id || "");
           formattedDays.push({
             id: date,
             date,
-            events,
+            events: events.map(e => ({
+              ...e,
+              academicYearId: currentSemester?.academicYearId,
+              semesterId: resolvedSemId
+            })),
             academicYearId: currentSemester?.academicYearId,
-            semesterId: currentSemester?.id
+            semesterId: resolvedSemId
           });
         });
 
@@ -995,7 +1061,7 @@ export const AcademicCalendar: React.FC = () => {
         showToast(`Berhasil mengimpor ${formattedDays.length} tanggal kalender akademik`, "success");
         
         // Refresh
-        const freshDays = await academicPlanningService.getCalendarDays(currentSemester?.academicYearId, currentSemester?.id);
+        const freshDays = await academicPlanningService.getCalendarDays(currentSemester?.academicYearId);
         setCalendarDays(freshDays);
       } catch (error: any) {
         showToast("Gagal mengimpor Excel: " + error.message, "error");
@@ -2008,24 +2074,46 @@ Keterangan: ${evt.description || "-"}`;
       {/* Pengaturan Manual Pekan Efektif Card */}
       {selectedSemesterId && (
         <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl p-6 shadow-xs mt-6 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-zinc-850 pb-4">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-100 dark:border-zinc-850 pb-4">
             <div>
               <h3 className="text-base font-extrabold text-slate-900 dark:text-zinc-100 flex items-center gap-2">
                 <Palette className="h-5 w-5 text-indigo-500" />
-                Pengaturan Manual Pekan per Bulan ({currentSemester?.name})
+                Pengaturan Manual Pekan per Bulan ({weeksConfigSemester?.name})
               </h3>
               <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">
                 Atur jumlah pekan dan pekan efektif pembelajaran setiap bulan secara manual untuk mendistribusikan jam pelajaran (JP).
               </p>
             </div>
-            {canEditCalendar && (
-              <button
-                onClick={handleSaveWeeksConfig}
-                className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-500/10 cursor-pointer"
-              >
-                <Save className="h-3.5 w-3.5" /> Simpan Pengaturan Pekan
-              </button>
-            )}
+
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Semester Switcher Tabs for Manual Weeks Configuration */}
+              {academicYearSemesters.length > 1 && (
+                <div className="flex items-center gap-1 border border-slate-200 dark:border-zinc-800 rounded-xl bg-slate-50 dark:bg-zinc-950 p-1">
+                  {academicYearSemesters.map((s) => (
+                    <button
+                      key={s.id}
+                      onClick={() => setWeeksConfigSemesterId(s.id)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        weeksConfigSemesterId === s.id
+                          ? "bg-white dark:bg-zinc-800 text-indigo-600 dark:text-indigo-400 shadow-sm"
+                          : "text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-350"
+                      }`}
+                    >
+                      {s.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {canEditCalendar && (
+                <button
+                  onClick={handleSaveWeeksConfig}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-500/10 cursor-pointer"
+                >
+                  <Save className="h-3.5 w-3.5" /> Simpan Pengaturan Pekan
+                </button>
+              )}
+            </div>
           </div>
 
           {isWeeksConfigLoading ? (
@@ -2043,15 +2131,15 @@ Keterangan: ${evt.description || "-"}`;
                 <thead>
                   <tr className="bg-slate-50 dark:bg-zinc-900/50 border-b border-slate-150 dark:border-zinc-800 text-[10px] font-bold uppercase text-slate-500 dark:text-zinc-400 tracking-wider">
                     <th className="py-3 px-4 font-extrabold">Bulan</th>
-                    <th className="py-3 px-4 text-center font-extrabold w-[150px]">Jumlah Pekan</th>
-                    <th className="py-3 px-4 text-center font-extrabold w-[150px]">Pekan Efektif</th>
-                    <th className="py-3 px-4 text-center font-extrabold w-[150px]">Pekan Tidak Efektif</th>
+                    <th className="py-3 px-4 text-center font-extrabold w-[130px]">Jumlah Pekan</th>
+                    {gradeLevels.map(grade => (
+                      <th key={grade} className="py-3 px-4 text-center font-extrabold w-[100px]">{grade}</th>
+                    ))}
                     <th className="py-3 px-4 font-extrabold">Keterangan / Catatan</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-zinc-850">
                   {weeksConfig.map((item, idx) => {
-                    const ineffectiveWeeks = Math.max(0, item.totalWeeks - item.effectiveWeeks);
                     return (
                       <tr key={item.month} className="hover:bg-slate-50/40 dark:hover:bg-zinc-900/10 transition-colors">
                         <td className="py-3 px-4 font-bold text-slate-800 dark:text-zinc-200">
@@ -2067,39 +2155,56 @@ Keterangan: ${evt.description || "-"}`;
                               value={item.totalWeeks}
                               onChange={(e) => {
                                 const val = parseInt(e.target.value, 10) || 0;
-                                setWeeksConfig(prev => prev.map((w, i) => i === idx ? {
-                                  ...w,
-                                  totalWeeks: val,
-                                  effectiveWeeks: Math.min(w.effectiveWeeks, val)
-                                } : w));
+                                setWeeksConfig(prev => prev.map((w, i) => {
+                                  if (i !== idx) return w;
+                                  const gradeMap = { ...(w.effectiveWeeksByGrade || {}) };
+                                  Object.keys(gradeMap).forEach(k => {
+                                    gradeMap[k] = Math.min(gradeMap[k], val);
+                                  });
+                                  return {
+                                    ...w,
+                                    totalWeeks: val,
+                                    effectiveWeeks: Math.min(w.effectiveWeeks, val),
+                                    effectiveWeeksByGrade: gradeMap
+                                  };
+                                }));
                               }}
                               className="w-20 bg-slate-50 dark:bg-zinc-950 disabled:bg-slate-100/50 disabled:text-slate-400 border border-slate-250 dark:border-zinc-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-lg text-center px-2 py-1.5 text-xs font-bold text-slate-800 dark:text-zinc-100 focus:outline-hidden"
                             />
                           </div>
                         </td>
-                        <td className="py-2 px-4">
-                          <div className="flex items-center justify-center">
-                            <input
-                              type="number"
-                              min="0"
-                              max={item.totalWeeks}
-                              disabled={!canEditCalendar}
-                              value={item.effectiveWeeks}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value, 10) || 0;
-                                const validatedVal = Math.min(val, item.totalWeeks);
-                                setWeeksConfig(prev => prev.map((w, i) => i === idx ? {
-                                  ...w,
-                                  effectiveWeeks: validatedVal
-                                } : w));
-                              }}
-                              className="w-20 bg-slate-50 dark:bg-zinc-950 disabled:bg-slate-100/50 disabled:text-slate-400 border border-slate-250 dark:border-zinc-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-lg text-center px-2 py-1.5 text-xs font-bold text-slate-800 dark:text-zinc-100 focus:outline-hidden"
-                            />
-                          </div>
-                        </td>
-                        <td className="py-3 px-4 text-center font-bold text-slate-500 dark:text-zinc-400">
-                          {ineffectiveWeeks} Pekan
-                        </td>
+                        {gradeLevels.map(grade => {
+                          const gradeVal = item.effectiveWeeksByGrade?.[grade] ?? item.effectiveWeeks;
+                          return (
+                            <td key={grade} className="py-2 px-4">
+                              <div className="flex items-center justify-center">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max={item.totalWeeks}
+                                  disabled={!canEditCalendar}
+                                  value={gradeVal}
+                                  onChange={(e) => {
+                                    const val = parseInt(e.target.value, 10) || 0;
+                                    const validatedVal = Math.max(0, Math.min(val, item.totalWeeks));
+                                    setWeeksConfig(prev => prev.map((w, i) => {
+                                      if (i !== idx) return w;
+                                      const gradeMap = { ...(w.effectiveWeeksByGrade || {}) };
+                                      gradeMap[grade] = validatedVal;
+                                      return {
+                                        ...w,
+                                        effectiveWeeksByGrade: gradeMap,
+                                        // Also keep backward compatible default in sync with the first grade level
+                                        effectiveWeeks: grade === gradeLevels[0] ? validatedVal : w.effectiveWeeks
+                                      };
+                                    }));
+                                  }}
+                                  className="w-20 bg-slate-50 dark:bg-zinc-950 disabled:bg-slate-100/50 disabled:text-slate-400 border border-slate-250 dark:border-zinc-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-lg text-center px-2 py-1.5 text-xs font-bold text-slate-800 dark:text-zinc-100 focus:outline-hidden"
+                                />
+                              </div>
+                            </td>
+                          );
+                        })}
                         <td className="py-2 px-4">
                           <input
                             type="text"
@@ -2109,7 +2214,7 @@ Keterangan: ${evt.description || "-"}`;
                               const val = e.target.value;
                               setWeeksConfig(prev => prev.map((w, i) => i === idx ? { ...w, notes: val } : w));
                             }}
-                            placeholder={ineffectiveWeeks > 0 ? "E.g., Libur Semester, Classmeeting" : "Hari efektif belajar penuh"}
+                            placeholder="Keterangan pekan"
                             className="w-full bg-slate-50 dark:bg-zinc-950 disabled:bg-slate-100/50 disabled:text-slate-400 border border-slate-250 dark:border-zinc-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-lg px-3 py-1.5 text-xs text-slate-700 dark:text-zinc-200 focus:outline-hidden"
                           />
                         </td>
