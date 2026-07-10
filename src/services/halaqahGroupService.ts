@@ -20,10 +20,10 @@ export const halaqahGroupService = {
   // Get groups
   async getGroups(musrifId?: string): Promise<HalaqahGroup[]> {
     const colRef = collection(db, GROUPS_COLLECTION);
-    let q = query(colRef, orderBy("groupName", "asc"));
+    let q = query(colRef);
     
     if (musrifId) {
-      q = query(colRef, where("musrifId", "==", musrifId), orderBy("groupName", "asc"));
+      q = query(colRef, where("musrifId", "==", musrifId));
     }
 
     try {
@@ -35,6 +35,8 @@ export const halaqahGroupService = {
           ...docSnap.data()
         } as HalaqahGroup);
       });
+      // Sort in memory by groupName ascending
+      items.sort((a, b) => (a.groupName || "").localeCompare(b.groupName || ""));
       return items;
     } catch (error) {
       return handleFirestoreError(error, OperationType.LIST, GROUPS_COLLECTION);
@@ -134,6 +136,24 @@ export const halaqahGroupService = {
 
     try {
       const querySnapshot = await getDocs(q);
+      const items: HalaqahGroupMember[] = [];
+      querySnapshot.forEach((docSnap) => {
+        items.push({
+          id: docSnap.id,
+          ...docSnap.data()
+        } as HalaqahGroupMember);
+      });
+      return items;
+    } catch (error) {
+      return handleFirestoreError(error, OperationType.LIST, MEMBERS_COLLECTION);
+    }
+  },
+
+  // Get All Members across all groups
+  async getAllMembers(): Promise<HalaqahGroupMember[]> {
+    const colRef = collection(db, MEMBERS_COLLECTION);
+    try {
+      const querySnapshot = await getDocs(colRef);
       const items: HalaqahGroupMember[] = [];
       querySnapshot.forEach((docSnap) => {
         items.push({

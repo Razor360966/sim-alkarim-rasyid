@@ -38,31 +38,25 @@ export const gtkDevelopmentService = {
 
   async getActivities(academicYearId?: string, semesterId?: string, gtkId?: string): Promise<GtkDevelopmentActivity[]> {
     const colRef = collection(db, ACTIVITIES_COLLECTION);
-    let q = query(colRef, orderBy("date", "desc"), orderBy("createdAt", "desc"));
+    let q = query(colRef);
 
     if (academicYearId && semesterId && gtkId) {
       q = query(
         colRef,
         where("academicYearId", "==", academicYearId),
         where("semesterId", "==", semesterId),
-        where("gtkId", "==", gtkId),
-        orderBy("date", "desc"),
-        orderBy("createdAt", "desc")
+        where("gtkId", "==", gtkId)
       );
     } else if (academicYearId && semesterId) {
       q = query(
         colRef,
         where("academicYearId", "==", academicYearId),
-        where("semesterId", "==", semesterId),
-        orderBy("date", "desc"),
-        orderBy("createdAt", "desc")
+        where("semesterId", "==", semesterId)
       );
     } else if (gtkId) {
       q = query(
         colRef,
-        where("gtkId", "==", gtkId),
-        orderBy("date", "desc"),
-        orderBy("createdAt", "desc")
+        where("gtkId", "==", gtkId)
       );
     }
 
@@ -75,6 +69,19 @@ export const gtkDevelopmentService = {
           ...docSnap.data()
         } as GtkDevelopmentActivity);
       });
+
+      // Sort in memory: date DESC, then createdAt DESC to avoid composite index requirements
+      items.sort((a, b) => {
+        const dateA = a.date || "";
+        const dateB = b.date || "";
+        if (dateA !== dateB) {
+          return dateB.localeCompare(dateA);
+        }
+        const createdA = a.createdAt || "";
+        const createdB = b.createdAt || "";
+        return createdB.localeCompare(createdA);
+      });
+
       return items;
     } catch (error) {
       return handleFirestoreError(error, OperationType.LIST, ACTIVITIES_COLLECTION);
@@ -248,28 +255,25 @@ export const gtkDevelopmentService = {
 
   async getMutabaahLogs(academicYearId?: string, semesterId?: string, gtkId?: string): Promise<MutabaahLog[]> {
     const colRef = collection(db, LOGS_COLLECTION);
-    let q = query(colRef, orderBy("date", "desc"));
+    let q = query(colRef);
 
     if (academicYearId && semesterId && gtkId) {
       q = query(
         colRef,
         where("academicYearId", "==", academicYearId),
         where("semesterId", "==", semesterId),
-        where("gtkId", "==", gtkId),
-        orderBy("date", "desc")
+        where("gtkId", "==", gtkId)
       );
     } else if (academicYearId && semesterId) {
       q = query(
         colRef,
         where("academicYearId", "==", academicYearId),
-        where("semesterId", "==", semesterId),
-        orderBy("date", "desc")
+        where("semesterId", "==", semesterId)
       );
     } else if (gtkId) {
       q = query(
         colRef,
-        where("gtkId", "==", gtkId),
-        orderBy("date", "desc")
+        where("gtkId", "==", gtkId)
       );
     }
 
@@ -282,6 +286,14 @@ export const gtkDevelopmentService = {
           ...docSnap.data()
         } as MutabaahLog);
       });
+
+      // Sort in memory: date DESC to avoid composite index requirements
+      items.sort((a, b) => {
+        const dateA = a.date || "";
+        const dateB = b.date || "";
+        return dateB.localeCompare(dateA);
+      });
+
       return items;
     } catch (error) {
       return handleFirestoreError(error, OperationType.LIST, LOGS_COLLECTION);

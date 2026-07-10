@@ -20,22 +20,18 @@ export const musrifJournalService = {
   // Get all journals
   async getAll(academicYearId?: string, semesterId?: string): Promise<MusrifJournal[]> {
     const colRef = collection(db, JOURNALS_COLLECTION);
-    let q = query(colRef, orderBy("date", "desc"), orderBy("createdAt", "desc"));
+    let q = query(colRef);
 
     if (academicYearId && semesterId) {
       q = query(
         colRef,
         where("academicYearId", "==", academicYearId),
-        where("semesterId", "==", semesterId),
-        orderBy("date", "desc"),
-        orderBy("createdAt", "desc")
+        where("semesterId", "==", semesterId)
       );
     } else if (academicYearId) {
       q = query(
         colRef,
-        where("academicYearId", "==", academicYearId),
-        orderBy("date", "desc"),
-        orderBy("createdAt", "desc")
+        where("academicYearId", "==", academicYearId)
       );
     }
 
@@ -47,6 +43,12 @@ export const musrifJournalService = {
           id: docSnap.id,
           ...docSnap.data()
         } as MusrifJournal);
+      });
+      // Sort in memory: date DESC, then createdAt DESC
+      items.sort((a, b) => {
+        const dateCompare = (b.date || "").localeCompare(a.date || "");
+        if (dateCompare !== 0) return dateCompare;
+        return (b.createdAt || "").localeCompare(a.createdAt || "");
       });
       return items;
     } catch (error) {
@@ -63,9 +65,7 @@ export const musrifJournalService = {
     const colRef = collection(db, JOURNALS_COLLECTION);
     let q = query(
       colRef,
-      where("musrifId", "==", musrifId),
-      orderBy("date", "desc"),
-      orderBy("createdAt", "desc")
+      where("musrifId", "==", musrifId)
     );
 
     if (academicYearId && semesterId) {
@@ -73,17 +73,13 @@ export const musrifJournalService = {
         colRef,
         where("musrifId", "==", musrifId),
         where("academicYearId", "==", academicYearId),
-        where("semesterId", "==", semesterId),
-        orderBy("date", "desc"),
-        orderBy("createdAt", "desc")
+        where("semesterId", "==", semesterId)
       );
     } else if (academicYearId) {
       q = query(
         colRef,
         where("musrifId", "==", musrifId),
-        where("academicYearId", "==", academicYearId),
-        orderBy("date", "desc"),
-        orderBy("createdAt", "desc")
+        where("academicYearId", "==", academicYearId)
       );
     }
 
@@ -95,6 +91,12 @@ export const musrifJournalService = {
           id: docSnap.id,
           ...docSnap.data()
         } as MusrifJournal);
+      });
+      // Sort in memory: date DESC, then createdAt DESC
+      items.sort((a, b) => {
+        const dateCompare = (b.date || "").localeCompare(a.date || "");
+        if (dateCompare !== 0) return dateCompare;
+        return (b.createdAt || "").localeCompare(a.createdAt || "");
       });
       return items;
     } catch (error) {
@@ -105,7 +107,7 @@ export const musrifJournalService = {
   // Get journals by date
   async getByDate(date: string): Promise<MusrifJournal[]> {
     const colRef = collection(db, JOURNALS_COLLECTION);
-    const q = query(colRef, where("date", "==", date), orderBy("createdAt", "desc"));
+    const q = query(colRef, where("date", "==", date));
 
     try {
       const querySnapshot = await getDocs(q);
@@ -116,6 +118,8 @@ export const musrifJournalService = {
           ...docSnap.data()
         } as MusrifJournal);
       });
+      // Sort in memory: createdAt DESC
+      items.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
       return items;
     } catch (error) {
       return handleFirestoreError(error, OperationType.LIST, JOURNALS_COLLECTION);
@@ -268,6 +272,24 @@ export const musrifJournalService = {
 
     try {
       const querySnapshot = await getDocs(q);
+      const items: MusrifJournalDetail[] = [];
+      querySnapshot.forEach((docSnap) => {
+        items.push({
+          id: docSnap.id,
+          ...docSnap.data()
+        } as MusrifJournalDetail);
+      });
+      return items;
+    } catch (error) {
+      return handleFirestoreError(error, OperationType.LIST, DETAILS_COLLECTION);
+    }
+  },
+
+  // Get all journal details across all journals
+  async getAllJournalDetails(): Promise<MusrifJournalDetail[]> {
+    const colRef = collection(db, DETAILS_COLLECTION);
+    try {
+      const querySnapshot = await getDocs(colRef);
       const items: MusrifJournalDetail[] = [];
       querySnapshot.forEach((docSnap) => {
         items.push({

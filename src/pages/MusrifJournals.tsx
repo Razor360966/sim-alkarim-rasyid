@@ -12,6 +12,8 @@ import { studentService } from "../services/studentService";
 import { classService } from "../services/classService";
 import { halaqahGroupService } from "../services/halaqahGroupService";
 import { musrifJournalService } from "../services/musrifJournalService";
+import { userService } from "../services/user.service";
+import { teacherService } from "../services/teacherService";
 import { 
   HalaqahGroup, 
   HalaqahGroupMember, 
@@ -48,8 +50,20 @@ export const MusrifJournals: React.FC = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const isMusrif = user?.role === "musrif" || user?.role === "guru";
-  const isAdmin = user?.role === "admin";
+  const userRoles = user?.roles || [user?.role || ""];
+  const isAdmin = userRoles.includes("admin") || user?.role === "admin";
+  const isKepalaSekolah = userRoles.includes("kepala sekolah") || user?.role === "kepala sekolah";
+  const isWakilKepalaSekolah = userRoles.includes("wakil kepala sekolah") || user?.role === "wakil kepala sekolah";
+  const isKetuaYayasan = userRoles.includes("ketua yayasan") || user?.role === "ketua yayasan";
+  const isMusrif = userRoles.includes("musrif") || user?.role === "musrif" || userRoles.includes("guru") || user?.role === "guru";
+
+  // Confirmation state (to replace window.confirm inside the iframe)
+  const [confirmState, setConfirmState] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
 
   // Active Year & Semester Queries
   const { data: activeYear } = useQuery({
@@ -74,8 +88,19 @@ export const MusrifJournals: React.FC = () => {
     queryFn: () => classService.getClasses()
   });
 
+  // Load all users to pick a Musrif if logged in user is Admin
+  const { data: systemUsers = [] } = useQuery({
+    queryKey: ["systemUsers"],
+    queryFn: () => userService.getUsers(),
+    enabled: isAdmin
+  });
+
   // Tab State
-  const [activeTab, setActiveTab] = useState<"kelompok" | "jurnal">("kelompok");
+  const [activeTab, setActiveTab] = useState<"kelompok" | "jurnal" | "rekap">("kelompok");
+
+  // --- TAB 3: REKAP PERKEMBANGAN SANTRI STATE ---
+  const [selectedRecapStudentId, setSelectedRecapStudentId] = useState<string>("");
+  const [recapGroupFilter, setRecapGroupFilter] = useState<string>("Semua");
 
   // --- TAB 1: KELOMPOK HALAQAH STATE ---
   const [isGroupModalOpen, setIsGroupModalOpen] = useState(false);
@@ -86,23 +111,32 @@ export const MusrifJournals: React.FC = () => {
   const [groupForm, setGroupForm] = useState({
     groupName: "",
     location: "",
-    description: ""
+    description: "",
+    musrifId: "" // For admin to assign a musrif
   });
 
   const [memberSearchQuery, setMemberSearchQuery] = useState("");
   const [classFilter, setClassFilter] = useState("Semua");
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
+  const [showAllStudentsForTransfer, setShowAllStudentsForTransfer] = useState(false);
 
   // Query groups
   const { data: halaqahGroups = [], isLoading: isLoadingGroups } = useQuery({
-    queryKey: ["halaqahGroups", user?.userId],
+    queryKey: ["halaqahGroups", user?.userId, isAdmin, isKepalaSekolah, isWakilKepalaSekolah, isKetuaYayasan],
     queryFn: () => {
-      // Admin gets all groups, Musrif gets their own groups
-      if (isMusrif && !isAdmin) {
-        return halaqahGroupService.getGroups(user?.userId || "");
+      // Admin, Kepala Sekolah, Wakil Kepala Sekolah, Ketua Yayasan see all groups
+      if (isAdmin || isKepalaSekolah || isWakilKepalaSekolah || isKetuaYayasan) {
+        return halaqahGroupService.getGroups();
       }
-      return halaqahGroupService.getGroups();
+      // Musrif gets their own groups
+      return halaqahGroupService.getGroups(user?.userId || "");
     }
+  });
+
+  // Query all members across all groups (to handle Bagian 4 & 5 filtering)
+  const { data: allGroupMembers = [], refetch: refetchAllMembers } = useQuery({
+    queryKey: ["allGroupMembers"],
+    queryFn: () => halaqahGroupService.getAllMembers()
   });
 
   // Query members of currently selected group
@@ -170,6 +204,83 @@ export const MusrifJournals: React.FC = () => {
       return matchDate && matchGroup && matchStatus;
     });
   }, [musrifJournals, filterDate, filterGroup, filterStatus]);
+
+  // Query all journal details across all journals for student progress recap
+  const { data: allJournalDetails = [], isLoading: isLoadingAllJournalDetails } = useQuery({
+    queryKey: ["allJournalDetails"],
+    queryFn: () => musrifJournalService.getAllJournalDetails(),
+  });
+
+  // Filter students list for the progress recap tab based on selected group filter
+  const recapStudents = useMemo(() => {
+    // Get student IDs of members of the groups that the current user has access to
+    const groupIds = halaqahGroups.map(g => g.id);
+    const relevantMembers = allGroupMembers.filter(m => groupIds.includes(m.groupId));
+    
+    if (recapGroupFilter === "Semua") {
+      // Return distinct students from relevantMembers
+      const seen = new Set();
+      return relevantMembers.filter(m => {
+        if (seen.has(m.studentId)) return false;
+        seen.add(m.studentId);
+        return true;
+      }).map(m => ({
+        id: m.studentId,
+        name: m.studentName,
+        className: m.className || "Tanpa Kelas"
+      })).sort((a, b) => a.name.localeCompare(b.name));
+    } else {
+      return relevantMembers
+        .filter(m => m.groupId === recapGroupFilter)
+        .map(m => ({
+          id: m.studentId,
+          name: m.studentName,
+          className: m.className || "Tanpa Kelas"
+        })).sort((a, b) => a.name.localeCompare(b.name));
+    }
+  }, [halaqahGroups, allGroupMembers, recapGroupFilter]);
+
+  // Map and sort student details across all journals
+  const selectedStudentRecapDetails = useMemo(() => {
+    if (!selectedRecapStudentId) return [];
+    
+    // Get all details for this student
+    const details = allJournalDetails.filter(d => d.studentId === selectedRecapStudentId);
+    
+    // Map with journal metadata (date, musrifName, activityType, etc.) and sort by date DESC
+    const mapped = details.map(d => {
+      const journal = musrifJournals.find(j => j.id === d.journalId);
+      return {
+        ...d,
+        journalDate: journal ? journal.date : d.createdAt ? d.createdAt.split("T")[0] : "",
+        journalActivityType: journal ? journal.activityType : "Lainnya",
+        journalMusrifName: journal ? journal.musrifName : "Musrif",
+        journalGroupName: journal ? journal.groupName : ""
+      };
+    });
+    
+    return mapped.sort((a, b) => b.journalDate.localeCompare(a.journalDate));
+  }, [selectedRecapStudentId, allJournalDetails, musrifJournals]);
+
+  // Compute stats for selected student
+  const studentRecapStats = useMemo(() => {
+    const total = selectedStudentRecapDetails.length;
+    if (total === 0) return { total: 0, hadir: 0, sakit: 0, izin: 0, alpha: 0, hadirPercent: 0 };
+    
+    const hadir = selectedStudentRecapDetails.filter(d => d.attendance === "Hadir").length;
+    const sakit = selectedStudentRecapDetails.filter(d => d.attendance === "Sakit").length;
+    const izin = selectedStudentRecapDetails.filter(d => d.attendance === "Izin").length;
+    const alpha = selectedStudentRecapDetails.filter(d => d.attendance === "Alpha").length;
+    
+    return {
+      total,
+      hadir,
+      sakit,
+      izin,
+      alpha,
+      hadirPercent: Math.round((hadir / total) * 100)
+    };
+  }, [selectedStudentRecapDetails]);
 
   // --- MUTATIONS: TAB 1 ---
   const createGroupMutation = useMutation({
@@ -240,6 +351,7 @@ export const MusrifJournals: React.FC = () => {
     onSuccess: () => {
       toast("Jurnal Halaqah berhasil disimpan!", "success");
       queryClient.invalidateQueries({ queryKey: ["musrifJournals"] });
+      queryClient.invalidateQueries({ queryKey: ["allJournalDetails"] });
       setIsJournalModalOpen(false);
     },
     onError: (err: any) => {
@@ -256,6 +368,7 @@ export const MusrifJournals: React.FC = () => {
     onSuccess: () => {
       toast("Jurnal Halaqah berhasil diperbarui!", "success");
       queryClient.invalidateQueries({ queryKey: ["musrifJournals"] });
+      queryClient.invalidateQueries({ queryKey: ["allJournalDetails"] });
       setIsJournalModalOpen(false);
     },
     onError: (err: any) => {
@@ -268,6 +381,7 @@ export const MusrifJournals: React.FC = () => {
     onSuccess: () => {
       toast("Jurnal Halaqah berhasil dihapus!", "success");
       queryClient.invalidateQueries({ queryKey: ["musrifJournals"] });
+      queryClient.invalidateQueries({ queryKey: ["allJournalDetails"] });
     },
     onError: (err: any) => {
       toast("Gagal menghapus jurnal: " + err.message, "error");
@@ -276,16 +390,32 @@ export const MusrifJournals: React.FC = () => {
 
   // --- GROUP MEMBERSHIP SELECTION HELPERS ---
   const filteredStudentsForAdding = useMemo(() => {
-    // Exclude students who are already members
-    const existingMemberIds = groupMembers.map((m) => m.studentId);
+    // Exclude students who are already members of the current group
+    const currentMemberIds = groupMembers.map((m) => m.studentId);
+    
+    // Map of studentId to existing group name for all other assignments
+    const allAssignedStudentMap = new Map<string, string>();
+    allGroupMembers.forEach((m) => {
+      if (m.groupId !== selectedGroup?.id) {
+        const grp = halaqahGroups.find((g) => g.id === m.groupId);
+        allAssignedStudentMap.set(m.studentId, grp?.groupName || "Kelompok Lain");
+      }
+    });
+
     return studentsList.filter((s) => {
-      if (existingMemberIds.includes(s.id)) return false;
+      if (currentMemberIds.includes(s.id)) return false;
+      
+      // If we are NOT showing all students for transfer, hide any student in another group
+      if (!showAllStudentsForTransfer && allAssignedStudentMap.has(s.id)) {
+        return false;
+      }
+
       const matchSearch = s.name.toLowerCase().includes(memberSearchQuery.toLowerCase()) || 
-                          s.nis.includes(memberSearchQuery);
+                          (s.nis && s.nis.includes(memberSearchQuery));
       const matchClass = classFilter === "Semua" || s.classId === classFilter;
       return matchSearch && matchClass;
     });
-  }, [studentsList, groupMembers, memberSearchQuery, classFilter]);
+  }, [studentsList, groupMembers, allGroupMembers, halaqahGroups, selectedGroup, memberSearchQuery, classFilter, showAllStudentsForTransfer]);
 
   // Handle adding checked students
   const handleAddMembersSubmit = async () => {
@@ -296,8 +426,15 @@ export const MusrifJournals: React.FC = () => {
     }
 
     try {
-      const promises = selectedStudentIds.map((studentId) => {
+      const promises = selectedStudentIds.map(async (studentId) => {
         const student = studentsList.find((s) => s.id === studentId);
+        
+        // Find if they are in another group, and remove them first to prevent duplicates
+        const existingAssignment = allGroupMembers.find((m) => m.studentId === studentId);
+        if (existingAssignment) {
+          await halaqahGroupService.removeMember(existingAssignment.id);
+        }
+
         return addMemberMutation.mutateAsync({
           groupId: selectedGroup.id,
           studentId,
@@ -308,11 +445,13 @@ export const MusrifJournals: React.FC = () => {
       });
 
       await Promise.all(promises);
-      toast(`Berhasil menambahkan ${selectedStudentIds.length} santri ke kelompok ${selectedGroup.groupName}!`, "success");
+      toast(`Berhasil menambahkan/memindahkan ${selectedStudentIds.length} santri ke kelompok ${selectedGroup.groupName}!`, "success");
       setSelectedStudentIds([]);
       setIsAddMemberModalOpen(false);
-    } catch (err) {
-      console.error(err);
+      queryClient.invalidateQueries({ queryKey: ["allGroupMembers"] });
+      queryClient.invalidateQueries({ queryKey: ["groupMembers"] });
+    } catch (err: any) {
+      toast("Gagal memindahkan santri: " + err.message, "error");
     }
   };
 
@@ -336,7 +475,38 @@ export const MusrifJournals: React.FC = () => {
             fluency: "Baik",
             behavior: "Baik",
             notes: "",
-            followUp: ""
+            followUp: "",
+            
+            // Detailed fields for Bagian 7
+            tahsinMakhraj: "",
+            tahsinTajwid: "",
+            tahsinFluency: "",
+            tahsinNotes: "",
+
+            tahfizhSurah: "",
+            tahfizhAyat: "",
+            tahfizhHalaman: "",
+            tahfizhNewMemorization: "",
+            tahfizhMurajaah: "",
+            tahfizhFluency: "",
+            tahfizhNotes: "",
+
+            adabDiscipline: "",
+            adabNeatness: "",
+            adabPoliteness: "",
+            adabHonesty: "",
+            adabResponsibility: "",
+            adabCooperation: "",
+            adabNotes: "",
+
+            asramaCleanliness: "",
+            asramaWorship: "",
+            asramaAttendance: "",
+            asramaDiscipline: "",
+            asramaSocialInteraction: "",
+            asramaNotes: "",
+
+            specialIssues: ""
           };
         });
         setStudentJournalInputs(inputs);
@@ -345,10 +515,10 @@ export const MusrifJournals: React.FC = () => {
       }
     };
 
-    if (!selectedJournal) {
+    if (!selectedJournal && isJournalModalOpen) {
       fetchAndSetMembersInputs();
     }
-  }, [journalGroup, selectedJournal]);
+  }, [journalGroup, selectedJournal, isJournalModalOpen]);
 
   // --- SUBMIT JOURNAL ---
   const handleJournalSubmit = () => {
@@ -452,7 +622,37 @@ export const MusrifJournals: React.FC = () => {
           fluency: d.fluency,
           behavior: d.behavior,
           notes: d.notes,
-          followUp: d.followUp
+          followUp: d.followUp,
+          
+          tahsinMakhraj: d.tahsinMakhraj || "",
+          tahsinTajwid: d.tahsinTajwid || "",
+          tahsinFluency: d.tahsinFluency || "",
+          tahsinNotes: d.tahsinNotes || "",
+          
+          tahfizhSurah: d.tahfizhSurah || "",
+          tahfizhAyat: d.tahfizhAyat || "",
+          tahfizhHalaman: d.tahfizhHalaman || "",
+          tahfizhNewMemorization: d.tahfizhNewMemorization || "",
+          tahfizhMurajaah: d.tahfizhMurajaah || "",
+          tahfizhFluency: d.tahfizhFluency || "",
+          tahfizhNotes: d.tahfizhNotes || "",
+          
+          adabDiscipline: d.adabDiscipline || "",
+          adabNeatness: d.adabNeatness || "",
+          adabPoliteness: d.adabPoliteness || "",
+          adabHonesty: d.adabHonesty || "",
+          adabResponsibility: d.adabResponsibility || "",
+          adabCooperation: d.adabCooperation || "",
+          adabNotes: d.adabNotes || "",
+          
+          asramaCleanliness: d.asramaCleanliness || "",
+          asramaWorship: d.asramaWorship || "",
+          asramaAttendance: d.asramaAttendance || "",
+          asramaDiscipline: d.asramaDiscipline || "",
+          asramaSocialInteraction: d.asramaSocialInteraction || "",
+          asramaNotes: d.asramaNotes || "",
+          
+          specialIssues: d.specialIssues || ""
         };
       });
       setStudentJournalInputs(inputs);
@@ -485,10 +685,10 @@ export const MusrifJournals: React.FC = () => {
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-slate-200 dark:border-zinc-800">
+      <div className="flex border-b border-slate-200 dark:border-zinc-800 overflow-x-auto">
         <button
           onClick={() => setActiveTab("kelompok")}
-          className={`px-5 py-3 font-semibold text-sm transition-colors border-b-2 -mb-px flex items-center gap-2 cursor-pointer ${
+          className={`px-5 py-3 font-semibold text-sm transition-colors border-b-2 -mb-px flex items-center gap-2 cursor-pointer whitespace-nowrap ${
             activeTab === "kelompok"
               ? "border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400"
               : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-zinc-300"
@@ -499,7 +699,7 @@ export const MusrifJournals: React.FC = () => {
         </button>
         <button
           onClick={() => setActiveTab("jurnal")}
-          className={`px-5 py-3 font-semibold text-sm transition-colors border-b-2 -mb-px flex items-center gap-2 cursor-pointer ${
+          className={`px-5 py-3 font-semibold text-sm transition-colors border-b-2 -mb-px flex items-center gap-2 cursor-pointer whitespace-nowrap ${
             activeTab === "jurnal"
               ? "border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400"
               : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-zinc-300"
@@ -507,6 +707,17 @@ export const MusrifJournals: React.FC = () => {
         >
           <BookOpen className="h-4.5 w-4.5" />
           Jurnal Halaqah
+        </button>
+        <button
+          onClick={() => setActiveTab("rekap")}
+          className={`px-5 py-3 font-semibold text-sm transition-colors border-b-2 -mb-px flex items-center gap-2 cursor-pointer whitespace-nowrap ${
+            activeTab === "rekap"
+              ? "border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400"
+              : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-zinc-300"
+          }`}
+        >
+          <Award className="h-4.5 w-4.5" />
+          Rekap Perkembangan Santri
         </button>
       </div>
 
@@ -518,11 +729,11 @@ export const MusrifJournals: React.FC = () => {
               <Layers className="h-5 w-5 text-blue-500" />
               Daftar Kelompok Halaqah Anda ({halaqahGroups.length})
             </h3>
-            {isMusrif && (
+            {(isMusrif || isAdmin) && (
               <button
                 onClick={() => {
                   setSelectedGroup(null);
-                  setGroupForm({ groupName: "", location: "", description: "" });
+                  setGroupForm({ groupName: "", location: "", description: "", musrifId: "" });
                   setIsGroupModalOpen(true);
                 }}
                 className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl shadow-md shadow-blue-500/15 cursor-pointer transition-all hover:scale-[1.01]"
@@ -562,18 +773,19 @@ export const MusrifJournals: React.FC = () => {
                     className="flex items-center gap-1 text-xs font-extrabold text-blue-600 hover:text-blue-500 dark:text-blue-400 dark:hover:text-blue-300 cursor-pointer"
                   >
                     <Users className="h-4 w-4" />
-                    Kelola Santri
+                    {(isAdmin || (isMusrif && group.musrifId === user?.userId)) ? "Kelola Santri" : "Lihat Santri"}
                   </button>
 
                   <div className="flex items-center gap-1">
-                    {isMusrif && (
+                    {(isAdmin || (isMusrif && group.musrifId === user?.userId)) && (
                       <button
                         onClick={() => {
                           setSelectedGroup(group);
                           setGroupForm({
                             groupName: group.groupName,
                             location: group.location,
-                            description: group.description
+                            description: group.description,
+                            musrifId: group.musrifId || ""
                           });
                           setIsGroupModalOpen(true);
                         }}
@@ -584,12 +796,18 @@ export const MusrifJournals: React.FC = () => {
                       </button>
                     )}
 
-                    {isMusrif && (
+                    {(isAdmin || (isMusrif && group.musrifId === user?.userId)) && (
                       <button
                         onClick={() => {
-                          if (window.confirm(`Yakin ingin menghapus kelompok halaqah "${group.groupName}"?`)) {
-                            deleteGroupMutation.mutate(group.id);
-                          }
+                          setConfirmState({
+                            isOpen: true,
+                            title: "Hapus Kelompok Halaqah",
+                            message: `Apakah Anda yakin ingin menghapus kelompok halaqah "${group.groupName}"? Semua data keanggotaan kelompok ini juga akan ikut dibersihkan.`,
+                            onConfirm: () => {
+                              deleteGroupMutation.mutate(group.id);
+                              setConfirmState(null);
+                            }
+                          });
                         }}
                         className="p-1.5 hover:bg-rose-50 dark:hover:bg-rose-950/30 text-rose-500 hover:text-rose-700 rounded-lg cursor-pointer"
                         title="Hapus Kelompok"
@@ -767,9 +985,15 @@ export const MusrifJournals: React.FC = () => {
                   {j.status === "Draft" && (
                     <button
                       onClick={() => {
-                        if (window.confirm("Yakin ingin menghapus jurnal halaqah ini beserta rekap per santri?")) {
-                          deleteJournalMutation.mutate(j.id);
-                        }
+                        setConfirmState({
+                          isOpen: true,
+                          title: "Hapus Jurnal Halaqah",
+                          message: "Apakah Anda yakin ingin menghapus jurnal halaqah ini beserta seluruh catatan perkembangan santri di dalamnya?",
+                          onConfirm: () => {
+                            deleteJournalMutation.mutate(j.id);
+                            setConfirmState(null);
+                          }
+                        });
                       }}
                       className="p-1.5 hover:bg-rose-50 dark:hover:bg-rose-950/30 text-rose-500 hover:text-rose-700 rounded-lg cursor-pointer"
                       title="Hapus Jurnal"
@@ -784,7 +1008,358 @@ export const MusrifJournals: React.FC = () => {
         </div>
       )}
 
-      {/* --- DIALOG MODALS: TAB 1 KELOMPOK HALAQAH --- */}
+      {activeTab === "rekap" && (
+        <div className="space-y-6">
+          {/* Filters card */}
+          <div className="p-5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl shadow-xs space-y-4">
+            <span className="text-sm font-bold text-slate-800 dark:text-zinc-200 flex items-center gap-1.5 border-b border-slate-100 dark:border-zinc-800 pb-3">
+              <Award className="h-4.5 w-4.5 text-blue-500" />
+              Pilih Santri untuk Rekap Perkembangan
+            </span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <FormSelect
+                label="Kelompok Halaqah"
+                value={recapGroupFilter}
+                onChange={(e) => {
+                  setRecapGroupFilter(e.target.value);
+                  setSelectedRecapStudentId("");
+                }}
+                options={[
+                  { value: "Semua", label: "Semua Kelompok Anda" },
+                  ...halaqahGroups.map((g) => ({ value: g.id, label: g.groupName }))
+                ]}
+              />
+              <FormSelect
+                label="Pilih Santri"
+                value={selectedRecapStudentId}
+                onChange={(e) => setSelectedRecapStudentId(e.target.value)}
+                options={[
+                  { value: "", label: "-- Pilih Santri --" },
+                  ...recapStudents.map((s) => ({
+                    value: s.id,
+                    label: `${s.name} (${s.className})`
+                  }))
+                ]}
+              />
+            </div>
+          </div>
+
+          {/* Main Recap Dashboard */}
+          {!selectedRecapStudentId ? (
+            <div className="p-12 text-center bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl shadow-xs max-w-xl mx-auto">
+              <div className="h-16 w-16 bg-blue-50 dark:bg-blue-950/40 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Award className="h-8 w-8 text-blue-600 dark:text-blue-400" />
+              </div>
+              <h3 className="text-lg font-bold text-slate-800 dark:text-zinc-100 mb-2">Rekapitulasi Perkembangan Santri</h3>
+              <p className="text-sm text-slate-500 dark:text-zinc-400 leading-relaxed">
+                Silakan pilih kelompok halaqah dan santri pada filter di atas untuk melihat rekapitulasi perkembangan belajar, catatan hafalan baru, muraja'ah, evaluasi adab, serta mutaba'ah asrama secara berkala.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {/* Student Header & Attendance Bento Card */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Profile Card */}
+                <div className="p-6 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl shadow-xs flex flex-col justify-between">
+                  <div>
+                    <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-widest block mb-1">Profil Santri</span>
+                    <h2 className="text-xl font-extrabold text-slate-800 dark:text-zinc-100">
+                      {recapStudents.find(s => s.id === selectedRecapStudentId)?.name || "Santri"}
+                    </h2>
+                    <p className="text-xs text-slate-400 font-semibold mt-1">
+                      Kelas: {recapStudents.find(s => s.id === selectedRecapStudentId)?.className || "Tanpa Kelas"}
+                    </p>
+                    <div className="mt-4 pt-4 border-t border-slate-100 dark:border-zinc-800/80">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Kelompok Halaqah</span>
+                      <span className="text-sm font-bold text-slate-700 dark:text-zinc-300 block mt-0.5">
+                        {allGroupMembers.find(m => m.studentId === selectedRecapStudentId)
+                          ? halaqahGroups.find(g => g.id === allGroupMembers.find(m => m.studentId === selectedRecapStudentId)?.groupId)?.groupName || "-"
+                          : "-"
+                        }
+                      </span>
+                    </div>
+                  </div>
+                  <div className="mt-6 text-[11px] text-slate-400 dark:text-zinc-500 italic">
+                    Tahun Pelajaran: {activeYear?.name || "-"} • Semester: {activeSemester?.name || "-"}
+                  </div>
+                </div>
+
+                {/* Attendance Stats Card */}
+                <div className="lg:col-span-2 p-6 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl shadow-xs">
+                  <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-widest block mb-3">Statistik Kehadiran Halaqah</span>
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+                    <div className="p-4 bg-slate-50 dark:bg-zinc-800/40 rounded-2xl text-center border border-slate-100 dark:border-zinc-800">
+                      <span className="text-xs font-semibold text-slate-400 block">Total Pertemuan</span>
+                      <span className="text-2xl font-extrabold text-slate-800 dark:text-zinc-100 mt-1 block">{studentRecapStats.total}</span>
+                    </div>
+                    <div className="p-4 bg-emerald-50/40 dark:bg-emerald-950/10 rounded-2xl text-center border border-emerald-100/40 dark:border-emerald-900/10">
+                      <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 block">Hadir</span>
+                      <span className="text-2xl font-extrabold text-emerald-700 dark:text-emerald-300 mt-1 block">{studentRecapStats.hadir}</span>
+                    </div>
+                    <div className="p-4 bg-amber-50/40 dark:bg-amber-950/10 rounded-2xl text-center border border-amber-100/40 dark:border-amber-900/10">
+                      <span className="text-xs font-semibold text-amber-600 dark:text-amber-400 block">Sakit</span>
+                      <span className="text-2xl font-extrabold text-amber-700 dark:text-amber-300 mt-1 block">{studentRecapStats.sakit}</span>
+                    </div>
+                    <div className="p-4 bg-blue-50/40 dark:bg-blue-950/10 rounded-2xl text-center border border-blue-100/40 dark:border-blue-900/10">
+                      <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 block">Izin</span>
+                      <span className="text-2xl font-extrabold text-blue-700 dark:text-blue-300 mt-1 block">{studentRecapStats.izin}</span>
+                    </div>
+                    <div className="p-4 bg-rose-50/40 dark:bg-rose-950/10 rounded-2xl text-center border border-rose-100/40 dark:border-rose-900/10">
+                      <span className="text-xs font-semibold text-rose-600 dark:text-rose-400 block">Alpha</span>
+                      <span className="text-2xl font-extrabold text-rose-700 dark:text-rose-300 mt-1 block">{studentRecapStats.alpha}</span>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 bg-slate-50 dark:bg-zinc-800/30 p-4 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                      <span className="text-xs font-bold text-slate-700 dark:text-zinc-300">Persentase Kehadiran Santri</span>
+                    </div>
+                    <div className="flex items-center gap-3 w-full sm:w-1/2">
+                      <div className="w-full bg-slate-200 dark:bg-zinc-700 h-3 rounded-full overflow-hidden">
+                        <div 
+                          className="bg-emerald-500 h-full rounded-full transition-all duration-500" 
+                          style={{ width: `${studentRecapStats.hadirPercent}%` }}
+                        />
+                      </div>
+                      <span className="text-sm font-black text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                        {studentRecapStats.hadirPercent}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* TIMELINE PROGRESS SECTIONS */}
+              {selectedStudentRecapDetails.length === 0 ? (
+                <div className="p-8 text-center bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl">
+                  <span className="text-sm text-slate-400 font-semibold">Belum ada rekaman jurnal untuk santri ini.</span>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {/* Category 1: TAHFIZH PROGRESS */}
+                  <div className="p-6 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl shadow-xs">
+                    <h3 className="text-sm font-extrabold text-emerald-700 dark:text-emerald-400 flex items-center gap-2 uppercase tracking-wider mb-4 pb-2 border-b border-slate-100 dark:border-zinc-800/80">
+                      <BookOpen className="h-4.5 w-4.5" />
+                      1. Perkembangan Hafalan Al-Qur'an (Tahfizh)
+                    </h3>
+                    <div className="space-y-4 max-h-[450px] overflow-y-auto pr-2 divide-y divide-slate-100 dark:divide-zinc-800">
+                      {selectedStudentRecapDetails
+                        .filter(d => d.attendance === "Hadir" && (d.tahfizhSurah || d.tahfizhNewMemorization || d.tahfizhMurajaah))
+                        .map((d, index) => (
+                          <div key={d.id} className={`pt-4 ${index === 0 ? "pt-0" : ""}`}>
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 mb-2">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-slate-800 dark:text-zinc-200">
+                                  {new Date(d.journalDate).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}
+                                </span>
+                                <span className="px-2 py-0.5 text-[9px] font-black uppercase bg-emerald-50 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 rounded-md border border-emerald-100 dark:border-emerald-900/30">
+                                  {d.journalActivityType}
+                                </span>
+                              </div>
+                              <span className="text-[10px] text-slate-400 font-medium">Musrif: {d.journalMusrifName}</span>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 dark:bg-zinc-800/30 p-3 rounded-xl border border-slate-100 dark:border-zinc-800/50">
+                              <div>
+                                <span className="text-[9px] font-bold text-slate-400 uppercase block">Surat / Ayat / Hal</span>
+                                <span className="text-xs font-bold text-slate-700 dark:text-zinc-300 block mt-0.5">{d.tahfizhSurah || "-"} / Ay: {d.tahfizhAyat || "-"} / Hal: {d.tahfizhHalaman || "-"}</span>
+                              </div>
+                              <div>
+                                <span className="text-[9px] font-bold text-slate-400 uppercase block">Hafalan Baru</span>
+                                <span className="text-xs font-bold text-slate-700 dark:text-zinc-300 block mt-0.5">{d.tahfizhNewMemorization || "-"}</span>
+                              </div>
+                              <div>
+                                <span className="text-[9px] font-bold text-slate-400 uppercase block">Muraja'ah</span>
+                                <span className="text-xs font-bold text-slate-700 dark:text-zinc-300 block mt-0.5">{d.tahfizhMurajaah || "-"}</span>
+                              </div>
+                            </div>
+                            <div className="mt-2 text-xs flex flex-col gap-1">
+                              <div><strong>Kelancaran:</strong> {d.tahfizhFluency || "-"}</div>
+                              {d.tahfizhNotes && <div className="text-slate-500 dark:text-zinc-400 italic">"Catatan: {d.tahfizhNotes}"</div>}
+                            </div>
+                          </div>
+                        ))}
+                      {selectedStudentRecapDetails.filter(d => d.attendance === "Hadir" && (d.tahfizhSurah || d.tahfizhNewMemorization || d.tahfizhMurajaah)).length === 0 && (
+                        <span className="text-xs text-slate-400 italic block py-4">Belum ada catatan aktivitas tahfizh yang tercatat.</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Category 2: TAHSIN PROGRESS */}
+                  <div className="p-6 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl shadow-xs">
+                    <h3 className="text-sm font-extrabold text-blue-700 dark:text-blue-400 flex items-center gap-2 uppercase tracking-wider mb-4 pb-2 border-b border-slate-100 dark:border-zinc-800/80">
+                      <Book className="h-4.5 w-4.5" />
+                      2. Perkembangan Membaca Al-Qur'an (Tahsin)
+                    </h3>
+                    <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 divide-y divide-slate-100 dark:divide-zinc-800">
+                      {selectedStudentRecapDetails
+                        .filter(d => d.attendance === "Hadir" && (d.tahsinMakhraj || d.tahsinTajwid || d.tahsinFluency))
+                        .map((d, index) => (
+                          <div key={d.id} className={`pt-4 ${index === 0 ? "pt-0" : ""}`}>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-xs font-bold text-slate-800 dark:text-zinc-200">
+                                {new Date(d.journalDate).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}
+                              </span>
+                              <span className="text-[10px] text-slate-400 font-medium">Musrif: {d.journalMusrifName}</span>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 dark:bg-zinc-800/30 p-3 rounded-xl border border-slate-100 dark:border-zinc-800/50">
+                              <div>
+                                <span className="text-[9px] font-bold text-slate-400 uppercase block">Makharijul Huruf</span>
+                                <span className="text-xs font-bold text-slate-700 dark:text-zinc-300 block mt-0.5">{d.tahsinMakhraj || "-"}</span>
+                              </div>
+                              <div>
+                                <span className="text-[9px] font-bold text-slate-400 uppercase block">Tajwid</span>
+                                <span className="text-xs font-bold text-slate-700 dark:text-zinc-300 block mt-0.5">{d.tahsinTajwid || "-"}</span>
+                              </div>
+                              <div>
+                                <span className="text-[9px] font-bold text-slate-400 uppercase block">Kelancaran</span>
+                                <span className="text-xs font-bold text-slate-700 dark:text-zinc-300 block mt-0.5">{d.tahsinFluency || "-"}</span>
+                              </div>
+                            </div>
+                            {d.tahsinNotes && <p className="text-xs text-slate-500 dark:text-zinc-400 italic mt-2">"Catatan: {d.tahsinNotes}"</p>}
+                          </div>
+                        ))}
+                      {selectedStudentRecapDetails.filter(d => d.attendance === "Hadir" && (d.tahsinMakhraj || d.tahsinTajwid || d.tahsinFluency)).length === 0 && (
+                        <span className="text-xs text-slate-400 italic block py-4">Belum ada catatan aktivitas tahsin yang tercatat.</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Category 3: ADAB & CHARACTER */}
+                  <div className="p-6 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl shadow-xs">
+                    <h3 className="text-sm font-extrabold text-purple-700 dark:text-purple-400 flex items-center gap-2 uppercase tracking-wider mb-4 pb-2 border-b border-slate-100 dark:border-zinc-800/80">
+                      <Award className="h-4.5 w-4.5" />
+                      3. Rekap Adab dan Akhlak
+                    </h3>
+                    <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 divide-y divide-slate-100 dark:divide-zinc-800">
+                      {selectedStudentRecapDetails
+                        .filter(d => d.attendance === "Hadir" && (d.adabDiscipline || d.adabPoliteness || d.adabNotes))
+                        .map((d, index) => (
+                          <div key={d.id} className={`pt-4 ${index === 0 ? "pt-0" : ""}`}>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-xs font-bold text-slate-800 dark:text-zinc-200">
+                                {new Date(d.journalDate).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}
+                              </span>
+                              <span className="text-[10px] text-slate-400 font-medium">Musrif: {d.journalMusrifName}</span>
+                            </div>
+                            <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 bg-purple-50/10 dark:bg-purple-950/5 p-3 rounded-xl border border-purple-100/30 dark:border-purple-900/10">
+                              <div className="text-center p-1.5 border border-slate-100 dark:border-zinc-800/40 rounded bg-white dark:bg-zinc-900">
+                                <span className="text-[8px] font-bold text-slate-400 uppercase block">Disiplin</span>
+                                <span className="text-[11px] font-bold text-purple-700 dark:text-purple-400 mt-0.5 block">{d.adabDiscipline || "-"}</span>
+                              </div>
+                              <div className="text-center p-1.5 border border-slate-100 dark:border-zinc-800/40 rounded bg-white dark:bg-zinc-900">
+                                <span className="text-[8px] font-bold text-slate-400 uppercase block">Kerapian</span>
+                                <span className="text-[11px] font-bold text-purple-700 dark:text-purple-400 mt-0.5 block">{d.adabNeatness || "-"}</span>
+                              </div>
+                              <div className="text-center p-1.5 border border-slate-100 dark:border-zinc-800/40 rounded bg-white dark:bg-zinc-900">
+                                <span className="text-[8px] font-bold text-slate-400 uppercase block">Sopan</span>
+                                <span className="text-[11px] font-bold text-purple-700 dark:text-purple-400 mt-0.5 block">{d.adabPoliteness || "-"}</span>
+                              </div>
+                              <div className="text-center p-1.5 border border-slate-100 dark:border-zinc-800/40 rounded bg-white dark:bg-zinc-900">
+                                <span className="text-[8px] font-bold text-slate-400 uppercase block">Jujur</span>
+                                <span className="text-[11px] font-bold text-purple-700 dark:text-purple-400 mt-0.5 block">{d.adabHonesty || "-"}</span>
+                              </div>
+                              <div className="text-center p-1.5 border border-slate-100 dark:border-zinc-800/40 rounded bg-white dark:bg-zinc-900">
+                                <span className="text-[8px] font-bold text-slate-400 uppercase block">Tg. Jawab</span>
+                                <span className="text-[11px] font-bold text-purple-700 dark:text-purple-400 mt-0.5 block">{d.adabResponsibility || "-"}</span>
+                              </div>
+                              <div className="text-center p-1.5 border border-slate-100 dark:border-zinc-800/40 rounded bg-white dark:bg-zinc-900">
+                                <span className="text-[8px] font-bold text-slate-400 uppercase block">Kerjasama</span>
+                                <span className="text-[11px] font-bold text-purple-700 dark:text-purple-400 mt-0.5 block">{d.adabCooperation || "-"}</span>
+                              </div>
+                            </div>
+                            {d.adabNotes && <p className="text-xs text-slate-500 dark:text-zinc-400 italic mt-2">"Catatan Adab: {d.adabNotes}"</p>}
+                          </div>
+                        ))}
+                      {selectedStudentRecapDetails.filter(d => d.attendance === "Hadir" && (d.adabDiscipline || d.adabPoliteness || d.adabNotes)).length === 0 && (
+                        <span className="text-xs text-slate-400 italic block py-4">Belum ada rekap catatan adab.</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Category 4: ASRAMA LIFE */}
+                  <div className="p-6 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl shadow-xs">
+                    <h3 className="text-sm font-extrabold text-amber-700 dark:text-amber-400 flex items-center gap-2 uppercase tracking-wider mb-4 pb-2 border-b border-slate-100 dark:border-zinc-800/80">
+                      <Users className="h-4.5 w-4.5" />
+                      4. Mutaba'ah & Kehidupan Asrama
+                    </h3>
+                    <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 divide-y divide-slate-100 dark:divide-zinc-800">
+                      {selectedStudentRecapDetails
+                        .filter(d => d.attendance === "Hadir" && (d.asramaCleanliness || d.asramaWorship || d.asramaNotes))
+                        .map((d, index) => (
+                          <div key={d.id} className={`pt-4 ${index === 0 ? "pt-0" : ""}`}>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-xs font-bold text-slate-800 dark:text-zinc-200">
+                                {new Date(d.journalDate).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}
+                              </span>
+                              <span className="text-[10px] text-slate-400 font-medium">Musrif: {d.journalMusrifName}</span>
+                            </div>
+                            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 bg-amber-50/10 dark:bg-amber-950/5 p-3 rounded-xl border border-amber-100/30 dark:border-amber-900/10">
+                              <div className="text-center p-1.5 border border-slate-100 dark:border-zinc-800/40 rounded bg-white dark:bg-zinc-900">
+                                <span className="text-[8px] font-bold text-slate-400 uppercase block">Kebersihan</span>
+                                <span className="text-[11px] font-bold text-amber-700 dark:text-amber-400 mt-0.5 block">{d.asramaCleanliness || "-"}</span>
+                              </div>
+                              <div className="text-center p-1.5 border border-slate-100 dark:border-zinc-800/40 rounded bg-white dark:bg-zinc-900">
+                                <span className="text-[8px] font-bold text-slate-400 uppercase block">Ibadah</span>
+                                <span className="text-[11px] font-bold text-amber-700 dark:text-amber-400 mt-0.5 block">{d.asramaWorship || "-"}</span>
+                              </div>
+                              <div className="text-center p-1.5 border border-slate-100 dark:border-zinc-800/40 rounded bg-white dark:bg-zinc-900">
+                                <span className="text-[8px] font-bold text-slate-400 uppercase block">Kehadiran</span>
+                                <span className="text-[11px] font-bold text-amber-700 dark:text-amber-400 mt-0.5 block">{d.asramaAttendance || "-"}</span>
+                              </div>
+                              <div className="text-center p-1.5 border border-slate-100 dark:border-zinc-800/40 rounded bg-white dark:bg-zinc-900">
+                                <span className="text-[8px] font-bold text-slate-400 uppercase block">Disiplin</span>
+                                <span className="text-[11px] font-bold text-amber-700 dark:text-amber-400 mt-0.5 block">{d.asramaDiscipline || "-"}</span>
+                              </div>
+                              <div className="text-center p-1.5 border border-slate-100 dark:border-zinc-800/40 rounded bg-white dark:bg-zinc-900">
+                                <span className="text-[8px] font-bold text-slate-400 uppercase block">Interaksi</span>
+                                <span className="text-[11px] font-bold text-amber-700 dark:text-amber-400 mt-0.5 block">{d.asramaSocialInteraction || "-"}</span>
+                              </div>
+                            </div>
+                            {d.asramaNotes && <p className="text-xs text-slate-500 dark:text-zinc-400 italic mt-2">"Catatan Asrama: {d.asramaNotes}"</p>}
+                          </div>
+                        ))}
+                      {selectedStudentRecapDetails.filter(d => d.attendance === "Hadir" && (d.asramaCleanliness || d.asramaWorship || d.asramaNotes)).length === 0 && (
+                        <span className="text-xs text-slate-400 italic block py-4">Belum ada catatan asrama yang terekam.</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Category 5: SPECIAL ISSUES */}
+                  <div className="p-6 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl shadow-xs">
+                    <h3 className="text-sm font-extrabold text-rose-700 dark:text-rose-400 flex items-center gap-2 uppercase tracking-wider mb-4 pb-2 border-b border-slate-100 dark:border-zinc-800/80">
+                      <HelpCircle className="h-4.5 w-4.5 text-rose-500" />
+                      5. Permasalahan Khusus & Tindak Lanjut
+                    </h3>
+                    <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 divide-y divide-slate-100 dark:divide-zinc-800">
+                      {selectedStudentRecapDetails
+                        .filter(d => d.specialIssues)
+                        .map((d, index) => (
+                          <div key={d.id} className={`pt-4 ${index === 0 ? "pt-0" : ""}`}>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-xs font-bold text-slate-800 dark:text-zinc-200">
+                                {new Date(d.journalDate).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}
+                              </span>
+                              <span className="text-[10px] text-slate-400 font-medium">Musrif: {d.journalMusrifName}</span>
+                            </div>
+                            <div className="bg-rose-50/30 dark:bg-rose-950/20 p-3.5 rounded-xl border border-rose-100 dark:border-rose-900/30">
+                              <p className="text-xs font-bold text-rose-900 dark:text-rose-300 whitespace-pre-wrap leading-relaxed">
+                                "{d.specialIssues}"
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      {selectedStudentRecapDetails.filter(d => d.specialIssues).length === 0 && (
+                        <span className="text-xs text-slate-400 italic block py-4">Tidak ada catatan permasalahan khusus untuk santri ini.</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
       {/* Create / Edit Group Dialog */}
       <Dialog
         isOpen={isGroupModalOpen}
@@ -815,6 +1390,20 @@ export const MusrifJournals: React.FC = () => {
             onChange={(e) => setGroupForm(prev => ({ ...prev, description: e.target.value }))}
             placeholder="Keterangan opsional kelompok halaqah..."
           />
+          {isAdmin && (
+            <FormSelect
+              label="Pilih Pembina / Musrif"
+              value={groupForm.musrifId}
+              onChange={(e) => setGroupForm(prev => ({ ...prev, musrifId: e.target.value }))}
+              options={[
+                { value: "", label: "-- Pilih Musrif / Guru --" },
+                ...systemUsers
+                  .filter((u) => u.role === "musrif" || u.role === "guru" || u.role === "admin")
+                  .map((u) => ({ value: u.id, label: u.name || u.email }))
+              ]}
+              required
+            />
+          )}
           <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-zinc-800">
             <button
               onClick={() => setIsGroupModalOpen(false)}
@@ -828,9 +1417,19 @@ export const MusrifJournals: React.FC = () => {
                   toast("Nama Kelompok dan Lokasi wajib diisi!", "error");
                   return;
                 }
+                
+                let mId = user?.userId || "musrif-system";
+                let mName = user?.displayName || user?.name || "Musrif";
+                
+                if (isAdmin && groupForm.musrifId) {
+                  mId = groupForm.musrifId;
+                  const pickedUser = systemUsers.find(u => u.id === mId);
+                  mName = pickedUser?.name || pickedUser?.email || "Musrif";
+                }
+
                 const payload = {
-                  musrifId: user?.userId || "musrif-system",
-                  musrifName: user?.displayName || user?.name || "Musrif",
+                  musrifId: mId,
+                  musrifName: mName,
                   groupName: groupForm.groupName,
                   location: groupForm.location,
                   description: groupForm.description,
@@ -868,12 +1467,13 @@ export const MusrifJournals: React.FC = () => {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-slate-500 uppercase">Anggota Kelompok Saat Ini ({groupMembers.length} Santri)</span>
-            {isMusrif && (
+            {(isAdmin || (isMusrif && selectedGroup?.musrifId === user?.userId)) && (
               <button
                 onClick={() => {
                   setSelectedStudentIds([]);
                   setMemberSearchQuery("");
                   setClassFilter("Semua");
+                  setShowAllStudentsForTransfer(false);
                   setIsAddMemberModalOpen(true);
                 }}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-950/40 dark:text-blue-300 text-xs font-bold rounded-lg cursor-pointer"
@@ -891,12 +1491,18 @@ export const MusrifJournals: React.FC = () => {
                   <span className="font-bold text-slate-800 dark:text-zinc-200 text-sm">{member.studentName}</span>
                   <span className="text-xs text-slate-400 font-semibold mt-0.5">Kelas: {member.className || "Tanpa Kelas"}</span>
                 </div>
-                {isMusrif && (
+                {(isAdmin || (isMusrif && selectedGroup?.musrifId === user?.userId)) && (
                   <button
                     onClick={() => {
-                      if (window.confirm(`Keluarkan ${member.studentName} dari kelompok halaqah ini?`)) {
-                        removeMemberMutation.mutate(member.id);
-                      }
+                      setConfirmState({
+                        isOpen: true,
+                        title: "Keluarkan Santri",
+                        message: `Apakah Anda yakin ingin mengeluarkan "${member.studentName}" dari kelompok halaqah "${selectedGroup?.groupName || "ini"}"?`,
+                        onConfirm: () => {
+                          removeMemberMutation.mutate(member.id);
+                          setConfirmState(null);
+                        }
+                      });
                     }}
                     className="p-1.5 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded-lg cursor-pointer transition-colors"
                     title="Keluarkan Santri"
@@ -958,18 +1564,42 @@ export const MusrifJournals: React.FC = () => {
             </div>
           </div>
 
+          {/* Opsi Pindah Kelompok (Bagian 4 & 5) */}
+          <div className="flex items-center gap-2 px-1">
+            <input
+              type="checkbox"
+              id="transferToggle"
+              checked={showAllStudentsForTransfer}
+              onChange={(e) => setShowAllStudentsForTransfer(e.target.checked)}
+              className="rounded text-blue-600 focus:ring-blue-500 h-4 w-4 cursor-pointer"
+            />
+            <label htmlFor="transferToggle" className="text-xs font-semibold text-slate-600 dark:text-zinc-300 cursor-pointer select-none">
+              Tampilkan Siswa dari Kelompok Lain (Opsi Pindah Kelompok)
+            </label>
+          </div>
+
           <span className="text-xs font-bold text-slate-400 uppercase tracking-wide block">Hasil Pencarian ({filteredStudentsForAdding.length} Santri Tersedia)</span>
 
           <div className="max-h-72 overflow-y-auto border border-slate-200 dark:border-zinc-800 rounded-2xl divide-y divide-slate-100 dark:divide-zinc-800">
             {filteredStudentsForAdding.map((student) => {
               const isChecked = selectedStudentIds.includes(student.id);
+              const assignedMember = allGroupMembers.find(m => m.studentId === student.id);
+              const otherGroup = assignedMember ? halaqahGroups.find(g => g.id === assignedMember.groupId) : null;
+
               return (
                 <label
                   key={student.id}
                   className="p-3.5 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-zinc-800/20 cursor-pointer select-none transition-colors"
                 >
                   <div className="flex flex-col">
-                    <span className="font-bold text-slate-800 dark:text-zinc-200 text-xs sm:text-sm">{student.name}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-slate-800 dark:text-zinc-200 text-xs sm:text-sm">{student.name}</span>
+                      {otherGroup && (
+                        <span className="px-1.5 py-0.5 text-[9px] font-extrabold bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-900/30 rounded uppercase">
+                          {otherGroup.groupName}
+                        </span>
+                      )}
+                    </div>
                     <span className="text-[10px] sm:text-xs text-slate-400 font-semibold mt-0.5">NIS: {student.nis} • Kelas: {student.className || "Tanpa Kelas"}</span>
                   </div>
                   <input
@@ -1131,109 +1761,303 @@ export const MusrifJournals: React.FC = () => {
                       </div>
 
                       {inputs.attendance === "Hadir" && (
-                        <div className="space-y-4">
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-4 pt-2">
+                          {/* 1. TAHSIN */}
+                          <div className="bg-blue-50/20 dark:bg-blue-950/10 p-3.5 rounded-xl border border-blue-100 dark:border-blue-900/30 space-y-3">
+                            <span className="text-xs font-bold text-blue-700 dark:text-blue-400 flex items-center gap-1.5 uppercase">
+                              <BookOpen className="h-4 w-4 text-blue-500" />
+                              1. Evaluasi Tahsin (Membaca)
+                            </span>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                              <FormInput
+                                type="text"
+                                label="Makharijul Huruf"
+                                value={inputs.tahsinMakhraj || ""}
+                                onChange={(e) => setStudentJournalInputs(prev => ({
+                                  ...prev,
+                                  [studentId]: { ...prev[studentId], tahsinMakhraj: e.target.value }
+                                }))}
+                                placeholder="Misal: Makhraj halq sudah tepat..."
+                              />
+                              <FormInput
+                                type="text"
+                                label="Tajwid"
+                                value={inputs.tahsinTajwid || ""}
+                                onChange={(e) => setStudentJournalInputs(prev => ({
+                                  ...prev,
+                                  [studentId]: { ...prev[studentId], tahsinTajwid: e.target.value }
+                                }))}
+                                placeholder="Misal: Idgham bighunnah perlu ditahan..."
+                              />
+                              <FormInput
+                                type="text"
+                                label="Kelancaran"
+                                value={inputs.tahsinFluency || ""}
+                                onChange={(e) => setStudentJournalInputs(prev => ({
+                                  ...prev,
+                                  [studentId]: { ...prev[studentId], tahsinFluency: e.target.value }
+                                }))}
+                                placeholder="Misal: Sangat lancar membaca..."
+                              />
+                            </div>
                             <FormInput
                               type="text"
-                              label="Target Hafalan / Setoran"
-                              value={inputs.memorizationTarget}
+                              label="Catatan Tahsin"
+                              value={inputs.tahsinNotes || ""}
                               onChange={(e) => setStudentJournalInputs(prev => ({
                                 ...prev,
-                                [studentId]: { ...prev[studentId], memorizationTarget: e.target.value }
+                                [studentId]: { ...prev[studentId], tahsinNotes: e.target.value }
                               }))}
-                              placeholder="Contoh: QS Al-Mulk 1-10, Halaman 18..."
-                            />
-                            <FormInput
-                              type="text"
-                              label="Capaian Hari Ini"
-                              value={inputs.memorizationAchievement}
-                              onChange={(e) => setStudentJournalInputs(prev => ({
-                                ...prev,
-                                [studentId]: { ...prev[studentId], memorizationAchievement: e.target.value }
-                              }))}
-                              placeholder="Contoh: Sangat Lancar, Kurang Mengulang..."
+                              placeholder="Keterangan perkembangan tahsin..."
                             />
                           </div>
 
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                            <FormSelect
-                              label="Tajwid"
-                              value={inputs.tajwid}
+                          {/* 2. TAHFIZH */}
+                          <div className="bg-emerald-50/20 dark:bg-emerald-950/10 p-3.5 rounded-xl border border-emerald-100 dark:border-emerald-900/30 space-y-3">
+                            <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5 uppercase">
+                              <Award className="h-4 w-4 text-emerald-500" />
+                              2. Progres Tahfizh (Hafalan)
+                            </span>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                              <FormInput
+                                type="text"
+                                label="Surat"
+                                value={inputs.tahfizhSurah || ""}
+                                onChange={(e) => setStudentJournalInputs(prev => ({
+                                  ...prev,
+                                  [studentId]: { ...prev[studentId], tahfizhSurah: e.target.value }
+                                }))}
+                                placeholder="Surat..."
+                              />
+                              <FormInput
+                                type="text"
+                                label="Ayat"
+                                value={inputs.tahfizhAyat || ""}
+                                onChange={(e) => setStudentJournalInputs(prev => ({
+                                  ...prev,
+                                  [studentId]: { ...prev[studentId], tahfizhAyat: e.target.value }
+                                }))}
+                                placeholder="Ayat..."
+                              />
+                              <FormInput
+                                type="text"
+                                label="Halaman"
+                                value={inputs.tahfizhHalaman || ""}
+                                onChange={(e) => setStudentJournalInputs(prev => ({
+                                  ...prev,
+                                  [studentId]: { ...prev[studentId], tahfizhHalaman: e.target.value }
+                                }))}
+                                placeholder="Halaman..."
+                              />
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                              <FormInput
+                                type="text"
+                                label="Hafalan Baru (Ziyadah)"
+                                value={inputs.tahfizhNewMemorization || ""}
+                                onChange={(e) => setStudentJournalInputs(prev => ({
+                                  ...prev,
+                                  [studentId]: { ...prev[studentId], tahfizhNewMemorization: e.target.value }
+                                }))}
+                                placeholder="Hafalan baru..."
+                              />
+                              <FormInput
+                                type="text"
+                                label="Muroja'ah"
+                                value={inputs.tahfizhMurajaah || ""}
+                                onChange={(e) => setStudentJournalInputs(prev => ({
+                                  ...prev,
+                                  [studentId]: { ...prev[studentId], tahfizhMurajaah: e.target.value }
+                                }))}
+                                placeholder="Muroja'ah..."
+                              />
+                              <FormInput
+                                type="text"
+                                label="Kelancaran Hafalan"
+                                value={inputs.tahfizhFluency || ""}
+                                onChange={(e) => setStudentJournalInputs(prev => ({
+                                  ...prev,
+                                  [studentId]: { ...prev[studentId], tahfizhFluency: e.target.value }
+                                }))}
+                                placeholder="Sangat lancar, terbata-bata..."
+                              />
+                            </div>
+                            <FormInput
+                              type="text"
+                              label="Catatan Tahfizh"
+                              value={inputs.tahfizhNotes || ""}
                               onChange={(e) => setStudentJournalInputs(prev => ({
                                 ...prev,
-                                [studentId]: { ...prev[studentId], tajwid: e.target.value as any }
+                                [studentId]: { ...prev[studentId], tahfizhNotes: e.target.value }
                               }))}
-                              options={[
-                                { value: "Sangat Baik", label: "Sangat Baik" },
-                                { value: "Baik", label: "Baik" },
-                                { value: "Cukup", label: "Cukup" },
-                                { value: "Perlu Bimbingan", label: "Perlu Bimbingan" }
-                              ]}
-                            />
-                            <FormSelect
-                              label="Makhraj"
-                              value={inputs.makhraj}
-                              onChange={(e) => setStudentJournalInputs(prev => ({
-                                ...prev,
-                                [studentId]: { ...prev[studentId], makhraj: e.target.value as any }
-                              }))}
-                              options={[
-                                { value: "Sangat Baik", label: "Sangat Baik" },
-                                { value: "Baik", label: "Baik" },
-                                { value: "Cukup", label: "Cukup" },
-                                { value: "Perlu Bimbingan", label: "Perlu Bimbingan" }
-                              ]}
-                            />
-                            <FormSelect
-                              label="Kelancaran"
-                              value={inputs.fluency}
-                              onChange={(e) => setStudentJournalInputs(prev => ({
-                                ...prev,
-                                [studentId]: { ...prev[studentId], fluency: e.target.value as any }
-                              }))}
-                              options={[
-                                { value: "Sangat Baik", label: "Sangat Baik" },
-                                { value: "Baik", label: "Baik" },
-                                { value: "Cukup", label: "Cukup" },
-                                { value: "Perlu Bimbingan", label: "Perlu Bimbingan" }
-                              ]}
-                            />
-                            <FormSelect
-                              label="Adab"
-                              value={inputs.behavior}
-                              onChange={(e) => setStudentJournalInputs(prev => ({
-                                ...prev,
-                                [studentId]: { ...prev[studentId], behavior: e.target.value as any }
-                              }))}
-                              options={[
-                                { value: "Sangat Baik", label: "Sangat Baik" },
-                                { value: "Baik", label: "Baik" },
-                                { value: "Cukup", label: "Cukup" },
-                                { value: "Perlu Bimbingan", label: "Perlu Bimbingan" }
-                              ]}
+                              placeholder="Keterangan perkembangan hafalan..."
                             />
                           </div>
 
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          {/* 3. ADAB */}
+                          <div className="bg-purple-50/20 dark:bg-purple-950/10 p-3.5 rounded-xl border border-purple-100 dark:border-purple-900/30 space-y-3">
+                            <span className="text-xs font-bold text-purple-700 dark:text-purple-400 flex items-center gap-1.5 uppercase">
+                              <Clock className="h-4 w-4 text-purple-500" />
+                              3. Adab dan Akhlak Santri
+                            </span>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                              <FormInput
+                                type="text"
+                                label="Kedisiplinan"
+                                value={inputs.adabDiscipline || ""}
+                                onChange={(e) => setStudentJournalInputs(prev => ({
+                                  ...prev,
+                                  [studentId]: { ...prev[studentId], adabDiscipline: e.target.value }
+                                }))}
+                                placeholder="Kedisiplinan..."
+                              />
+                              <FormInput
+                                type="text"
+                                label="Kerapian"
+                                value={inputs.adabNeatness || ""}
+                                onChange={(e) => setStudentJournalInputs(prev => ({
+                                  ...prev,
+                                  [studentId]: { ...prev[studentId], adabNeatness: e.target.value }
+                                }))}
+                                placeholder="Kerapian pakaian/kamar..."
+                              />
+                              <FormInput
+                                type="text"
+                                label="Kesopanan"
+                                value={inputs.adabPoliteness || ""}
+                                onChange={(e) => setStudentJournalInputs(prev => ({
+                                  ...prev,
+                                  [studentId]: { ...prev[studentId], adabPoliteness: e.target.value }
+                                }))}
+                                placeholder="Kesopanan kepada asatidz..."
+                              />
+                              <FormInput
+                                type="text"
+                                label="Kejujuran"
+                                value={inputs.adabHonesty || ""}
+                                onChange={(e) => setStudentJournalInputs(prev => ({
+                                  ...prev,
+                                  [studentId]: { ...prev[studentId], adabHonesty: e.target.value }
+                                }))}
+                                placeholder="Sikap jujur..."
+                              />
+                              <FormInput
+                                type="text"
+                                label="Tanggung Jawab"
+                                value={inputs.adabResponsibility || ""}
+                                onChange={(e) => setStudentJournalInputs(prev => ({
+                                  ...prev,
+                                  [studentId]: { ...prev[studentId], adabResponsibility: e.target.value }
+                                }))}
+                                placeholder="Tanggung jawab tugas..."
+                              />
+                              <FormInput
+                                type="text"
+                                label="Kerjasama"
+                                value={inputs.adabCooperation || ""}
+                                onChange={(e) => setStudentJournalInputs(prev => ({
+                                  ...prev,
+                                  [studentId]: { ...prev[studentId], adabCooperation: e.target.value }
+                                }))}
+                                placeholder="Kerjasama tim..."
+                              />
+                            </div>
                             <FormInput
                               type="text"
-                              label="Catatan Musrif"
-                              value={inputs.notes}
+                              label="Catatan Adab & Akhlak"
+                              value={inputs.adabNotes || ""}
                               onChange={(e) => setStudentJournalInputs(prev => ({
                                 ...prev,
-                                [studentId]: { ...prev[studentId], notes: e.target.value }
+                                [studentId]: { ...prev[studentId], adabNotes: e.target.value }
                               }))}
-                              placeholder="Catatan individu perkembangan membaca..."
+                              placeholder="Deskripsi perkembangan perilaku..."
                             />
+                          </div>
+
+                          {/* 4. KEHIDUPAN ASRAMA */}
+                          <div className="bg-amber-50/20 dark:bg-amber-950/10 p-3.5 rounded-xl border border-amber-100 dark:border-amber-900/30 space-y-3">
+                            <span className="text-xs font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5 uppercase">
+                              <Layers className="h-4 w-4 text-amber-500" />
+                              4. Kehidupan & Mutaba'ah Asrama
+                            </span>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                              <FormInput
+                                type="text"
+                                label="Kebersihan"
+                                value={inputs.asramaCleanliness || ""}
+                                onChange={(e) => setStudentJournalInputs(prev => ({
+                                  ...prev,
+                                  [studentId]: { ...prev[studentId], asramaCleanliness: e.target.value }
+                                }))}
+                                placeholder="Misal: Piket kamar rajin..."
+                              />
+                              <FormInput
+                                type="text"
+                                label="Ibadah Harian"
+                                value={inputs.asramaWorship || ""}
+                                onChange={(e) => setStudentJournalInputs(prev => ({
+                                  ...prev,
+                                  [studentId]: { ...prev[studentId], asramaWorship: e.target.value }
+                                }))}
+                                placeholder="Misal: Salat berjamaah tepat waktu..."
+                              />
+                              <FormInput
+                                type="text"
+                                label="Kehadiran"
+                                value={inputs.asramaAttendance || ""}
+                                onChange={(e) => setStudentJournalInputs(prev => ({
+                                  ...prev,
+                                  [studentId]: { ...prev[studentId], asramaAttendance: e.target.value }
+                                }))}
+                                placeholder="Kehadiran kajian, makan..."
+                              />
+                              <FormInput
+                                type="text"
+                                label="Kedisiplinan Asrama"
+                                value={inputs.asramaDiscipline || ""}
+                                onChange={(e) => setStudentJournalInputs(prev => ({
+                                  ...prev,
+                                  [studentId]: { ...prev[studentId], asramaDiscipline: e.target.value }
+                                }))}
+                                placeholder="Jam tidur, jam belajar..."
+                              />
+                              <FormInput
+                                type="text"
+                                label="Interaksi Sosial"
+                                value={inputs.asramaSocialInteraction || ""}
+                                onChange={(e) => setStudentJournalInputs(prev => ({
+                                  ...prev,
+                                  [studentId]: { ...prev[studentId], asramaSocialInteraction: e.target.value }
+                                }))}
+                                placeholder="Sosialisasi sesama santri..."
+                              />
+                            </div>
                             <FormInput
                               type="text"
-                              label="Tindak Lanjut"
-                              value={inputs.followUp}
+                              label="Catatan Pengasuhan"
+                              value={inputs.asramaNotes || ""}
                               onChange={(e) => setStudentJournalInputs(prev => ({
                                 ...prev,
-                                [studentId]: { ...prev[studentId], followUp: e.target.value }
+                                [studentId]: { ...prev[studentId], asramaNotes: e.target.value }
                               }))}
-                              placeholder="Remidial, penugasan di rumah, dll..."
+                              placeholder="Catatan pengasuhan asrama..."
+                            />
+                          </div>
+
+                          {/* 5. PERMASALAHAN KHUSUS */}
+                          <div className="bg-rose-50/20 dark:bg-rose-950/10 p-3.5 rounded-xl border border-rose-100 dark:border-rose-900/30 space-y-3">
+                            <span className="text-xs font-bold text-rose-700 dark:text-rose-400 flex items-center gap-1.5 uppercase">
+                              <HelpCircle className="h-4 w-4 text-rose-500" />
+                              5. Permasalahan Khusus (Bila Ada)
+                            </span>
+                            <FormTextarea
+                              label="Deskripsi Masalah / Sakit / Pelanggaran / Prestasi"
+                              value={inputs.specialIssues || ""}
+                              onChange={(e) => setStudentJournalInputs(prev => ({
+                                ...prev,
+                                [studentId]: { ...prev[studentId], specialIssues: e.target.value }
+                              }))}
+                              placeholder="Tuliskan jika santri sakit, melakukan pelanggaran, berkonflik, atau memiliki prestasi istimewa..."
                             />
                           </div>
                         </div>
@@ -1349,41 +2173,62 @@ export const MusrifJournals: React.FC = () => {
                     </div>
 
                     {detail.attendance === "Hadir" ? (
-                      <div className="space-y-2.5 text-xs text-slate-600 dark:text-zinc-300">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-slate-50 dark:bg-zinc-800/40 p-2.5 rounded-lg">
-                          <div>
-                            <span className="font-semibold text-slate-400 block text-[10px] uppercase">Target Setoran</span>
-                            <span className="font-bold text-slate-800 dark:text-zinc-200 mt-0.5 block">{detail.memorizationTarget || "-"}</span>
+                      <div className="space-y-3 text-xs text-slate-600 dark:text-zinc-300">
+                        {/* 1. TAHSIN */}
+                        <div className="bg-blue-50/20 dark:bg-blue-950/10 p-2.5 rounded-lg border border-blue-100 dark:border-blue-900/30">
+                          <span className="font-bold text-blue-700 dark:text-blue-400 block mb-1">1. Evaluasi Tahsin (Membaca)</span>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] mt-1">
+                            <div><strong>Makhraj:</strong> {detail.tahsinMakhraj || "-"}</div>
+                            <div><strong>Tajwid:</strong> {detail.tahsinTajwid || "-"}</div>
+                            <div><strong>Kelancaran:</strong> {detail.tahsinFluency || "-"}</div>
                           </div>
-                          <div>
-                            <span className="font-semibold text-slate-400 block text-[10px] uppercase">Capaian Capaian</span>
-                            <span className="font-bold text-slate-800 dark:text-zinc-200 mt-0.5 block">{detail.memorizationAchievement || "-"}</span>
-                          </div>
+                          {detail.tahsinNotes && <p className="text-[11px] mt-1.5 text-slate-500 dark:text-zinc-400 italic"><strong>Catatan:</strong> "{detail.tahsinNotes}"</p>}
                         </div>
 
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                          <div className="p-1.5 border border-slate-150 dark:border-zinc-800 rounded-lg text-center">
-                            <span className="text-[9px] text-slate-400 font-bold block uppercase">Tajwid</span>
-                            <span className="font-bold text-slate-800 dark:text-zinc-200 mt-0.5 block">{detail.tajwid}</span>
+                        {/* 2. TAHFIZH */}
+                        <div className="bg-emerald-50/20 dark:bg-emerald-950/10 p-2.5 rounded-lg border border-emerald-100 dark:border-emerald-900/30">
+                          <span className="font-bold text-emerald-700 dark:text-emerald-400 block mb-1">2. Progres Tahfizh (Hafalan)</span>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] mt-1">
+                            <div><strong>Surat/Ayat/Halaman:</strong> {detail.tahfizhSurah || "-"} / {detail.tahfizhAyat || "-"} / {detail.tahfizhHalaman || "-"}</div>
+                            <div><strong>Hafalan Baru:</strong> {detail.tahfizhNewMemorization || "-"}</div>
+                            <div><strong>Muraja'ah:</strong> {detail.tahfizhMurajaah || "-"}</div>
                           </div>
-                          <div className="p-1.5 border border-slate-150 dark:border-zinc-800 rounded-lg text-center">
-                            <span className="text-[9px] text-slate-400 font-bold block uppercase">Makhraj</span>
-                            <span className="font-bold text-slate-800 dark:text-zinc-200 mt-0.5 block">{detail.makhraj}</span>
-                          </div>
-                          <div className="p-1.5 border border-slate-150 dark:border-zinc-800 rounded-lg text-center">
-                            <span className="text-[9px] text-slate-400 font-bold block uppercase">Kelancaran</span>
-                            <span className="font-bold text-slate-800 dark:text-zinc-200 mt-0.5 block">{detail.fluency}</span>
-                          </div>
-                          <div className="p-1.5 border border-slate-150 dark:border-zinc-800 rounded-lg text-center">
-                            <span className="text-[9px] text-slate-400 font-bold block uppercase">Adab</span>
-                            <span className="font-bold text-slate-800 dark:text-zinc-200 mt-0.5 block">{detail.behavior}</span>
-                          </div>
+                          <div className="text-[11px] mt-1"><strong>Kelancaran Hafalan:</strong> {detail.tahfizhFluency || "-"}</div>
+                          {detail.tahfizhNotes && <p className="text-[11px] mt-1.5 text-slate-500 dark:text-zinc-400 italic"><strong>Catatan:</strong> "{detail.tahfizhNotes}"</p>}
                         </div>
 
-                        {(detail.notes || detail.followUp) && (
-                          <div className="space-y-1 bg-blue-50/20 dark:bg-zinc-800/20 p-2.5 rounded-lg border border-slate-100 dark:border-zinc-800">
-                            {detail.notes && <p><strong>Catatan:</strong> "{detail.notes}"</p>}
-                            {detail.followUp && <p><strong>Tindak Lanjut:</strong> "{detail.followUp}"</p>}
+                        {/* 3. ADAB */}
+                        <div className="bg-purple-50/20 dark:bg-purple-950/10 p-2.5 rounded-lg border border-purple-100 dark:border-purple-900/30">
+                          <span className="font-bold text-purple-700 dark:text-purple-400 block mb-1">3. Adab dan Akhlak Santri</span>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px] mt-1">
+                            <div><strong>Disiplin:</strong> {detail.adabDiscipline || "-"}</div>
+                            <div><strong>Kerapian:</strong> {detail.adabNeatness || "-"}</div>
+                            <div><strong>Sopan:</strong> {detail.adabPoliteness || "-"}</div>
+                            <div><strong>Jujur:</strong> {detail.adabHonesty || "-"}</div>
+                            <div><strong>Tanggung Jawab:</strong> {detail.adabResponsibility || "-"}</div>
+                            <div><strong>Kerjasama:</strong> {detail.adabCooperation || "-"}</div>
+                          </div>
+                          {detail.adabNotes && <p className="text-[11px] mt-1.5 text-slate-500 dark:text-zinc-400 italic"><strong>Catatan:</strong> "{detail.adabNotes}"</p>}
+                        </div>
+
+                        {/* 4. ASRAMA */}
+                        <div className="bg-amber-50/20 dark:bg-amber-950/10 p-2.5 rounded-lg border border-amber-100 dark:border-amber-900/30">
+                          <span className="font-bold text-amber-700 dark:text-amber-400 block mb-1">4. Kehidupan & Mutaba'ah Asrama</span>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px] mt-1">
+                            <div><strong>Kebersihan:</strong> {detail.asramaCleanliness || "-"}</div>
+                            <div><strong>Ibadah:</strong> {detail.asramaWorship || "-"}</div>
+                            <div><strong>Kehadiran:</strong> {detail.asramaAttendance || "-"}</div>
+                            <div><strong>Disiplin:</strong> {detail.asramaDiscipline || "-"}</div>
+                            <div><strong>Interaksi:</strong> {detail.asramaSocialInteraction || "-"}</div>
+                          </div>
+                          {detail.asramaNotes && <p className="text-[11px] mt-1.5 text-slate-500 dark:text-zinc-400 italic"><strong>Catatan:</strong> "{detail.asramaNotes}"</p>}
+                        </div>
+
+                        {/* 5. PERMASALAHAN KHUSUS */}
+                        {detail.specialIssues && (
+                          <div className="bg-rose-50/20 dark:bg-rose-950/10 p-2.5 rounded-lg border border-rose-100 dark:border-rose-900/30">
+                            <span className="font-bold text-rose-700 dark:text-rose-400 block mb-1">5. Permasalahan Khusus</span>
+                            <p className="text-[11px] text-rose-950 dark:text-rose-300 font-medium whitespace-pre-wrap mt-1">"{detail.specialIssues}"</p>
                           </div>
                         )}
                       </div>
@@ -1434,6 +2279,36 @@ export const MusrifJournals: React.FC = () => {
           </div>
         )}
       </Dialog>
+
+      {/* Custom Confirmation Dialog for destructive operations */}
+      {confirmState && (
+        <Dialog
+          isOpen={confirmState.isOpen}
+          onClose={() => setConfirmState(null)}
+          title={confirmState.title}
+          size="md"
+        >
+          <div className="space-y-4">
+            <p className="text-sm text-slate-600 dark:text-zinc-300 whitespace-pre-line leading-relaxed">
+              {confirmState.message}
+            </p>
+            <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-zinc-800">
+              <button
+                onClick={() => setConfirmState(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:text-zinc-300 dark:hover:bg-zinc-800 rounded-lg cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                onClick={confirmState.onConfirm}
+                className="px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg cursor-pointer"
+              >
+                Ya, Lanjutkan
+              </button>
+            </div>
+          </div>
+        </Dialog>
+      )}
     </div>
   );
 };

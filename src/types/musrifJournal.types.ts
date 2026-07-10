@@ -62,4 +62,35 @@ export interface MusrifJournalDetail {
   followUp: string;
   createdAt: string;
   updatedAt: string;
+
+  // NEW FIELDS FOR DETAILED MONITORING (BAGIAN 7)
+  tahsinMakhraj?: string;
+  tahsinTajwid?: string;
+  tahsinFluency?: string;
+  tahsinNotes?: string;
+
+  tahfizhSurah?: string;
+  tahfizhAyat?: string;
+  tahfizhHalaman?: string;
+  tahfizhNewMemorization?: string;
+  tahfizhMurajaah?: string;
+  tahfizhFluency?: string;
+  tahfizhNotes?: string;
+
+  adabDiscipline?: string;
+  adabNeatness?: string;
+  adabPoliteness?: string;
+  adabHonesty?: string;
+  adabResponsibility?: string;
+  adabCooperation?: string;
+  adabNotes?: string;
+
+  asramaCleanliness?: string;
+  asramaWorship?: string;
+  asramaAttendance?: string;
+  asramaDiscipline?: string;
+  asramaSocialInteraction?: string;
+  asramaNotes?: string;
+
+  specialIssues?: string;
 }
