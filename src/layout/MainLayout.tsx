@@ -86,7 +86,7 @@ export const MainLayout: React.FC = () => {
     { name: "Program Semester", path: "/semester-programs", icon: Grid, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan"], group: "Perencanaan Pembelajaran" },
     { name: "Modul Ajar", path: "/lesson-plans", icon: FileText, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan"], group: "Perencanaan Pembelajaran" },
     { name: "Jurnal Mengajar", path: "/teaching-journals", icon: BookOpen, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan"], group: "Perencanaan Pembelajaran" },
-    { name: "Jurnal Musrif", path: "/musrif-journals", icon: BookOpen, roles: ["admin", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "ketua yayasan"], group: "Perencanaan Pembelajaran" },
+    { name: "Jurnal Halaqah", path: "/musrif-journals", icon: BookOpen, roles: ["admin", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "ketua yayasan"], group: "Perencanaan Pembelajaran" },
     
     // Pengembangan Diri GTK
     { name: "Dashboard Pengembangan", path: "/gtk-development?tab=dashboard", icon: LayoutDashboard, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "tata usaha", "operator", "ketua yayasan"], group: "Pengembangan Diri GTK" },
@@ -100,6 +100,7 @@ export const MainLayout: React.FC = () => {
     { name: "Supervisi Manajerial", path: "/supervision-managerial", icon: Shield, roles: ["admin", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan"], group: "Supervisi" },
     { name: "Instrumen Supervisi", path: "/supervision-instruments", icon: FileCheck, roles: ["admin", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan"], group: "Supervisi" },
 
+    { name: "Mutabaah Harian", path: "/mutabaah-harian", icon: ClipboardList, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "tata usaha", "operator", "ketua yayasan"], group: "Evaluasi Kinerja" },
     { name: "Rapor Kinerja SDM", path: "/sdm-performance", icon: Award, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Evaluasi Kinerja" },
 
     { name: "Profil Saya", path: "/profile", icon: UserIcon, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Akun Saya" },
@@ -116,8 +117,9 @@ export const MainLayout: React.FC = () => {
     allowedMenuItems = [
       { name: "Dashboard", path: "/", icon: LayoutDashboard, roles: ["musrif"] },
       { name: "Kelompok Halaqah", path: "/musrif-journals?tab=kelompok", icon: Users, roles: ["musrif"], group: "Halaqah Musrif" },
-      { name: "Mutabaah Harian", path: "/musrif-journals?tab=jurnal", icon: BookOpen, roles: ["musrif"], group: "Halaqah Musrif" },
+      { name: "Jurnal Halaqah", path: "/musrif-journals?tab=jurnal", icon: BookOpen, roles: ["musrif"], group: "Halaqah Musrif" },
       { name: "Rekap Perkembangan Santri", path: "/musrif-journals?tab=rekap", icon: Award, roles: ["musrif"], group: "Halaqah Musrif" },
+      { name: "Mutabaah Harian Saya", path: "/mutabaah-harian", icon: ClipboardList, roles: ["musrif"], group: "Halaqah Musrif" },
       { name: "Profil Saya", path: "/profile", icon: UserIcon, roles: ["musrif"], group: "Akun Saya" },
       { name: "Pengaturan Akun", path: "/change-password", icon: SettingsIcon, roles: ["musrif"], group: "Akun Saya" }
     ];

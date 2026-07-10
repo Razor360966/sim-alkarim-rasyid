@@ -100,6 +100,24 @@ export default function Users() {
   const [roleFilter, setRoleFilter] = useState<string>("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  // Helper to format teacher name with degrees/titles (gelar)
+  const getTeacherFullName = (teacherId?: string, fallbackName?: string) => {
+    if (!teacherId || !teachers) return fallbackName || "";
+    const teacher = teachers.find(t => t.id === teacherId || t.teacherId === teacherId);
+    if (!teacher) return fallbackName || "";
+    return `${teacher.frontTitle ? teacher.frontTitle.trim() + " " : ""}${teacher.name || ""}${teacher.backTitle ? ", " + teacher.backTitle.trim() : ""}`;
+  };
+
+  const getTeacherFullNameByEmailOrId = (email?: string, userId?: string, fallbackName?: string) => {
+    if (!users || !teachers) return fallbackName || "";
+    const foundUser = users.find(u => 
+      (userId && u.userId === userId) || 
+      (email && u.email?.toLowerCase() === email.toLowerCase())
+    );
+    if (!foundUser || !foundUser.teacherId) return fallbackName || "";
+    return getTeacherFullName(foundUser.teacherId, foundUser.name);
+  };
+
   // Modal states
   const [selectedUser, setSelectedUser] = useState<UserSystem | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
@@ -1081,7 +1099,7 @@ const confirmDeleteAccount = async () => {
                         <tr key={item.userId} className="hover:bg-slate-50/50 dark:hover:bg-zinc-850/20 transition-colors">
                           <td className="px-5 py-4 text-xs font-semibold text-slate-500">{index + 1}</td>
                           <td className="px-5 py-4">
-                            <span className="font-semibold text-slate-900 dark:text-white block text-sm">{item.name}</span>
+                            <span className="font-semibold text-slate-900 dark:text-white block text-sm">{getTeacherFullName(item.teacherId, item.name)}</span>
                             {item.requirePasswordChange && (
                               <span className="inline-flex items-center gap-1 text-[9px] font-extrabold text-amber-600 dark:text-amber-400 uppercase mt-0.5">
                                 <KeyRound className="h-2.5 w-2.5 animate-pulse" /> Wajib Ganti Sandi
@@ -1107,7 +1125,7 @@ const confirmDeleteAccount = async () => {
                             {item.teacherId ? (
                               <div className="flex items-center gap-1.5">
                                 <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded">
-                                  {item.teacherName || "Terkoneksi"}
+                                  {getTeacherFullName(item.teacherId, item.teacherName || "Terkoneksi")}
                                 </span>
                               </div>
                             ) : (
@@ -1327,7 +1345,9 @@ const confirmDeleteAccount = async () => {
                       <td className="px-5 py-3.5 font-semibold text-slate-500">{index + 1}</td>
                       <td className="px-5 py-3.5 text-slate-500">{new Date(log.timestamp).toLocaleString("id-ID")}</td>
                       <td className="px-5 py-3.5">
-                        <span className="font-semibold text-slate-800 dark:text-zinc-200 block">{log.name}</span>
+                        <span className="font-semibold text-slate-800 dark:text-zinc-200 block">
+                          {getTeacherFullNameByEmailOrId(log.email, log.userId, log.name)}
+                        </span>
                         <span className="text-[10px] text-slate-400">{log.email}</span>
                       </td>
                       <td className="px-5 py-3.5 text-slate-500">
@@ -1407,7 +1427,9 @@ const confirmDeleteAccount = async () => {
                     <tr key={log.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-850/20 text-xs">
                       <td className="px-5 py-3.5 font-semibold text-slate-500">{index + 1}</td>
                       <td className="px-5 py-3.5 text-slate-500">{new Date(log.createdAt).toLocaleString("id-ID")}</td>
-                      <td className="px-5 py-3.5 font-bold text-slate-700 dark:text-zinc-200">{log.userName || "Operator"}</td>
+                      <td className="px-5 py-3.5 font-bold text-slate-700 dark:text-zinc-200">
+                        {getTeacherFullNameByEmailOrId(undefined, log.userId, log.userName || "Operator")}
+                      </td>
                       <td className="px-5 py-3.5">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded font-extrabold text-[9px] uppercase border ${
                           log.action.includes("CREATE")
@@ -1542,9 +1564,12 @@ const confirmDeleteAccount = async () => {
                     {isTeachersLoading ? (
                       <option disabled>Memuat daftar guru...</option>
                     ) : (
-                      teachers.map(t => (
-                        <option key={t.id} value={t.id}>{t.name} — NIY {t.niy}</option>
-                      ))
+                      teachers.map(t => {
+                        const nameWithTitle = `${t.frontTitle ? t.frontTitle.trim() + " " : ""}${t.name || ""}${t.backTitle ? ", " + t.backTitle.trim() : ""}`;
+                        return (
+                          <option key={t.id} value={t.id}>{nameWithTitle} — NIY {t.niy}</option>
+                        );
+                      })
                     )}
                   </select>
                 </div>
@@ -1596,7 +1621,7 @@ const confirmDeleteAccount = async () => {
                 <div>
                   <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Nama Akun</label>
                   <div className="font-semibold text-xs bg-slate-50 dark:bg-zinc-950 p-2.5 border border-slate-100 dark:border-zinc-800 mt-1 rounded-xl">
-                    {selectedUser.name} ({selectedUser.email})
+                    {getTeacherFullName(selectedUser.teacherId, selectedUser.name)} ({selectedUser.email})
                   </div>
                 </div>
 
@@ -1673,7 +1698,7 @@ const confirmDeleteAccount = async () => {
                 <div>
                   <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Nama Akun</label>
                   <div className="font-semibold text-xs bg-slate-50 dark:bg-zinc-950 p-2.5 border border-slate-100 dark:border-zinc-800 mt-1 rounded-xl">
-                    {selectedUser.name}
+                    {getTeacherFullName(selectedUser.teacherId, selectedUser.name)}
                   </div>
                 </div>
 
@@ -1735,7 +1760,7 @@ const confirmDeleteAccount = async () => {
               </div>
 
               <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                Apakah Anda yakin ingin menghapus akun <strong>{userToDelete.name}</strong> secara permanen?
+                Apakah Anda yakin ingin menghapus akun <strong>{getTeacherFullName(userToDelete.teacherId, userToDelete.name)}</strong> secara permanen?
                 Akun ini akan di-<strong>soft-delete</strong> dari sistem.
               </p>
 
@@ -1783,7 +1808,7 @@ const confirmDeleteAccount = async () => {
                 <div>
                   <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Nama Akun Login</label>
                   <div className="font-semibold text-xs bg-slate-50 dark:bg-zinc-950 p-2.5 border border-slate-100 dark:border-zinc-800 mt-1 rounded-xl">
-                    {selectedUser.name} ({selectedUser.email})
+                    {getTeacherFullName(selectedUser.teacherId, selectedUser.name)} ({selectedUser.email})
                   </div>
                 </div>
 
@@ -1798,9 +1823,12 @@ const confirmDeleteAccount = async () => {
                     {isTeachersLoading ? (
                       <option disabled>Memuat guru...</option>
                     ) : (
-                      teachers.map(t => (
-                        <option key={t.id} value={t.id}>{t.name} — NIY {t.niy}</option>
-                      ))
+                      teachers.map(t => {
+                        const nameWithTitle = `${t.frontTitle ? t.frontTitle.trim() + " " : ""}${t.name || ""}${t.backTitle ? ", " + t.backTitle.trim() : ""}`;
+                        return (
+                          <option key={t.id} value={t.id}>{nameWithTitle} — NIY {t.niy}</option>
+                        );
+                      })
                     )}
                   </select>
                   <p className="text-[10px] text-slate-400 mt-1.5 leading-relaxed">

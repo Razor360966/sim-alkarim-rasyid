@@ -3,6 +3,7 @@ export * from "./teacher";
 export * from "./academicYear.types";
 export * from "./semester.types";
 export * from "./user.types";
+export * from "./mutabaah.types";
 export * from "./schoolSettings.types";
 export * from "./lessonPeriod.types";
 export * from "./schedule.types";

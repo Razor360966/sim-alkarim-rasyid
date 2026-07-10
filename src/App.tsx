@@ -44,6 +44,7 @@ import SemesterProgram from "./pages/SemesterProgram";
 import { LessonPlans } from "./pages/LessonPlans";
 import TeachingJournals from "./pages/TeachingJournals";
 import MusrifJournals from "./pages/MusrifJournals";
+import { MutabaahHarian } from "./pages/MutabaahHarian";
 import SdmPerformance from "./pages/SdmPerformance";
 import GtkDevelopment from "./pages/GtkDevelopment";
 import SupervisionAcademic from "./pages/SupervisionAcademic";
@@ -112,6 +113,7 @@ export default function App() {
                     <Route path="lesson-plans" element={<LessonPlans />} />
                     <Route path="teaching-journals" element={<TeachingJournals />} />
                     <Route path="musrif-journals" element={<MusrifJournals />} />
+                    <Route path="mutabaah-harian" element={<MutabaahHarian />} />
                     <Route path="sdm-performance" element={<SdmPerformance />} />
                     <Route path="gtk-development" element={<GtkDevelopment />} />
 
