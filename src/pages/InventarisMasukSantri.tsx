@@ -37,7 +37,9 @@ import {
   RefreshCw,
   Clock,
   User,
-  ShieldAlert
+  ShieldAlert,
+  ChevronUp,
+  ChevronDown
 } from "lucide-react";
 
 export const InventarisMasukSantri: React.FC = () => {
@@ -87,6 +89,8 @@ export const InventarisMasukSantri: React.FC = () => {
 
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState<boolean>(false);
   const [newCategoryName, setNewCategoryName] = useState<string>("");
+  const [editingCategory, setEditingCategory] = useState<InventarisCategory | null>(null);
+  const [masterSubTab, setMasterSubTab] = useState<"goods" | "categories">("goods");
 
   const [isExaminerModalOpen, setIsExaminerModalOpen] = useState<boolean>(false);
   const [selectedUserToAssign, setSelectedUserToAssign] = useState<string>("");
@@ -358,13 +362,53 @@ export const InventarisMasukSantri: React.FC = () => {
     }
   };
 
-  // Dynamic checklist filtering by Class
+  // Dynamic checklist filtering by Class - exclude already checked students
   const studentsFilteredByChecklistClass = useMemo(() => {
-    if (!checklistClassId) {
-      return students;
+    const checkedStudentIds = new Set(allChecklists.map((c) => c.studentId));
+    let filteredList = students;
+    if (checklistClassId) {
+      filteredList = filteredList.filter((s) => s.classId === checklistClassId);
     }
-    return students.filter((s) => s.classId === checklistClassId);
-  }, [students, checklistClassId]);
+    return filteredList.filter((s) => !checkedStudentIds.has(s.id) || s.id === selectedStudent?.id);
+  }, [students, checklistClassId, allChecklists, selectedStudent]);
+
+  // Group checklist items by category, sorted by category urutan and item urutan
+  const groupedChecklistItems = useMemo(() => {
+    const groups: { [categoryName: string]: StudentInventarisItem[] } = {};
+    activeChecklistItems.forEach((item) => {
+      const masterInfo = masterGoods.find((g) => g.id === item.itemId);
+      const categoryName = masterInfo?.category || "Lain-lain";
+      if (!groups[categoryName]) {
+        groups[categoryName] = [];
+      }
+      groups[categoryName].push(item);
+    });
+
+    const sortedGroups: { category: string; items: StudentInventarisItem[] }[] = [];
+    const seenCategories = new Set<string>();
+
+    categories.forEach((cat) => {
+      if (groups[cat.name] && groups[cat.name].length > 0 && !seenCategories.has(cat.name)) {
+        seenCategories.add(cat.name);
+        sortedGroups.push({
+          category: cat.name,
+          items: groups[cat.name]
+        });
+      }
+    });
+
+    Object.keys(groups).forEach((catName) => {
+      if (!seenCategories.has(catName)) {
+        seenCategories.add(catName);
+        sortedGroups.push({
+          category: catName,
+          items: groups[catName]
+        });
+      }
+    });
+
+    return sortedGroups;
+  }, [activeChecklistItems, masterGoods, categories]);
 
   const handleDropdownClassChange = (classId: string) => {
     setChecklistClassId(classId);
@@ -430,11 +474,37 @@ export const InventarisMasukSantri: React.FC = () => {
     }
 
     try {
+      const catObj = categories.find((c) => c.name === goodForm.category);
+      const urutanKategori = catObj ? (catObj.urutan || 999) : 999;
+
       if (editingGood) {
-        await inventarisService.updateGood(editingGood.id, goodForm);
+        let urutanBarang = editingGood.urutanBarang || 999;
+        if (editingGood.category !== goodForm.category) {
+          const sameCategoryGoods = masterGoods.filter((g) => g.category === goodForm.category);
+          const maxUrutanBarang = sameCategoryGoods.reduce((max, g) => ((g.urutanBarang || 0) > max ? (g.urutanBarang || 0) : max), 0);
+          urutanBarang = maxUrutanBarang + 1;
+        }
+
+        const updatedData = {
+          ...goodForm,
+          urutanKategori,
+          urutanBarang
+        };
+
+        await inventarisService.updateGood(editingGood.id, updatedData);
         toast(`Barang "${goodForm.name}" berhasil diperbarui`, "success");
       } else {
-        await inventarisService.addGood(goodForm);
+        const sameCategoryGoods = masterGoods.filter((g) => g.category === goodForm.category);
+        const maxUrutanBarang = sameCategoryGoods.reduce((max, g) => ((g.urutanBarang || 0) > max ? (g.urutanBarang || 0) : max), 0);
+        const urutanBarang = maxUrutanBarang + 1;
+
+        const newData = {
+          ...goodForm,
+          urutanKategori,
+          urutanBarang
+        };
+
+        await inventarisService.addGood(newData);
         toast(`Barang "${goodForm.name}" berhasil ditambahkan`, "success");
       }
       setIsGoodModalOpen(false);
@@ -464,15 +534,145 @@ export const InventarisMasukSantri: React.FC = () => {
     if (!newCategoryName.trim()) return;
 
     try {
-      await inventarisService.addCategory(newCategoryName.trim());
-      toast(`Kategori "${newCategoryName}" berhasil ditambahkan`, "success");
+      if (editingCategory) {
+        // Renaming Category
+        await inventarisService.updateCategory(editingCategory.id, { name: newCategoryName.trim() });
+        
+        // Update all corresponding master goods
+        const goodsToUpdate = masterGoods.filter((g) => g.category === editingCategory.name);
+        for (const g of goodsToUpdate) {
+          await inventarisService.updateGood(g.id, { category: newCategoryName.trim() });
+        }
+
+        toast(`Kategori berhasil diubah menjadi "${newCategoryName}"`, "success");
+      } else {
+        // Adding new category
+        const maxUrutan = categories.reduce((max, c) => ((c.urutan || 0) > max ? (c.urutan || 0) : max), 0);
+        await inventarisService.addCategory(newCategoryName.trim(), maxUrutan + 1);
+        toast(`Kategori "${newCategoryName}" berhasil ditambahkan`, "success");
+      }
       setNewCategoryName("");
+      setEditingCategory(null);
       setIsCategoryModalOpen(false);
       const cats = await inventarisService.getCategories();
       setCategories(cats);
+      const goods = await inventarisService.getGoods();
+      setMasterGoods(goods);
     } catch (err) {
       console.error(err);
-      toast("Gagal menambah kategori", "error");
+      toast("Gagal menyimpan kategori", "error");
+    }
+  };
+
+  const handleMoveCategory = async (category: InventarisCategory, direction: "up" | "down") => {
+    const idx = categories.findIndex((c) => c.id === category.id);
+    if (idx === -1) return;
+    if (direction === "up" && idx === 0) return;
+    if (direction === "down" && idx === categories.length - 1) return;
+
+    const swapWithIdx = direction === "up" ? idx - 1 : idx + 1;
+    const swapCat = categories[swapWithIdx];
+
+    setIsSaving(true);
+    try {
+      const tempUrutan = category.urutan || 999;
+      const targetUrutan = swapCat.urutan || 999;
+      
+      await inventarisService.updateCategory(category.id, { urutan: targetUrutan });
+      await inventarisService.updateCategory(swapCat.id, { urutan: tempUrutan });
+
+      // Refresh categories
+      const cats = await inventarisService.getCategories();
+      setCategories(cats);
+
+      // UPDATE all goods in these categories so their urutanKategori is also in sync
+      const goodsInCat = masterGoods.filter((g) => g.category === category.name);
+      for (const g of goodsInCat) {
+        await inventarisService.updateGood(g.id, { urutanKategori: targetUrutan });
+      }
+
+      const goodsInSwapCat = masterGoods.filter((g) => g.category === swapCat.name);
+      for (const g of goodsInSwapCat) {
+        await inventarisService.updateGood(g.id, { urutanKategori: tempUrutan });
+      }
+
+      // Refresh goods
+      const goods = await inventarisService.getGoods();
+      setMasterGoods(goods);
+
+      toast("Urutan kategori berhasil diubah", "success");
+    } catch (err) {
+      console.error(err);
+      toast("Gagal mengubah urutan kategori", "error");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDeleteCategory = async (category: InventarisCategory) => {
+    const goodsInCat = masterGoods.filter((g) => g.category === category.name);
+    if (goodsInCat.length > 0) {
+      if (!window.confirm(`Kategori "${category.name}" memiliki ${goodsInCat.length} barang di dalamnya. Menghapus kategori ini juga akan memindahkan barang-barang ini ke kategori "Lain-lain". Apakah Anda yakin?`)) {
+        return;
+      }
+    } else {
+      if (!window.confirm(`Apakah Anda yakin ingin menghapus kategori "${category.name}"?`)) return;
+    }
+
+    setIsSaving(true);
+    try {
+      await inventarisService.deleteCategory(category.id);
+
+      let otherCat = categories.find((c) => c.name === "Lain-lain");
+      let otherCatUrutan = otherCat ? (otherCat.urutan || 999) : 999;
+
+      for (const g of goodsInCat) {
+        await inventarisService.updateGood(g.id, { 
+          category: "Lain-lain", 
+          urutanKategori: otherCatUrutan,
+          urutanBarang: 100 + (g.urutanBarang || 0)
+        });
+      }
+
+      const cats = await inventarisService.getCategories();
+      setCategories(cats);
+      const goods = await inventarisService.getGoods();
+      setMasterGoods(goods);
+
+      toast("Kategori berhasil dihapus", "success");
+    } catch (err) {
+      console.error(err);
+      toast("Gagal menghapus kategori", "error");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleMoveGood = async (good: MasterGood, direction: "up" | "down") => {
+    const sameCatGoods = masterGoods.filter((g) => g.category === good.category);
+    const idx = sameCatGoods.findIndex((g) => g.id === good.id);
+    if (idx === -1) return;
+    if (direction === "up" && idx === 0) return;
+    if (direction === "down" && idx === sameCatGoods.length - 1) return;
+
+    const swapWith = direction === "up" ? sameCatGoods[idx - 1] : sameCatGoods[idx + 1];
+
+    setIsSaving(true);
+    try {
+      const tempUrutan = good.urutanBarang || 999;
+      const targetUrutan = swapWith.urutanBarang || 999;
+      
+      await inventarisService.updateGood(good.id, { urutanBarang: targetUrutan });
+      await inventarisService.updateGood(swapWith.id, { urutanBarang: tempUrutan });
+
+      const goods = await inventarisService.getGoods();
+      setMasterGoods(goods);
+      toast("Urutan barang berhasil diubah", "success");
+    } catch (err) {
+      console.error(err);
+      toast("Gagal mengubah urutan barang", "error");
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -861,64 +1061,83 @@ export const InventarisMasukSantri: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-zinc-850">
-                    {activeChecklistItems.map((item) => {
-                      const masterInfo = masterGoods.find((g) => g.id === item.itemId);
-                      return (
-                        <tr key={item.itemId} className="hover:bg-slate-50/50 dark:hover:bg-zinc-950/20">
-                          <td className="py-3 px-4">
-                            <p className="font-bold text-slate-800 dark:text-zinc-200">{item.itemName}</p>
-                            <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-zinc-800 text-slate-500">
-                              {masterInfo?.category || "Lain-lain"}
-                            </span>
-                          </td>
-                          <td className="py-3 px-2 text-center font-bold text-slate-600 dark:text-zinc-300">
-                            {item.minQty} {masterInfo?.unit || "Pcs"}
-                          </td>
-                          <td className="py-3 px-2 text-center">
-                            <input
-                              type="number"
-                              min="0"
-                              value={item.actualQty !== null ? item.actualQty : ""}
-                              placeholder="-"
-                              onChange={(e) => handleQtyChange(item.itemId, e.target.value)}
-                              className="w-14 text-center py-1 border border-slate-150 dark:border-zinc-800 rounded-lg text-xs bg-slate-50 dark:bg-zinc-950"
-                            />
-                          </td>
-                          <td className="py-3 px-4 text-center">
-                            <select
-                              value={item.status}
-                              onChange={(e) => handleStatusOverride(item.itemId, e.target.value)}
-                              className={`text-[10px] font-bold rounded-lg px-2 py-1 border cursor-pointer ${
-                                item.status === "Lengkap"
-                                  ? "bg-emerald-50 border-emerald-100 text-emerald-600 dark:bg-emerald-950/20 dark:text-emerald-400"
-                                  : item.status === "Kurang"
-                                  ? "bg-amber-50 border-amber-100 text-amber-600 dark:bg-amber-950/20 dark:text-amber-400"
-                                  : item.status === "Tidak Membawa"
-                                  ? "bg-rose-50 border-rose-100 text-rose-600 dark:bg-rose-950/20 dark:text-rose-400"
-                                  : item.status === "Rusak"
-                                  ? "bg-red-50 border-red-100 text-red-600 dark:bg-red-950/20 dark:text-red-400"
-                                  : "bg-slate-100 border-slate-200 text-slate-500 dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-400"
-                              }`}
-                            >
-                              <option value="Belum Dicek">Belum Dicek</option>
-                              <option value="Lengkap">Lengkap</option>
-                              <option value="Kurang">Kurang</option>
-                              <option value="Tidak Membawa">Tidak Membawa</option>
-                              <option value="Rusak">Rusak</option>
-                            </select>
-                          </td>
-                          <td className="py-3 px-4">
-                            <input
-                              type="text"
-                              value={item.notes || ""}
-                              placeholder="Opsional..."
-                              onChange={(e) => handleNotesChange(item.itemId, e.target.value)}
-                              className="w-full py-1 px-2 border border-slate-150 dark:border-zinc-850 rounded-lg text-xs bg-slate-50 dark:bg-zinc-950"
-                            />
-                          </td>
-                        </tr>
-                      );
-                    })}
+                    {(() => {
+                      let globalItemIndex = 0;
+                      return groupedChecklistItems.map((group, groupIdx) => (
+                        <React.Fragment key={group.category}>
+                          {/* Section Category Header */}
+                          <tr className="bg-slate-100/80 dark:bg-zinc-800/80 border-t border-b border-slate-200 dark:border-zinc-700">
+                            <td colSpan={5} className="py-2.5 px-4 font-black text-xs tracking-wider text-indigo-700 dark:text-indigo-400 uppercase">
+                              Kelompok {groupIdx + 1}: {group.category}
+                            </td>
+                          </tr>
+                          {group.items.map((item) => {
+                            globalItemIndex++;
+                            const masterInfo = masterGoods.find((g) => g.id === item.itemId);
+                            return (
+                              <tr key={item.itemId} className="hover:bg-slate-50/50 dark:hover:bg-zinc-950/20">
+                                <td className="py-3 px-4">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-mono text-[10px] text-slate-400 w-5 text-right">{globalItemIndex}.</span>
+                                    <div>
+                                      <p className="font-bold text-slate-800 dark:text-zinc-200">{item.itemName}</p>
+                                      <span className="text-[9px] text-slate-400">
+                                        {group.category}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="py-3 px-2 text-center font-bold text-slate-600 dark:text-zinc-300">
+                                  {item.minQty} {masterInfo?.unit || "Pcs"}
+                                </td>
+                                <td className="py-3 px-2 text-center">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    value={item.actualQty !== null ? item.actualQty : ""}
+                                    placeholder="-"
+                                    onChange={(e) => handleQtyChange(item.itemId, e.target.value)}
+                                    className="w-14 text-center py-1 border border-slate-150 dark:border-zinc-800 rounded-lg text-xs bg-slate-50 dark:bg-zinc-950"
+                                  />
+                                </td>
+                                <td className="py-3 px-4 text-center">
+                                  <select
+                                    value={item.status}
+                                    onChange={(e) => handleStatusOverride(item.itemId, e.target.value)}
+                                    className={`text-[10px] font-bold rounded-lg px-2 py-1 border cursor-pointer ${
+                                      item.status === "Lengkap"
+                                        ? "bg-emerald-50 border-emerald-100 text-emerald-600 dark:bg-emerald-950/20 dark:text-emerald-400"
+                                        : item.status === "Kurang"
+                                        ? "bg-amber-50 border-amber-100 text-amber-600 dark:bg-amber-950/20 dark:text-amber-400"
+                                        : item.status === "Tidak Membawa"
+                                        ? "bg-rose-50 border-rose-100 text-rose-600 dark:bg-rose-950/20 dark:text-rose-400"
+                                        : item.status === "Rusak"
+                                        ? "bg-red-50 border-red-100 text-red-600 dark:bg-red-950/20 dark:text-red-400"
+                                        : "bg-slate-100 border-slate-200 text-slate-500 dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-400"
+                                    }`}
+                                  >
+                                    <option value="Belum Dicek">Belum Dicek</option>
+                                    <option value="Lengkap">Lengkap</option>
+                                    <option value="Kurang">Kurang</option>
+                                    <option value="Tidak Membawa">Tidak Membawa</option>
+                                    <option value="Rusak">Rusak</option>
+                                  </select>
+                                </td>
+                                <td className="py-3 px-4">
+                                  <input
+                                    type="text"
+                                    value={item.notes || ""}
+                                    placeholder="Opsional..."
+                                    onChange={(e) => handleNotesChange(item.itemId, e.target.value)}
+                                    className="w-full py-1 px-2 border border-slate-150 dark:border-zinc-850 rounded-lg text-xs bg-slate-50 dark:bg-zinc-950"
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </React.Fragment>
+                      ));
+                    })()}
                   </tbody>
                 </table>
               </div>
@@ -1189,13 +1408,17 @@ export const InventarisMasukSantri: React.FC = () => {
         <div className="space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 p-6 rounded-3xl">
             <div>
-              <h2 className="text-sm font-extrabold text-slate-800 dark:text-white">Master Barang Inventaris</h2>
-              <p className="text-[11px] text-slate-400">Atur seluruh ketentuan minimal kelengkapan perlengkapan santri.</p>
+              <h2 className="text-sm font-extrabold text-slate-800 dark:text-white">Master Barang & Kategori</h2>
+              <p className="text-[11px] text-slate-400">Atur seluruh ketentuan minimal kelengkapan perlengkapan santri dan kelompok barang.</p>
             </div>
 
             <div className="flex flex-wrap gap-2">
               <button
-                onClick={() => setIsCategoryModalOpen(true)}
+                onClick={() => {
+                  setEditingCategory(null);
+                  setNewCategoryName("");
+                  setIsCategoryModalOpen(true);
+                }}
                 className="px-4 py-2 border border-slate-150 dark:border-zinc-800 hover:bg-slate-50 text-slate-700 dark:text-zinc-300 rounded-xl text-xs font-semibold transition flex items-center gap-1.5"
               >
                 <FolderPlus className="h-4 w-4" /> Tambah Kategori
@@ -1209,70 +1432,259 @@ export const InventarisMasukSantri: React.FC = () => {
             </div>
           </div>
 
-          {/* GOODS TABLE GROUPED BY CATEGORY */}
-          <div className="bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 rounded-3xl p-6 shadow-xs space-y-4">
-            <div className="overflow-x-auto border border-slate-100 dark:border-zinc-800 rounded-2xl">
-              <table className="w-full text-left text-xs">
-                <thead>
-                  <tr className="bg-slate-50 dark:bg-zinc-950 text-slate-400 border-b border-slate-100 dark:border-zinc-800">
-                    <th className="py-3 px-4 font-bold">Nama Barang</th>
-                    <th className="py-3 px-4 font-bold">Kategori</th>
-                    <th className="py-3 px-4 text-center font-bold">Jumlah Minimal</th>
-                    <th className="py-3 px-4 text-center font-bold">Keterangan</th>
-                    <th className="py-3 px-4 text-center font-bold">Status</th>
-                    <th className="py-3 px-4 text-center font-bold">Aksi</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-zinc-850">
-                  {masterGoods.length > 0 ? (
-                    masterGoods.map((good) => (
-                      <tr key={good.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-950/20">
-                        <td className="py-3.5 px-4 font-bold text-slate-800 dark:text-zinc-100">{good.name}</td>
-                        <td className="py-3.5 px-4 text-slate-500">{good.category}</td>
-                        <td className="py-3.5 px-4 text-center font-black text-slate-700 dark:text-zinc-300">
-                          {good.minQty} {good.unit}
-                        </td>
-                        <td className="py-3.5 px-4 text-center text-slate-400">{good.notes || "-"}</td>
-                        <td className="py-3.5 px-4 text-center">
-                          {good.isActive ? (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-600">
-                              Aktif
-                            </span>
-                          ) : (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-150 text-slate-400">
-                              Nonaktif
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-3.5 px-4">
-                          <div className="flex items-center justify-center gap-3">
-                            <button
-                              onClick={() => handleOpenEditGood(good)}
-                              className="text-indigo-600 hover:text-indigo-500 transition"
-                            >
-                              <Edit2 className="h-4 w-4" />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteGood(good.id, good.name)}
-                              className="text-rose-600 hover:text-rose-500 transition"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </div>
+          {/* Sub Navigation Tabs for Master */}
+          <div className="flex border-b border-slate-150 dark:border-zinc-850 gap-6 px-2">
+            <button
+              onClick={() => setMasterSubTab("goods")}
+              className={`pb-3 text-xs font-bold transition-all ${
+                masterSubTab === "goods"
+                  ? "border-b-2 border-indigo-600 text-indigo-600 dark:text-indigo-400"
+                  : "text-slate-400 hover:text-slate-600 dark:hover:text-zinc-300"
+              }`}
+            >
+              Daftar Barang & Urutan
+            </button>
+            <button
+              onClick={() => setMasterSubTab("categories")}
+              className={`pb-3 text-xs font-bold transition-all ${
+                masterSubTab === "categories"
+                  ? "border-b-2 border-indigo-600 text-indigo-600 dark:text-indigo-400"
+                  : "text-slate-400 hover:text-slate-600 dark:hover:text-zinc-300"
+              }`}
+            >
+              Kelola Kategori & Urutan
+            </button>
+          </div>
+
+          {masterSubTab === "goods" ? (
+            /* TAB 3A: GOODS LIST GROUPED BY CATEGORY */
+            <div className="bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 rounded-3xl p-6 shadow-xs space-y-4">
+              <div className="overflow-x-auto border border-slate-100 dark:border-zinc-800 rounded-2xl">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 dark:bg-zinc-950 text-slate-400 border-b border-slate-100 dark:border-zinc-800">
+                      <th className="py-3 px-4 font-bold">No. / Nama Barang</th>
+                      <th className="py-3 px-4 text-center font-bold">Jumlah Minimal</th>
+                      <th className="py-3 px-4 text-center font-bold">Keterangan</th>
+                      <th className="py-3 px-4 text-center font-bold">Status</th>
+                      <th className="py-3 px-4 text-center font-bold">Pindah Urutan</th>
+                      <th className="py-3 px-4 text-center font-bold">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-zinc-850">
+                    {(() => {
+                      // Group master goods by category
+                      const groups: { [categoryName: string]: MasterGood[] } = {};
+                      masterGoods.forEach((good) => {
+                        const cat = good.category || "Lain-lain";
+                        if (!groups[cat]) groups[cat] = [];
+                        groups[cat].push(good);
+                      });
+
+                      // Sort categories based on order
+                      const sortedCategoryList: { category: string; goods: MasterGood[] }[] = [];
+                      const seenCats = new Set<string>();
+
+                      categories.forEach((cat) => {
+                        if (groups[cat.name] && !seenCats.has(cat.name)) {
+                          seenCats.add(cat.name);
+                          sortedCategoryList.push({ category: cat.name, goods: groups[cat.name] });
+                        }
+                      });
+
+                      Object.keys(groups).forEach((catName) => {
+                        if (!seenCats.has(catName)) {
+                          seenCats.add(catName);
+                          sortedCategoryList.push({ category: catName, goods: groups[catName] });
+                        }
+                      });
+
+                      if (sortedCategoryList.length === 0) {
+                        return (
+                          <tr>
+                            <td colSpan={6} className="py-8 text-center text-slate-400">
+                              Belum ada data master barang. Tambahkan barang untuk memulai.
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      let globalGoodIdx = 0;
+                      return sortedCategoryList.map((group, groupIdx) => (
+                        <React.Fragment key={group.category}>
+                          {/* Group Category Row */}
+                          <tr className="bg-slate-55 dark:bg-zinc-850 border-t border-b border-slate-200 dark:border-zinc-800 font-bold text-xs">
+                            <td colSpan={6} className="py-2 px-4 uppercase text-indigo-700 dark:text-indigo-400 tracking-wider font-extrabold bg-indigo-50/50 dark:bg-indigo-950/25">
+                              Kelompok {groupIdx + 1}: {group.category}
+                            </td>
+                          </tr>
+                          {group.goods.map((good, idx) => {
+                            globalGoodIdx++;
+                            return (
+                              <tr key={good.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-950/20">
+                                <td className="py-3 px-4">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-mono text-[10px] text-slate-400 w-5 text-right">{globalGoodIdx}.</span>
+                                    <div>
+                                      <p className="font-bold text-slate-800 dark:text-zinc-100">{good.name}</p>
+                                      <span className="text-[9px] text-slate-400">Kategori: {group.category}</span>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="py-3 px-4 text-center font-black text-slate-700 dark:text-zinc-300">
+                                  {good.minQty} {good.unit}
+                                </td>
+                                <td className="py-3 px-4 text-center text-slate-400 font-medium">{good.notes || "-"}</td>
+                                <td className="py-3 px-4 text-center">
+                                  {good.isActive ? (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-600 dark:bg-emerald-950/20 dark:text-emerald-400">
+                                      Aktif
+                                    </span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-150 text-slate-400 dark:bg-zinc-800 dark:text-zinc-500">
+                                      Nonaktif
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="py-3 px-4 text-center">
+                                  <div className="inline-flex items-center gap-1 bg-slate-50 dark:bg-zinc-950 p-1 rounded-lg border border-slate-100 dark:border-zinc-800">
+                                    <button
+                                      disabled={idx === 0 || isSaving}
+                                      onClick={() => handleMoveGood(good, "up")}
+                                      className="p-1 hover:bg-slate-150 dark:hover:bg-zinc-800 rounded text-slate-500 dark:text-zinc-400 disabled:opacity-30 transition"
+                                      title="Naikkan Urutan"
+                                    >
+                                      <ChevronUp className="h-4 w-4" />
+                                    </button>
+                                    <button
+                                      disabled={idx === group.goods.length - 1 || isSaving}
+                                      onClick={() => handleMoveGood(good, "down")}
+                                      className="p-1 hover:bg-slate-150 dark:hover:bg-zinc-800 rounded text-slate-500 dark:text-zinc-400 disabled:opacity-30 transition"
+                                      title="Turunkan Urutan"
+                                    >
+                                      <ChevronDown className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                </td>
+                                <td className="py-3 px-4 text-center">
+                                  <div className="flex items-center justify-center gap-3">
+                                    <button
+                                      onClick={() => handleOpenEditGood(good)}
+                                      className="text-indigo-600 hover:text-indigo-500 transition"
+                                      title="Ubah Barang (Dapat memindahkan Kategori)"
+                                    >
+                                      <Edit2 className="h-4 w-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteGood(good.id, good.name)}
+                                      className="text-rose-600 hover:text-rose-500 transition"
+                                      title="Hapus Barang"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </React.Fragment>
+                      ));
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            /* TAB 3B: CATEGORIES LIST & REORDERING */
+            <div className="bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 rounded-3xl p-6 shadow-xs space-y-4">
+              <div className="overflow-x-auto border border-slate-100 dark:border-zinc-800 rounded-2xl">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 dark:bg-zinc-950 text-slate-400 border-b border-slate-100 dark:border-zinc-800">
+                      <th className="py-3 px-4 font-bold">Urutan</th>
+                      <th className="py-3 px-4 font-bold">Nama Kategori</th>
+                      <th className="py-3 px-4 text-center font-bold">Jumlah Barang Terkait</th>
+                      <th className="py-3 px-4 text-center font-bold font-mono">ID / Urutan Code</th>
+                      <th className="py-3 px-4 text-center font-bold">Pindah Urutan</th>
+                      <th className="py-3 px-4 text-center font-bold">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-zinc-850">
+                    {categories.length > 0 ? (
+                      categories.map((cat, idx) => {
+                        const goodCount = masterGoods.filter((g) => g.category === cat.name).length;
+                        return (
+                          <tr key={cat.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-950/20">
+                            <td className="py-3.5 px-4 font-bold font-mono text-slate-600 dark:text-zinc-400">
+                              Kelompok {idx + 1}
+                            </td>
+                            <td className="py-3.5 px-4 font-bold text-slate-800 dark:text-zinc-100">
+                              {cat.name}
+                            </td>
+                            <td className="py-3.5 px-4 text-center font-bold text-slate-500">
+                              {goodCount} Barang
+                            </td>
+                            <td className="py-3.5 px-4 text-center text-slate-400 font-mono text-[10px]">
+                              {cat.urutan || 999}
+                            </td>
+                            <td className="py-3.5 px-4 text-center">
+                              <div className="inline-flex items-center gap-1 bg-slate-50 dark:bg-zinc-950 p-1 rounded-lg border border-slate-100 dark:border-zinc-800">
+                                <button
+                                  disabled={idx === 0 || isSaving}
+                                  onClick={() => handleMoveCategory(cat, "up")}
+                                  className="p-1 hover:bg-slate-150 dark:hover:bg-zinc-800 rounded text-slate-500 dark:text-zinc-400 disabled:opacity-30 transition"
+                                  title="Naikkan Urutan Kategori"
+                                >
+                                  <ChevronUp className="h-4 w-4" />
+                                </button>
+                                <button
+                                  disabled={idx === categories.length - 1 || isSaving}
+                                  onClick={() => handleMoveCategory(cat, "down")}
+                                  className="p-1 hover:bg-slate-150 dark:hover:bg-zinc-800 rounded text-slate-500 dark:text-zinc-400 disabled:opacity-30 transition"
+                                  title="Turunkan Urutan Kategori"
+                                >
+                                  <ChevronDown className="h-4 w-4" />
+                                </button>
+                              </div>
+                            </td>
+                            <td className="py-3.5 px-4 text-center">
+                              <div className="flex items-center justify-center gap-3">
+                                <button
+                                  onClick={() => {
+                                    setEditingCategory(cat);
+                                    setNewCategoryName(cat.name);
+                                    setIsCategoryModalOpen(true);
+                                  }}
+                                  className="text-indigo-600 hover:text-indigo-500 transition"
+                                  title="Ubah Nama Kategori"
+                                >
+                                  <Edit2 className="h-4 w-4" />
+                                </button>
+                                <button
+                                  disabled={cat.name === "Lain-lain"}
+                                  onClick={() => handleDeleteCategory(cat)}
+                                  className="text-rose-600 hover:text-rose-500 transition disabled:opacity-20"
+                                  title={cat.name === "Lain-lain" ? "Kategori utama tidak bisa dihapus" : "Hapus Kategori"}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    ) : (
+                      <tr>
+                        <td colSpan={6} className="py-8 text-center text-slate-400">
+                          Belum ada data kategori.
                         </td>
                       </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={6} className="py-8 text-center text-slate-400">
-                        Belum ada data master barang. Hubungi admin asrama untuk menambahkan barang.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
@@ -1448,11 +1860,15 @@ export const InventarisMasukSantri: React.FC = () => {
         </form>
       </Dialog>
 
-      {/* MODAL 2: ADD KATEGORI */}
+      {/* MODAL 2: ADD/EDIT KATEGORI */}
       <Dialog
         isOpen={isCategoryModalOpen}
-        onClose={() => setIsCategoryModalOpen(false)}
-        title="Tambah Kategori Barang Baru"
+        onClose={() => {
+          setIsCategoryModalOpen(false);
+          setEditingCategory(null);
+          setNewCategoryName("");
+        }}
+        title={editingCategory ? `Ubah Nama Kategori "${editingCategory.name}"` : "Tambah Kategori Barang Baru"}
         size="sm"
       >
         <form onSubmit={handleSaveCategory} className="space-y-4">
@@ -1471,7 +1887,11 @@ export const InventarisMasukSantri: React.FC = () => {
           <div className="flex justify-end gap-2 pt-4">
             <button
               type="button"
-              onClick={() => setIsCategoryModalOpen(false)}
+              onClick={() => {
+                setIsCategoryModalOpen(false);
+                setEditingCategory(null);
+                setNewCategoryName("");
+              }}
               className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition"
             >
               Batal
@@ -1480,7 +1900,7 @@ export const InventarisMasukSantri: React.FC = () => {
               type="submit"
               className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition"
             >
-              Tambah Kategori
+              {editingCategory ? "Simpan Perubahan" : "Tambah Kategori"}
             </button>
           </div>
         </form>
