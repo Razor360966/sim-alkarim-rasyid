@@ -52,6 +52,7 @@ import SupervisionAcademic from "./pages/SupervisionAcademic";
 import SupervisionManagerial from "./pages/SupervisionManagerial";
 import SupervisionSchedules from "./pages/SupervisionSchedules";
 import SupervisionInstruments from "./pages/SupervisionInstruments";
+import InventarisMasukSantri from "./pages/InventarisMasukSantri";
 import NotFound from "./pages/NotFound";
 
 // Create TanStack Query Client
@@ -123,6 +124,9 @@ export default function App() {
                     <Route path="supervision-academic" element={<SupervisionAcademic />} />
                     <Route path="supervision-managerial" element={<SupervisionManagerial />} />
                     <Route path="supervision-instruments" element={<SupervisionInstruments />} />
+
+                    {/* Inventaris Masuk Santri */}
+                    <Route path="inventaris-santri" element={<InventarisMasukSantri />} />
                   </Route>
 
                   {/* 404 Catch All Route */}

@@ -34,6 +34,39 @@
         "category": { "type": "string", "description": "Predikat kinerja (Sangat Baik, Baik, dsb.)" }
       },
       "required": ["id", "teacherId", "roleId", "academicYear", "semester", "status"]
+    },
+    "MasterGood": {
+      "title": "MasterGood",
+      "description": "Master barang inventaris bawaan santri asrama",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "minQty": { "type": "number" },
+        "unit": { "type": "string" },
+        "category": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "minQty", "unit", "category", "isActive"]
+    },
+    "StudentInventaris": {
+      "title": "StudentInventaris",
+      "description": "Data ceklis inventaris barang yang dibawa santri",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "studentId" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "className": { "type": "string" },
+        "academicYear": { "type": "string" },
+        "items": { "type": "array" },
+        "updatedAt": { "type": "string" },
+        "updatedBy": { "type": "string" },
+        "examinerName": { "type": "string" }
+      },
+      "required": ["id", "studentId", "studentName", "className", "academicYear", "items", "updatedAt"]
     }
   },
   "firestore": {
@@ -44,6 +77,26 @@
     "sdm_performance_evaluations": {
       "schema": "SDMPerformanceEvaluation",
       "description": "Daftar rapor penilaian kinerja berkala guru dan pengasuh"
+    },
+    "inventaris_goods": {
+      "schema": "MasterGood",
+      "description": "Penyimpanan daftar master barang bawaan santri"
+    },
+    "inventaris_categories": {
+      "schema": "object",
+      "description": "Penyimpanan daftar kategori barang bawaan"
+    },
+    "inventaris_examiners": {
+      "schema": "object",
+      "description": "Daftar guru atau musrif yang ditugaskan sebagai pemeriksa"
+    },
+    "inventaris_santri": {
+      "schema": "StudentInventaris",
+      "description": "Daftar ceklis barang santri yang aktif"
+    },
+    "riwayat_pemeriksaan": {
+      "schema": "object",
+      "description": "Riwayat pemeriksaan barang santri yang tidak pernah dihapus"
     }
   }
 }

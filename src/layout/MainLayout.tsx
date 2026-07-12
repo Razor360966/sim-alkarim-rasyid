@@ -4,6 +4,8 @@ import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { academicYearService } from "../services/academicYearService";
 import { AcademicYear } from "../types";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "../firebase/config";
 import { 
   LayoutDashboard, 
   CalendarDays, 
@@ -58,6 +60,19 @@ export const MainLayout: React.FC = () => {
     }
   }, [user]);
 
+  const [isAssignedPetugas, setIsAssignedPetugas] = useState(false);
+
+  useEffect(() => {
+    if (user?.uid) {
+      const docRef = doc(db, "inventaris_examiners", user.uid);
+      getDoc(docRef).then((snap) => {
+        setIsAssignedPetugas(snap.exists());
+      }).catch((err) => {
+        console.error("Error checking examiner assignment:", err);
+      });
+    }
+  }, [user]);
+
   if (!user) return null;
 
   const menuItems = [
@@ -69,6 +84,7 @@ export const MainLayout: React.FC = () => {
     { name: "Kelas", path: "/classes", icon: DoorClosed, roles: ["admin", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"] },
     { name: "Guru & Staf", path: "/teachers", icon: GraduationCap, roles: ["admin", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"] },
     { name: "Siswa", path: "/students", icon: Users, roles: ["admin", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"] },
+    { name: "Ceklis Barang Santri", path: "/inventaris-santri", icon: ClipboardList, roles: ["admin", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan", "guru", "musrif"] },
     { name: "Manajemen Akun", path: "/users", icon: UserIcon, roles: ["admin", "operator"] },
     { name: "Lesson Period", path: "/lesson-periods", icon: Clock, roles: ["admin", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"] },
     { name: "Auto Scheduler", path: "/schedules", icon: CalendarDays, roles: ["admin", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Jadwal Pelajaran" },
@@ -131,9 +147,13 @@ export const MainLayout: React.FC = () => {
   };
 
   const activeMappedRoles = getMappedActiveRoles(user.role || "");
-  let allowedMenuItems = menuItems.filter(item => 
-    item.roles.some(r => activeMappedRoles.includes(r))
-  );
+  let allowedMenuItems = menuItems.filter(item => {
+    if (item.path === "/inventaris-santri") {
+      const isAdminUser = activeMappedRoles.includes("admin") || activeMappedRoles.includes("operator");
+      return isAdminUser || isAssignedPetugas;
+    }
+    return item.roles.some(r => activeMappedRoles.includes(r));
+  });
 
   if (user.role === "musrif") {
     allowedMenuItems = [
@@ -142,6 +162,7 @@ export const MainLayout: React.FC = () => {
       { name: "Jurnal Halaqah", path: "/musrif-journals?tab=jurnal", icon: BookOpen, roles: ["musrif"], group: "Halaqah Musrif" },
       { name: "Rekap Perkembangan Santri", path: "/musrif-journals?tab=rekap", icon: Award, roles: ["musrif"], group: "Halaqah Musrif" },
       { name: "Mutabaah Harian Saya", path: "/mutabaah-harian", icon: ClipboardList, roles: ["musrif"], group: "Halaqah Musrif" },
+      ...(isAssignedPetugas ? [{ name: "Ceklis Barang Santri", path: "/inventaris-santri", icon: ClipboardList, roles: ["musrif"], group: "Halaqah Musrif" }] : []),
       { name: "Profil Saya", path: "/profile", icon: UserIcon, roles: ["musrif"], group: "Akun Saya" },
       { name: "Pengaturan Akun", path: "/change-password", icon: SettingsIcon, roles: ["musrif"], group: "Akun Saya" }
     ];
