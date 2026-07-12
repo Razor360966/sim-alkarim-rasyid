@@ -1,10 +1,83 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { User } from "firebase/auth";
+import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
+import { db } from "../firebase/config";
 import { authService } from "../services/authService";
 import { userService, getPrimaryRole } from "../services/user.service";
 import { UserProfile } from "../types";
 import { Loader2 } from "lucide-react";
 import { useToast } from "./ToastContext";
+
+// Helper function to fetch teacher name with academic titles (frontTitle and backTitle)
+const fetchTeacherFullName = async (teacherId?: string | null, email?: string | null, fallbackName?: string): Promise<string> => {
+  try {
+    if (teacherId) {
+      const teacherDocRef = doc(db, "teachers", teacherId);
+      const docSnap = await getDoc(teacherDocRef);
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const front = data.frontTitle ? data.frontTitle.trim() + " " : "";
+        const back = data.backTitle ? ", " + data.backTitle.trim() : "";
+        const name = data.name || "";
+        if (name) {
+          return `${front}${name}${back}`;
+        }
+      }
+    }
+    
+    if (email) {
+      const teachersRef = collection(db, "teachers");
+      const q = query(teachersRef, where("email", "==", email), where("isDeleted", "==", false));
+      const querySnapshot = await getDocs(q);
+      if (!querySnapshot.empty) {
+        const data = querySnapshot.docs[0].data();
+        const front = data.frontTitle ? data.frontTitle.trim() + " " : "";
+        const back = data.backTitle ? ", " + data.backTitle.trim() : "";
+        const name = data.name || "";
+        if (name) {
+          return `${front}${name}${back}`;
+        }
+      }
+    }
+  } catch (error) {
+    console.error("Error fetching teacher for display name:", error);
+  }
+  return fallbackName || "";
+};
+
+// Helper to construct fully formatted UserProfile with teacher full name and titles
+const buildProfile = async (dbUser: any): Promise<UserProfile> => {
+  const roles = dbUser.roles || [dbUser.role || "operator"];
+  let displayName = dbUser.name || dbUser.email.split("@")[0] || "User";
+  
+  try {
+    const formattedName = await fetchTeacherFullName(dbUser.teacherId, dbUser.email, dbUser.name);
+    if (formattedName) {
+      displayName = formattedName;
+    }
+  } catch (e) {
+    console.error("Error setting formatted name in buildProfile:", e);
+  }
+
+  return {
+    uid: dbUser.userId,
+    userId: dbUser.userId,
+    email: dbUser.email,
+    username: dbUser.username || "",
+    phoneNumber: dbUser.phoneNumber || "",
+    displayName: displayName,
+    name: dbUser.name,
+    role: dbUser.role,
+    roles: roles,
+    status: dbUser.status,
+    teacherId: dbUser.teacherId,
+    teacherName: dbUser.teacherName,
+    permissions: dbUser.permissions,
+    lastLogin: dbUser.lastLogin,
+    requirePasswordChange: dbUser.requirePasswordChange || false,
+    createdAt: dbUser.createdAt
+  };
+};
 
 interface AuthContextType {
   user: UserProfile | null;
@@ -52,25 +125,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
 
           // Create standard UserProfile object
-          const mappedProfile: UserProfile = {
-            uid: profile.userId,
-            userId: profile.userId,
-            email: profile.email,
-            username: profile.username || "",
-            phoneNumber: profile.phoneNumber || "",
-            displayName: profile.name || profile.email.split("@")[0],
-            name: profile.name,
-            role: profile.role,
-            roles: roles,
-            status: profile.status,
-            teacherId: profile.teacherId,
-            teacherName: profile.teacherName,
-            permissions: profile.permissions,
-            lastLogin: profile.lastLogin,
-            requirePasswordChange: profile.requirePasswordChange || false,
-            createdAt: profile.createdAt
-          };
-
+          const mappedProfile = await buildProfile(profile);
           setUser(mappedProfile);
         } else {
           setUser(null);
@@ -121,24 +176,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           throw new Error("Akun Guru belum dihubungkan ke data Guru.");
         }
         
-        const mappedProfile: UserProfile = {
-          uid: dbUser.userId,
-          userId: dbUser.userId,
-          email: dbUser.email,
-          username: dbUser.username || "",
-          phoneNumber: dbUser.phoneNumber || "",
-          displayName: dbUser.name || dbUser.email.split("@")[0],
-          name: dbUser.name,
-          role: dbUser.role,
-          roles: roles,
-          status: dbUser.status,
-          teacherId: dbUser.teacherId,
-          teacherName: dbUser.teacherName,
-          permissions: dbUser.permissions,
-          lastLogin: dbUser.lastLogin,
-          requirePasswordChange: dbUser.requirePasswordChange || false,
-          createdAt: dbUser.createdAt
-        };
+        const mappedProfile = await buildProfile(dbUser);
         setUser(mappedProfile);
         return mappedProfile;
       }
@@ -178,25 +216,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const dbUser = await userService.getUser(user.uid);
         if (dbUser) {
-          const roles = dbUser.roles || [dbUser.role];
-          const mappedProfile: UserProfile = {
-            uid: dbUser.userId,
-            userId: dbUser.userId,
-            email: dbUser.email,
-            username: dbUser.username || "",
-            phoneNumber: dbUser.phoneNumber || "",
-            displayName: dbUser.name || dbUser.email.split("@")[0],
-            name: dbUser.name,
-            role: dbUser.role,
-            roles: roles,
-            status: dbUser.status,
-            teacherId: dbUser.teacherId,
-            teacherName: dbUser.teacherName,
-            permissions: dbUser.permissions,
-            lastLogin: dbUser.lastLogin,
-            requirePasswordChange: dbUser.requirePasswordChange || false,
-            createdAt: dbUser.createdAt
-          };
+          const mappedProfile = await buildProfile(dbUser);
           setUser(mappedProfile);
         }
       } catch (err) {

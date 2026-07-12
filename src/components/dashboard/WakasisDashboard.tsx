@@ -425,27 +425,14 @@ export const WakasisDashboard: React.FC = () => {
           </div>
 
           {/* Extracurriculars Board */}
-          <div className="bg-white dark:bg-zinc-900 border border-slate-150 dark:border-zinc-800 rounded-3xl p-6 shadow-xs">
+          <div className="bg-white dark:bg-zinc-900 border border-slate-150 dark:border-zinc-800 rounded-3xl p-6 shadow-xs flex flex-col justify-between">
             <h3 className="font-bold text-slate-800 dark:text-white text-xs uppercase tracking-wider text-indigo-600 mb-4 flex items-center gap-1">
               <Users className="h-4 w-4" /> Partisipasi Ekskul Pesantren
             </h3>
-            <div className="space-y-3">
-              {[
-                { name: "Pramuka Boarding", count: 120, status: "Wajib", color: "bg-blue-500" },
-                { name: "Seni Kaligrafi Islam", count: 42, status: "Pilihan", color: "bg-emerald-500" },
-                { name: "Thibbun Nabawi (Kesehatan)", count: 35, status: "Pilihan", color: "bg-amber-500" },
-                { name: "Tapak Suci (Bela Diri)", count: 68, status: "Pilihan", color: "bg-indigo-500" }
-              ].map((eks, idx) => (
-                <div key={idx} className="space-y-1">
-                  <div className="flex justify-between text-xs font-semibold text-slate-700 dark:text-zinc-350">
-                    <span>{eks.name} <span className="text-[10px] text-slate-400">({eks.status})</span></span>
-                    <span>{eks.count} Santri</span>
-                  </div>
-                  <div className="h-1.5 w-full bg-slate-100 dark:bg-zinc-850 rounded-full overflow-hidden">
-                    <div className={`h-full ${eks.color}`} style={{ width: `${(eks.count / 150) * 100}%` }} />
-                  </div>
-                </div>
-              ))}
+            <div className="flex-1 flex flex-col items-center justify-center p-6 bg-slate-50 dark:bg-zinc-950/20 rounded-2xl text-center text-xs text-slate-400 border border-slate-100 dark:border-zinc-850">
+              <Users className="h-8 w-8 text-slate-300 dark:text-zinc-700 mb-2" />
+              <p className="font-semibold">Tidak Ada Data Partisipasi Ekskul</p>
+              <p className="text-[10px] text-slate-400 dark:text-zinc-500 mt-1">Belum ada data partisipasi ekstrakurikuler santri yang diinput untuk periode ini.</p>
             </div>
           </div>
         </div>

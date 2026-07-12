@@ -29,7 +29,11 @@ export const MutabaahHarian: React.FC = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const userRoles = user?.roles || [user?.role || ""];
+  const userRolesStr = user?.roles?.join(",") || user?.role || "";
+  const userRoles = useMemo(() => {
+    return user?.roles || [user?.role || ""];
+  }, [userRolesStr, user?.role]);
+
   const isAdmin = userRoles.includes("admin") || user?.role === "admin";
   const isKepalaSekolah = userRoles.includes("kepala sekolah") || user?.role === "kepala sekolah";
   const isWakaKurikulum = userRoles.includes("wakil kepala sekolah") || user?.role === "wakil kepala sekolah";
@@ -96,9 +100,14 @@ export const MutabaahHarian: React.FC = () => {
       (ind) =>
         ind.isActive &&
         !ind.isArchived &&
+        Array.isArray(ind.applicableRoles) &&
         ind.applicableRoles.some((r) => userRoles.includes(r))
     );
   }, [indicators, userRoles]);
+
+  const indicatorsKey = useMemo(() => {
+    return myApplicableIndicators.map((ind) => `${ind.id}-${ind.inputType}`).join(",");
+  }, [myApplicableIndicators]);
 
   // Sync today's values to form state when loaded
   useEffect(() => {
@@ -120,7 +129,7 @@ export const MutabaahHarian: React.FC = () => {
       setFormValues(emptyVals);
       setFormAttachments(emptyAtts);
     }
-  }, [todayEntry, myApplicableIndicators]);
+  }, [todayEntry, indicatorsKey]);
 
   // Handle value change during filling
   const handleValueChange = (indicatorId: string, val: any) => {
@@ -225,7 +234,7 @@ export const MutabaahHarian: React.FC = () => {
         inputType: ind.inputType,
         target: ind.target,
         unit: ind.unit,
-        applicableRoles: ind.applicableRoles,
+        applicableRoles: Array.isArray(ind.applicableRoles) ? ind.applicableRoles : [],
         weight: ind.weight
       });
     } else {
@@ -310,7 +319,7 @@ export const MutabaahHarian: React.FC = () => {
   const handleSaveTemplate = async () => {
     try {
       const roleInds = indicators.filter(
-        (ind) => !ind.isArchived && ind.applicableRoles.includes(templateRole)
+        (ind) => !ind.isArchived && Array.isArray(ind.applicableRoles) && ind.applicableRoles.includes(templateRole)
       );
       if (roleInds.length === 0) {
         toast(`Tidak ada indikator aktif untuk peran ${templateRole.toUpperCase()}`, "warning");
@@ -831,11 +840,11 @@ export const MutabaahHarian: React.FC = () => {
                         </td>
                         <td className="py-3.5 px-4">
                           <div className="flex flex-wrap gap-1">
-                            {ind.applicableRoles.map((role) => (
+                            {Array.isArray(ind.applicableRoles) ? ind.applicableRoles.map((role) => (
                               <span key={role} className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-slate-100 dark:bg-zinc-800 text-slate-500 dark:text-zinc-400 uppercase tracking-wider">
                                 {role}
                               </span>
-                            ))}
+                            )) : null}
                           </div>
                         </td>
                         <td className="py-3.5 px-4 font-extrabold text-slate-700 dark:text-zinc-300">{ind.weight}%</td>

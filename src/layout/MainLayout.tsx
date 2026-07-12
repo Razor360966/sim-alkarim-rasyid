@@ -86,6 +86,7 @@ export const MainLayout: React.FC = () => {
     { name: "Program Semester", path: "/semester-programs", icon: Grid, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan"], group: "Perencanaan Pembelajaran" },
     { name: "Modul Ajar", path: "/lesson-plans", icon: FileText, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan"], group: "Perencanaan Pembelajaran" },
     { name: "Jurnal Mengajar", path: "/teaching-journals", icon: BookOpen, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan"], group: "Perencanaan Pembelajaran" },
+    { name: "Jadwal Mengajar Saya", path: "/my-schedule", icon: CalendarDays, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan"], group: "Perencanaan Pembelajaran" },
     { name: "Jurnal Halaqah", path: "/musrif-journals", icon: BookOpen, roles: ["admin", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "ketua yayasan"], group: "Perencanaan Pembelajaran" },
     
     // Pengembangan Diri GTK
@@ -109,9 +110,30 @@ export const MainLayout: React.FC = () => {
     { name: "Agenda Rutin", path: "/settings/agendas", icon: Calendar, roles: ["admin", "kepala sekolah", "operator"], group: "Pengaturan Sekolah" },
   ];
 
-  // Filter menu based on user multi-roles array
+  // Filter menu based on the currently selected active role workspace
   const userRoles = user.roles || [user.role];
-  let allowedMenuItems = menuItems.filter(item => item.roles.some(r => userRoles.includes(r)));
+  
+  const getMappedActiveRoles = (activeRole: string): string[] => {
+    const role = (activeRole || "").toLowerCase();
+    if (role === "wakakur" || role === "wakasis" || role === "wakasarpras" || role === "wakil kepala sekolah") {
+      return ["wakil kepala sekolah"];
+    }
+    if (role === "kepala_sekolah" || role === "kepala sekolah") {
+      return ["kepala sekolah", "pimpinan"];
+    }
+    if (role === "ketua_yayasan" || role === "ketua yayasan") {
+      return ["ketua yayasan", "pimpinan"];
+    }
+    if (role === "tata_usaha" || role === "tata usaha") {
+      return ["tata usaha", "operator"];
+    }
+    return [role];
+  };
+
+  const activeMappedRoles = getMappedActiveRoles(user.role || "");
+  let allowedMenuItems = menuItems.filter(item => 
+    item.roles.some(r => activeMappedRoles.includes(r))
+  );
 
   if (user.role === "musrif") {
     allowedMenuItems = [
@@ -376,21 +398,25 @@ export const MainLayout: React.FC = () => {
           {/* Quick Profile / Dark mode / Preferences */}
           <div className="flex items-center gap-3">
             
-            {/* Role Switcher Selector for Multi-Role Users */}
+            {/* Dynamic Workspace Switcher Pills for Multi-Role Users */}
             {userRoles.length > 1 && (
-              <div className="relative flex items-center gap-1.5 bg-slate-50 dark:bg-zinc-900 border border-slate-250 dark:border-zinc-800 rounded-xl px-2.5 py-1 shadow-xs">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider hidden lg:inline">Beralih Peran:</span>
-                <select
-                  value={user.role}
-                  onChange={(e) => switchRole(e.target.value)}
-                  className="text-xs font-bold bg-transparent border-0 py-0.5 pl-1 pr-7 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 focus:outline-hidden cursor-pointer capitalize"
-                >
-                  {userRoles.map((r) => (
-                    <option key={r} value={r} className="text-slate-900 dark:text-zinc-50 capitalize">
+              <div className="flex items-center gap-1 bg-slate-100/85 dark:bg-zinc-950 p-1 rounded-2xl border border-slate-200/60 dark:border-zinc-800 shadow-xs">
+                {userRoles.map((r) => {
+                  const isActive = user.role === r;
+                  return (
+                    <button
+                      key={r}
+                      onClick={() => switchRole(r)}
+                      className={`px-3 py-1 rounded-xl text-xs font-extrabold capitalize transition-all cursor-pointer ${
+                        isActive
+                          ? "bg-blue-600 text-white dark:bg-zinc-100 dark:text-zinc-900 shadow-xs"
+                          : "text-slate-500 hover:text-slate-800 dark:text-zinc-400 dark:hover:text-zinc-200"
+                      }`}
+                    >
                       {capitalizeRole(r)}
-                    </option>
-                  ))}
-                </select>
+                    </button>
+                  );
+                })}
               </div>
             )}
 

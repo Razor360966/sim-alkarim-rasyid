@@ -1822,12 +1822,8 @@ export default function SdmPerformance() {
                 };
               });
 
-              // Mock some historic points if user has no entries yet to ensure beautiful visual dashboard
-              const finalTrendData = trendLineData.length > 0 ? trendLineData : [
-                { period: "TA 2024/2025 - Ganjil", skorPribadi: 78, rataRataSekolah: 82 },
-                { period: "TA 2024/2025 - Genap", skorPribadi: 82, rataRataSekolah: 84 },
-                { period: "TA 2025/2026 - Ganjil", skorPribadi: 85, rataRataSekolah: 85 }
-              ];
+              // Real trend line data or empty array when there is no entries yet (no fabricated mock data)
+              const finalTrendData = trendLineData;
 
               const latestEval = teacherEvals[teacherEvals.length - 1];
 
@@ -1905,27 +1901,34 @@ export default function SdmPerformance() {
                         <span className="text-[10px] font-bold text-blue-500 uppercase tracking-wider">Real-time Line Chart</span>
                       </div>
 
-                      <div className="h-56 w-full">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <AreaChart
-                            data={finalTrendData}
-                            margin={{ top: 10, right: 10, left: -25, bottom: 0 }}
-                          >
-                            <defs>
-                              <linearGradient id="colorSkor" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.2}/>
-                                <stop offset="95%" stopColor="#3B82F6" stopOpacity={0}/>
-                              </linearGradient>
-                            </defs>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" className="dark:stroke-zinc-800" />
-                            <XAxis dataKey="period" tick={{ fontSize: 9, fontWeight: 600, fill: "#94A3B8" }} />
-                            <YAxis domain={[0, 100]} tick={{ fontSize: 9, fontWeight: 600, fill: "#94A3B8" }} />
-                            <Tooltip contentStyle={{ fontSize: 10, borderRadius: 12 }} />
-                            <Legend wrapperStyle={{ fontSize: 10 }} />
-                            <Area type="monotone" dataKey="skorPribadi" name="Skor Pribadi" stroke="#3B82F6" strokeWidth={3} fillOpacity={1} fill="url(#colorSkor)" />
-                            <Line type="monotone" dataKey="rataRataSekolah" name="Rata-rata Sekolah" stroke="#94A3B8" strokeDasharray="5 5" strokeWidth={1.5} dot={false} />
-                          </AreaChart>
-                        </ResponsiveContainer>
+                      <div className="h-56 w-full flex items-center justify-center">
+                        {finalTrendData.length === 0 ? (
+                          <div className="text-center space-y-2 border border-dashed border-slate-200 dark:border-zinc-800 rounded-2xl p-6 bg-slate-50/50 dark:bg-zinc-950/20 w-full h-full flex flex-col items-center justify-center">
+                            <Activity className="h-8 w-8 text-slate-350 dark:text-zinc-750 mx-auto animate-pulse" />
+                            <p className="text-xs text-slate-450 dark:text-zinc-500 font-medium">Belum ada data evaluasi kompetensi berkala.</p>
+                          </div>
+                        ) : (
+                          <ResponsiveContainer width="100%" height="100%">
+                            <AreaChart
+                              data={finalTrendData}
+                              margin={{ top: 10, right: 10, left: -25, bottom: 0 }}
+                            >
+                              <defs>
+                                <linearGradient id="colorSkor" x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.2}/>
+                                  <stop offset="95%" stopColor="#3B82F6" stopOpacity={0}/>
+                                </linearGradient>
+                              </defs>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" className="dark:stroke-zinc-800" />
+                              <XAxis dataKey="period" tick={{ fontSize: 9, fontWeight: 600, fill: "#94A3B8" }} />
+                              <YAxis domain={[0, 100]} tick={{ fontSize: 9, fontWeight: 600, fill: "#94A3B8" }} />
+                              <Tooltip contentStyle={{ fontSize: 10, borderRadius: 12 }} />
+                              <Legend wrapperStyle={{ fontSize: 10 }} />
+                              <Area type="monotone" dataKey="skorPribadi" name="Skor Pribadi" stroke="#3B82F6" strokeWidth={3} fillOpacity={1} fill="url(#colorSkor)" />
+                              <Line type="monotone" dataKey="rataRataSekolah" name="Rata-rata Sekolah" stroke="#94A3B8" strokeDasharray="5 5" strokeWidth={1.5} dot={false} />
+                            </AreaChart>
+                          </ResponsiveContainer>
+                        )}
                       </div>
                     </div>
                   </div>

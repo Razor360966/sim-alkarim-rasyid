@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import { Dialog } from "../components/Dialog";
@@ -71,6 +72,7 @@ import {
 export const TeachingJournals: React.FC = () => {
   const { user } = useAuth();
   const { toast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
 
   const isGuru = user?.role === "guru";
@@ -173,6 +175,19 @@ export const TeachingJournals: React.FC = () => {
   const [verifyComment, setVerifyComment] = useState<string>("");
   const [isWeekEffective, setIsWeekEffective] = useState<boolean>(true);
 
+  // Prefill check on mount or when searchParams change
+  useEffect(() => {
+    const prefillDate = searchParams.get("prefillDate");
+    const openForm = searchParams.get("openForm");
+
+    if (prefillDate) {
+      setSelectedDate(prefillDate);
+    }
+    if (openForm === "true") {
+      setIsFormOpen(true);
+    }
+  }, [searchParams]);
+
   // Determine active schedules on Date change
   useEffect(() => {
     if (!selectedDate || !activeYear?.id || !activeSemester?.id) return;
@@ -188,10 +203,39 @@ export const TeachingJournals: React.FC = () => {
           s.day.toLowerCase() === dayName.toLowerCase()
         );
         setSchedulesForDate(filtered);
-        setSelectedScheduleId("");
-        setSelectedSchedule(null);
-        setProtaTopics([]);
-        setSelectedProtaTopicId("");
+        
+        const prefillScheduleId = searchParams.get("prefillScheduleId");
+        if (prefillScheduleId && filtered.some(s => s.id === prefillScheduleId)) {
+          setSelectedScheduleId(prefillScheduleId);
+          const matchedSched = filtered.find(s => s.id === prefillScheduleId) || null;
+          setSelectedSchedule(matchedSched);
+
+          if (matchedSched) {
+            const classStudents = students.filter(s => s.classId === matchedSched.classId && s.status === "Aktif");
+            const count = classStudents.length;
+            setAttendance({
+              hadir: count,
+              sakit: 0,
+              izin: 0,
+              alpha: 0,
+              total: count
+            });
+
+            try {
+              const prota = await curriculumPlanningService.getAnnualProgram(activeYear?.id || "", matchedSched.classId, matchedSched.subjectId);
+              if (prota) {
+                setProtaTopics(prota.topics || []);
+              }
+            } catch (err) {
+              console.error("Prota load error:", err);
+            }
+          }
+        } else {
+          setSelectedScheduleId("");
+          setSelectedSchedule(null);
+          setProtaTopics([]);
+          setSelectedProtaTopicId("");
+        }
       } catch (error) {
         console.error("Failed to load schedules:", error);
       }
@@ -214,7 +258,7 @@ export const TeachingJournals: React.FC = () => {
       fetchSchedules();
     }
     checkEffectiveness();
-  }, [selectedDate, activeYear, activeSemester, isGuru, user]);
+  }, [selectedDate, activeYear, activeSemester, isGuru, user, searchParams, students]);
 
   // Handle schedule selection
   const handleScheduleChange = async (scheduleId: string) => {

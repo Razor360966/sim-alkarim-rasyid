@@ -14,7 +14,7 @@ import { scheduleService } from "../services/schedule.service";
 import { lessonPeriodService } from "../services/lessonPeriod.service";
 import { AcademicSupervision, ManagerialSupervision } from "../types/supervision.types";
 import { useAuth } from "../contexts/AuthContext";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { academicPlanningService } from "../services/academicPlanning.service";
 import { executiveDashboardService } from "../services/executiveDashboard.service";
 import { halaqahGroupService } from "../services/halaqahGroupService";
@@ -22,6 +22,7 @@ import { musrifJournalService } from "../services/musrifJournalService";
 import { WakasisDashboard } from "../components/dashboard/WakasisDashboard";
 import { WakasarprasDashboard } from "../components/dashboard/WakasarprasDashboard";
 import { 
+  X,
   Users, 
   GraduationCap, 
   DoorClosed, 
@@ -61,8 +62,21 @@ import { Loading } from "../components/Loading";
 
 export const Dashboard: React.FC = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const currentRole = user?.role?.toLowerCase() || "";
   const [viewingRole, setViewingRole] = React.useState<string>(currentRole);
+  const isExecutive = ["admin", "operator", "ketua_yayasan", "pimpinan", "kepala_sekolah", "wakil kepala sekolah", "wakasis", "wakakur", "wakakurikulum", "wakasarpras"].includes(currentRole);
+
+  const dayNamesId = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+  const todayDayName = dayNamesId[new Date().getDay()];
+
+  const parseTimeToMinutes = (t?: string | null): number | null => {
+    if (!t) return null;
+    const clean = t.replace(".", ":");
+    const parts = clean.split(":").map((v) => parseInt(v, 10));
+    if (parts.length < 2 || Number.isNaN(parts[0]) || Number.isNaN(parts[1])) return null;
+    return parts[0] * 60 + parts[1];
+  };
 
   // Set viewingRole to currentRole when user's primary role changes
   React.useEffect(() => {
@@ -185,6 +199,19 @@ export const Dashboard: React.FC = () => {
   const [activeTab, setActiveTab] = React.useState("summary");
   const [selectedSupTeacherId, setSelectedSupTeacherId] = React.useState("");
 
+  // Drilldown modal for actionable Executive Dashboard indicators
+  const [drilldownModal, setDrilldownModal] = React.useState<{
+    isOpen: boolean;
+    title: string;
+    type: "unfilled_journals" | "unfilled_halaqah" | "missing_prota" | "missing_prosem" | "missing_rpp" | "student_violations" | "student_rewards" | "broken_sarpras" | "active_maintenance";
+    data: any[];
+  }>({
+    isOpen: false,
+    title: "",
+    type: "unfilled_journals",
+    data: []
+  });
+
   // Queries
   const { data: students = [], isLoading: isLoadingStudents } = useQuery({
     queryKey: ["students"],
@@ -258,29 +285,66 @@ export const Dashboard: React.FC = () => {
     queryFn: () => lessonPeriodService.getLessonPeriods()
   });
 
+  // --- EXECUTIVE & COMMAND CENTER SPECIFIC QUERIES ---
+  const { data: studentViolations = [] } = useQuery({
+    queryKey: ["studentViolations"],
+    queryFn: () => executiveDashboardService.getViolations(),
+    enabled: isExecutive
+  });
+
+  const { data: studentRewards = [] } = useQuery({
+    queryKey: ["studentRewards"],
+    queryFn: () => executiveDashboardService.getRewards(),
+    enabled: isExecutive
+  });
+
+  const { data: sarprasInventory = [] } = useQuery({
+    queryKey: ["sarprasInventory"],
+    queryFn: () => executiveDashboardService.getInventory(),
+    enabled: isExecutive
+  });
+
+  const { data: sarprasMaintenance = [] } = useQuery({
+    queryKey: ["sarprasMaintenance"],
+    queryFn: () => executiveDashboardService.getMaintenance(),
+    enabled: isExecutive
+  });
+
+  const { data: allHalaqahGroups = [] } = useQuery({
+    queryKey: ["allHalaqahGroupsExecutive"],
+    queryFn: () => halaqahGroupService.getGroups(),
+    enabled: isExecutive
+  });
+
+  const { data: allMusrifJournals = [] } = useQuery({
+    queryKey: ["allMusrifJournalsExecutive"],
+    queryFn: () => musrifJournalService.getAll(),
+    enabled: isExecutive
+  });
+
   // Musrif specific data queries
   const { data: myGroups = [] } = useQuery({
     queryKey: ["myHalaqahGroups", user?.userId],
     queryFn: () => halaqahGroupService.getGroups(user?.userId),
-    enabled: viewingRole === "musrif" && !!user?.userId
+    enabled: (viewingRole === "musrif" || isExecutive) && !!user?.userId
   });
 
   const { data: allMembers = [] } = useQuery({
     queryKey: ["allHalaqahMembers"],
     queryFn: () => halaqahGroupService.getAllMembers(),
-    enabled: viewingRole === "musrif"
+    enabled: viewingRole === "musrif" || isExecutive
   });
 
   const { data: myJournals = [] } = useQuery({
     queryKey: ["myMusrifJournals", user?.userId],
     queryFn: () => musrifJournalService.getByMusrif(user?.userId || ""),
-    enabled: viewingRole === "musrif" && !!user?.userId
+    enabled: (viewingRole === "musrif" || isExecutive) && !!user?.userId
   });
 
   const { data: allJournalDetails = [] } = useQuery({
     queryKey: ["allJournalDetails"],
     queryFn: () => musrifJournalService.getAllJournalDetails(),
-    enabled: viewingRole === "musrif"
+    enabled: viewingRole === "musrif" || isExecutive
   });
 
   // Compute Musrif Stats
@@ -392,18 +456,11 @@ export const Dashboard: React.FC = () => {
 
   const teacherId = user?.teacherId || "";
 
-  // Real "today" derived from the system clock — used to filter the published schedule,
-  // never to fabricate or guess an agenda.
-  const dayNamesId = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
-  const todayDayName = dayNamesId[new Date().getDay()];
-
-  const parseTimeToMinutes = (t?: string | null): number | null => {
-    if (!t) return null;
-    const clean = t.replace(".", ":");
-    const parts = clean.split(":").map((v) => parseInt(v, 10));
-    if (parts.length < 2 || Number.isNaN(parts[0]) || Number.isNaN(parts[1])) return null;
-    return parts[0] * 60 + parts[1];
-  };
+  // Real journal entries belonging to the logged-in teacher (used to replace the old hardcoded "24 Entri").
+  const myTeacherJournals = React.useMemo(() => {
+    if (!teacherId) return [];
+    return allTeachingJournals.filter((j: any) => j.teacherId === teacherId || j.createdBy === teacherId);
+  }, [allTeachingJournals, teacherId]);
 
   // Teacher's schedule for TODAY, taken only from published Schedule docs (Admin's "schedules" collection).
   // No mock/sample/dummy/fallback/random agenda is generated here — if there is nothing for this
@@ -412,6 +469,7 @@ export const Dashboard: React.FC = () => {
     if (!teacherId) return [];
 
     const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes();
+    const todayStr = new Date().toISOString().split("T")[0];
 
     return allSchedules
       .filter((s: any) => s.teacherId === teacherId && (s.day || "").toLowerCase() === todayDayName.toLowerCase())
@@ -426,10 +484,23 @@ export const Dashboard: React.FC = () => {
         const startMin = parseTimeToMinutes(startTime);
         const endMin = parseTimeToMinutes(endTime);
 
+        // Check if journal has been filled for this schedule slot today
+        const hasJournalToday = myTeacherJournals.some((j: any) => 
+          j.date === todayStr &&
+          j.classId === s.classId &&
+          j.subjectId === s.subjectId &&
+          (j.lessonPeriodIds?.includes(s.lessonPeriodId) || j.lessonPeriods?.includes(period?.title))
+        );
+
         let status = "Belum Mulai";
-        if (startMin !== null && endMin !== null) {
-          if (nowMinutes >= endMin) status = "Selesai";
-          else if (nowMinutes >= startMin && nowMinutes < endMin) status = "Sedang Berjalan";
+        if (hasJournalToday) {
+          status = "Jurnal Sudah Diisi";
+        } else if (startMin !== null && endMin !== null) {
+          if (nowMinutes >= endMin) {
+            status = "Belum Mengisi Jurnal";
+          } else if (nowMinutes >= startMin && nowMinutes < endMin) {
+            status = "Sedang Berjalan";
+          }
         }
 
         return {
@@ -443,13 +514,7 @@ export const Dashboard: React.FC = () => {
         };
       })
       .sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
-  }, [allSchedules, allLessonPeriods, teacherId, todayDayName]);
-
-  // Real journal entries belonging to the logged-in teacher (used to replace the old hardcoded "24 Entri").
-  const myTeacherJournals = React.useMemo(() => {
-    if (!teacherId) return [];
-    return allTeachingJournals.filter((j: any) => j.teacherId === teacherId || j.createdBy === teacherId);
-  }, [allTeachingJournals, teacherId]);
+  }, [allSchedules, allLessonPeriods, teacherId, todayDayName, myTeacherJournals]);
 
   // Calculate teacher planning progress indicators
   const teacherAssignments = React.useMemo(() => {
@@ -629,6 +694,92 @@ export const Dashboard: React.FC = () => {
       });
   }, [teachers, classes, curriculumMatrix, allAnnualPrograms, allSemesterPrograms, allLessonPlans, allTeachingJournals]);
 
+  // --- COMMAND CENTER MEMOIZED ACTIONABLE STATS ---
+  const unfilledJournalsToday = React.useMemo(() => {
+    const todaySchedules = allSchedules.filter((s: any) => (s.day || "").toLowerCase() === todayDayName.toLowerCase());
+    return todaySchedules.map((s: any) => {
+      const period = allLessonPeriods.find((p: any) =>
+        (s.lessonPeriodId && p.id === s.lessonPeriodId) ||
+        ((p.day || "").toLowerCase() === (s.day || "").toLowerCase() && p.sequence === s.sequence)
+      );
+      const hasJournalToday = allTeachingJournals.some((j: any) => 
+        j.date === todayStr &&
+        j.classId === s.classId &&
+        j.subjectId === s.subjectId &&
+        (j.lessonPeriodIds?.includes(s.lessonPeriodId) || j.lessonPeriods?.includes(period?.title))
+      );
+      return {
+        schedule: s,
+        period,
+        hasJournalToday
+      };
+    }).filter(item => !item.hasJournalToday);
+  }, [allSchedules, allLessonPeriods, allTeachingJournals, todayDayName, todayStr]);
+
+  const unfilledHalaqahToday = React.useMemo(() => {
+    const groupsToProcess = isExecutive ? allHalaqahGroups : myGroups;
+    return groupsToProcess.map((g: any) => {
+      const hasJournalToday = (isExecutive ? allMusrifJournals : myJournals).some((j: any) => 
+        j.date === todayStr && j.groupId === g.id
+      );
+      return {
+        group: g,
+        hasJournalToday
+      };
+    }).filter(item => !item.hasJournalToday);
+  }, [allHalaqahGroups, myGroups, allMusrifJournals, myJournals, isExecutive, todayStr]);
+
+  const missingProtaList = React.useMemo(() => {
+    const list: any[] = [];
+    teachersPlanningData.forEach(tData => {
+      tData.assignments.forEach((assign: any) => {
+        const hasProta = allAnnualPrograms.some((p: any) => p.classId === assign.classId && p.subjectId === assign.subjectId && p.topics && p.topics.length > 0);
+        if (!hasProta) {
+          list.push({
+            teacherName: tData.teacher.name,
+            className: assign.className,
+            subjectName: assign.subjectName
+          });
+        }
+      });
+    });
+    return list;
+  }, [teachersPlanningData, allAnnualPrograms]);
+
+  const missingProsemList = React.useMemo(() => {
+    const list: any[] = [];
+    teachersPlanningData.forEach(tData => {
+      tData.assignments.forEach((assign: any) => {
+        const hasProsem = allSemesterPrograms.some((p: any) => p.classId === assign.classId && p.subjectId === assign.subjectId && p.allocations && p.allocations.length > 0);
+        if (!hasProsem) {
+          list.push({
+            teacherName: tData.teacher.name,
+            className: assign.className,
+            subjectName: assign.subjectName
+          });
+        }
+      });
+    });
+    return list;
+  }, [teachersPlanningData, allSemesterPrograms]);
+
+  const missingRppList = React.useMemo(() => {
+    const list: any[] = [];
+    teachersPlanningData.forEach(tData => {
+      tData.assignments.forEach((assign: any) => {
+        const hasLessonPlan = allLessonPlans.some((p: any) => p.classId === assign.classId && p.subjectId === assign.subjectId);
+        if (!hasLessonPlan) {
+          list.push({
+            teacherName: tData.teacher.name,
+            className: assign.className,
+            subjectName: assign.subjectName
+          });
+        }
+      });
+    });
+    return list;
+  }, [teachersPlanningData, allLessonPlans]);
+
   // Real performance score/label for the logged-in teacher (replaces the old hardcoded "87.5 / 100 Sangat Baik").
   const myPerformance = teachersPlanningData.find((t) => t.teacher.id === teacherId) || null;
 
@@ -684,7 +835,6 @@ export const Dashboard: React.FC = () => {
   // ==========================================
   // 1. GURU DASHBOARD VIEW
   // ==========================================
-  const isExecutive = ["admin", "operator", "ketua_yayasan", "pimpinan", "kepala_sekolah", "wakil kepala sekolah", "wakasis", "wakakur", "wakakurikulum", "wakasarpras"].includes(currentRole);
 
   const wrapWithSwitcher = (content: React.ReactNode) => {
     if (!isExecutive) return content;
@@ -932,13 +1082,17 @@ export const Dashboard: React.FC = () => {
                   </div>
                 ) : (
                   teacherTodaySchedules.map((j, i) => (
-                    <div key={j.id || i} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-slate-50 dark:bg-zinc-800/40 border border-slate-100 dark:border-zinc-850 rounded-2xl gap-3">
+                    <div 
+                      key={j.id || i} 
+                      onClick={() => navigate(`/teaching-journals?prefillDate=${new Date().toISOString().split("T")[0]}&prefillScheduleId=${j.id}&openForm=true`)}
+                      className="group flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-slate-50 hover:bg-slate-100 dark:bg-zinc-800/40 dark:hover:bg-zinc-800/60 border border-slate-100 hover:border-indigo-150 dark:border-zinc-850 dark:hover:border-zinc-750 rounded-2xl gap-3 cursor-pointer transition-all"
+                    >
                       <div className="flex items-center gap-3">
-                        <div className="h-9 w-9 rounded-xl bg-blue-50 dark:bg-blue-950/30 flex items-center justify-center text-blue-600 dark:text-blue-400 font-mono text-xs font-bold shrink-0">
+                        <div className="h-9 w-9 rounded-xl bg-blue-50 dark:bg-blue-950/30 flex items-center justify-center text-blue-600 dark:text-blue-400 font-mono text-xs font-bold shrink-0 group-hover:bg-indigo-50 dark:group-hover:bg-zinc-800 transition-colors">
                           {i + 1}
                         </div>
                         <div>
-                          <h4 className="text-xs font-bold text-slate-800 dark:text-white">{j.subject}</h4>
+                          <h4 className="text-xs font-bold text-slate-800 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-blue-400 transition-colors">{j.subject}</h4>
                           <div className="flex items-center gap-2 mt-1 flex-wrap">
                             <span className="text-[10px] font-semibold text-slate-500 dark:text-zinc-400 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 px-2 py-0.5 rounded">{j.className}</span>
                             {j.room && <span className="text-[10px] font-medium text-slate-400">{j.room}</span>}
@@ -947,11 +1101,13 @@ export const Dashboard: React.FC = () => {
                       </div>
                       <div className="flex items-center gap-3 justify-between sm:justify-end">
                         <span className="font-mono text-[11px] font-semibold text-slate-500 dark:text-zinc-400">{j.time}</span>
-                        <span className={`px-2.5 py-0.5 rounded text-[9px] font-bold border ${
-                          j.status === "Selesai"
+                        <span className={`px-2.5 py-0.5 rounded text-[9px] font-bold border transition-colors ${
+                          j.status === "Jurnal Sudah Diisi"
                             ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/20 dark:text-emerald-400 dark:border-emerald-900/30"
                             : j.status === "Sedang Berjalan"
                             ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/20 dark:text-blue-400 dark:border-blue-900/30 animate-pulse"
+                            : j.status === "Belum Mengisi Jurnal"
+                            ? "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/20 dark:text-rose-400 dark:border-rose-900/30 font-black"
                             : "bg-slate-100 text-slate-600 border-slate-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700"
                         }`}>{j.status}</span>
                       </div>
@@ -1222,7 +1378,7 @@ export const Dashboard: React.FC = () => {
           {/* LEFT COLUMN: Operational Status, Agenda & Unfilled Students */}
           <div className="lg:col-span-2 space-y-6">
             
-            {/* Mutabaah & Attendance Tracker */}
+            {/* Mutabaah & Jurnal Harian Tracker */}
             <div className="bg-white dark:bg-zinc-900 border border-slate-150 dark:border-zinc-800 rounded-3xl p-6 shadow-xs">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 pb-4 border-b border-slate-100 dark:border-zinc-800">
                 <div>
@@ -1683,7 +1839,7 @@ export const Dashboard: React.FC = () => {
         <div className="max-w-2xl space-y-3 relative z-10">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-white/10 backdrop-blur-md rounded-full text-xs font-semibold tracking-wide">
             <Sparkles className="h-3.5 w-3.5 text-amber-300" />
-            <span>Ekosistem Aplikasi Terintegrasi</span>
+            <span>School Command Center</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
             Assalamu'alaikum, {user?.displayName}!
@@ -1794,7 +1950,398 @@ export const Dashboard: React.FC = () => {
 
       {/* CONDITIONAL TAB RENDERING */}
       {activeTab === "summary" && (
-        <>
+        <div className="space-y-6">
+          {/* QUICK ACTIONS ROW */}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <Link to="/lesson-schedules" className="flex items-center gap-3.5 p-4 bg-indigo-50/55 dark:bg-indigo-950/10 hover:bg-indigo-50 dark:hover:bg-indigo-950/25 border border-indigo-100/40 dark:border-indigo-900/20 rounded-2xl transition-all shadow-3xs hover:shadow-2xs">
+              <div className="p-2.5 bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400 rounded-xl">
+                <Calendar className="h-4.5 w-4.5" />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-indigo-950 dark:text-indigo-200">Kelola Jadwal</h4>
+                <p className="text-[10px] text-slate-400 dark:text-zinc-500">Atur & Auto-Schedule</p>
+              </div>
+            </Link>
+            <Link to="/teaching-journals" className="flex items-center gap-3.5 p-4 bg-emerald-50/55 dark:bg-emerald-950/10 hover:bg-emerald-50 dark:hover:bg-emerald-950/25 border border-emerald-100/40 dark:border-emerald-900/20 rounded-2xl transition-all shadow-3xs hover:shadow-2xs">
+              <div className="p-2.5 bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 rounded-xl">
+                <BookOpenCheck className="h-4.5 w-4.5" />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-emerald-950 dark:text-emerald-200">Jurnal Mengajar</h4>
+                <p className="text-[10px] text-slate-400 dark:text-zinc-500">Input Jurnal KBM</p>
+              </div>
+            </Link>
+            <button 
+              onClick={() => setDrilldownModal({ 
+                isOpen: true, 
+                title: "Daftar Pelanggaran Adab Santri", 
+                type: "student_violations", 
+                data: studentViolations 
+              })} 
+              className="flex items-center gap-3.5 p-4 bg-rose-50/55 dark:bg-rose-950/10 hover:bg-rose-50 dark:hover:bg-rose-950/25 border border-rose-100/40 dark:border-rose-900/20 rounded-2xl text-left transition-all shadow-3xs hover:shadow-2xs cursor-pointer"
+            >
+              <div className="p-2.5 bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-400 rounded-xl">
+                <Activity className="h-4.5 w-4.5" />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-rose-950 dark:text-rose-200">Input Pelanggaran</h4>
+                <p className="text-[10px] text-slate-400 dark:text-zinc-500">Catat Pelanggaran Adab</p>
+              </div>
+            </button>
+            <button 
+              onClick={() => setDrilldownModal({ 
+                isOpen: true, 
+                title: "Daftar Penghargaan & Karakter Baik", 
+                type: "student_rewards", 
+                data: studentRewards 
+              })} 
+              className="flex items-center gap-3.5 p-4 bg-amber-50/55 dark:bg-amber-950/10 hover:bg-amber-50 dark:hover:bg-amber-950/25 border border-amber-100/40 dark:border-amber-900/20 rounded-2xl text-left transition-all shadow-3xs hover:shadow-2xs cursor-pointer"
+            >
+              <div className="p-2.5 bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 rounded-xl">
+                <Award className="h-4.5 w-4.5" />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-amber-950 dark:text-amber-200">Input Penghargaan</h4>
+                <p className="text-[10px] text-slate-400 dark:text-zinc-500">Catat Akhlak & Prestasi</p>
+              </div>
+            </button>
+            <Link to="/sarpras-maintenance" className="flex items-center gap-3.5 p-4 bg-blue-50/55 dark:bg-blue-950/10 hover:bg-blue-50 dark:hover:bg-blue-950/25 border border-blue-100/40 dark:border-blue-900/20 rounded-2xl transition-all shadow-3xs hover:shadow-2xs">
+              <div className="p-2.5 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 rounded-xl">
+                <FileText className="h-4.5 w-4.5" />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-blue-950 dark:text-blue-200">Perbaikan Sarpras</h4>
+                <p className="text-[10px] text-slate-400 dark:text-zinc-500">Ajukan Perbaikan Fasilitas</p>
+              </div>
+            </Link>
+          </div>
+
+          {/* AGENDA SECTION & CALENDAR ROADMAP */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2 bg-white dark:bg-zinc-900 rounded-3xl border border-slate-200 dark:border-zinc-800 p-6 shadow-xs space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 dark:border-zinc-850 pb-3">
+                <div className="flex items-center gap-2">
+                  <Calendar className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+                  <h3 className="font-extrabold text-slate-800 dark:text-white text-sm">Agenda & Kegiatan Pekan Ini</h3>
+                </div>
+                <span className="text-[10px] font-bold bg-indigo-50 text-indigo-600 dark:bg-indigo-950/40 px-2 py-0.5 rounded-md">{todayDayName}, {new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}</span>
+              </div>
+
+              {weeklyEvents.length > 0 ? (
+                <div className="space-y-2.5 max-h-56 overflow-y-auto">
+                  {weeklyEvents.map((event, i) => {
+                    const styles = getCategoryStyles(event.categoryName || event.categoryId);
+                    return (
+                      <div key={i} className="flex items-start gap-3 p-3 bg-slate-50 dark:bg-zinc-950/35 border border-slate-100 dark:border-zinc-850 rounded-2xl">
+                        <div className={`text-center py-1 px-2.5 rounded-lg font-mono ${styles.bg} ${styles.text} border ${styles.border}`}>
+                          <div className="text-xs font-extrabold">{new Date(event.startDate || event.date).getDate()}</div>
+                          <div className="text-[9px] uppercase font-bold">{new Date(event.startDate || event.date).toLocaleDateString("id-ID", { month: "short" })}</div>
+                        </div>
+                        <div className="flex-1 space-y-0.5">
+                          <h4 className="text-xs font-bold text-slate-800 dark:text-zinc-200">{event.title}</h4>
+                          <p className="text-[10px] text-slate-400 dark:text-zinc-500 line-clamp-1">{event.description || "Tidak ada rincian kegiatan."}</p>
+                        </div>
+                        <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full ${styles.bg} ${styles.text} border ${styles.border}`}>{styles.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="p-8 text-center bg-slate-50 dark:bg-zinc-950/20 border border-slate-100 dark:border-zinc-850 rounded-2xl text-xs text-slate-400">
+                  Tidak ada agenda resmi di kalender akademik pekan ini.
+                </div>
+              )}
+            </div>
+
+            <div className="bg-white dark:bg-zinc-900 rounded-3xl border border-slate-200 dark:border-zinc-800 p-6 shadow-xs space-y-4 flex flex-col justify-between">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Clock className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+                  <h3 className="font-extrabold text-slate-800 dark:text-white text-sm">Waktu Operasional Sekolah</h3>
+                </div>
+                <p className="text-[11px] text-slate-400">Status pembelajaran dan alokasi JP terjadwal harian secara realtime.</p>
+              </div>
+
+              <div className="bg-slate-50 dark:bg-zinc-950/35 p-4 rounded-2xl border border-slate-100 dark:border-zinc-850 space-y-3 flex-1 flex flex-col justify-center">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-500 font-medium">Hari Pembelajaran</span>
+                  <span className="font-black text-slate-800 dark:text-white">{todayDayName} Efektif</span>
+                </div>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-500 font-medium">Waktu Sekarang</span>
+                  <span className="font-mono font-bold text-indigo-600 dark:text-blue-400 bg-indigo-50 dark:bg-blue-950/40 px-2 py-0.5 rounded">
+                    {new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })} WIB
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-500 font-medium">Total JP Terjadwal</span>
+                  <span className="font-black text-slate-800 dark:text-white">
+                    {allSchedules.filter((s: any) => (s.day || "").toLowerCase() === todayDayName.toLowerCase()).length} JP
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* COMMAND CENTER MONITORING BENTO-GRID WIDGETS */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {/* WIDGET 1: GTK & PEMBELAJARAN */}
+            <div className="bg-white dark:bg-zinc-900 rounded-3xl border border-slate-200 dark:border-zinc-800 p-6 shadow-xs space-y-4 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-black uppercase text-indigo-600 bg-indigo-50 dark:bg-blue-950/30 px-2.5 py-1 rounded-md">GTK & Pembelajaran</span>
+                  <Users className="h-4 w-4 text-slate-400" />
+                </div>
+                <h3 className="font-black text-slate-800 dark:text-white text-sm">Disiplin Pengisian Jurnal</h3>
+                <p className="text-[11px] text-slate-400 mt-1">Mengukur rasio pengisian jurnal mengajar oleh guru di kelas secara realtime hari ini.</p>
+              </div>
+
+              <div className="bg-slate-50 dark:bg-zinc-950/35 p-4 rounded-2xl border border-slate-100 dark:border-zinc-850 space-y-4">
+                {(() => {
+                  const todaySchedulesCount = allSchedules.filter((s: any) => (s.day || "").toLowerCase() === todayDayName.toLowerCase()).length;
+                  const unfilledCount = unfilledJournalsToday.length;
+                  const filledCount = Math.max(0, todaySchedulesCount - unfilledCount);
+                  const ratePct = todaySchedulesCount > 0 ? Math.round((filledCount / todaySchedulesCount) * 100) : 100;
+
+                  return (
+                    <>
+                      <div className="flex justify-between items-baseline">
+                        <span className="text-xs text-slate-500">Rasio Jurnal Hari Ini</span>
+                        <span className="text-xl font-black text-slate-800 dark:text-white">{ratePct}%</span>
+                      </div>
+                      <div className="h-2 w-full bg-slate-100 dark:bg-zinc-800 rounded-full overflow-hidden">
+                        <div className="h-full bg-indigo-600 transition-all duration-500" style={{ width: `${ratePct}%` }} />
+                      </div>
+                      <div className="flex justify-between text-[11px] font-medium border-t border-slate-200/50 dark:border-zinc-800/50 pt-3">
+                        <span className="text-slate-500">Jurnal Sudah Terisi:</span>
+                        <span className="font-bold text-emerald-600 dark:text-emerald-400">{filledCount} / {todaySchedulesCount} Slot</span>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          if (unfilledCount > 0) {
+                            setDrilldownModal({
+                              isOpen: true,
+                              title: "Daftar Guru Belum Mengisi Jurnal Hari Ini",
+                              type: "unfilled_journals",
+                              data: unfilledJournalsToday
+                            });
+                          }
+                        }}
+                        className={`w-full text-center py-2 rounded-xl text-xs font-black uppercase transition-all flex items-center justify-center gap-1.5 ${
+                          unfilledCount > 0 
+                            ? "bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-950/30 dark:text-rose-400 cursor-pointer" 
+                            : "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-400 cursor-default"
+                        }`}
+                      >
+                        {unfilledCount > 0 ? `⚠️ ${unfilledCount} Guru Belum Isi Jurnal (Detail)` : "✅ Semua Jurnal Terisi Hari Ini"}
+                      </button>
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+
+            {/* WIDGET 2: MUTU AKADEMIK & KURIKULUM */}
+            <div className="bg-white dark:bg-zinc-900 rounded-3xl border border-slate-200 dark:border-zinc-800 p-6 shadow-xs space-y-4 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-black uppercase text-amber-600 bg-amber-50 dark:bg-amber-950/30 px-2.5 py-1 rounded-md">Mutu Akademik</span>
+                  <BookOpenCheck className="h-4 w-4 text-slate-400" />
+                </div>
+                <h3 className="font-black text-slate-800 dark:text-white text-sm">Kelengkapan Perencanaan</h3>
+                <p className="text-[11px] text-slate-400 mt-1">Pemantauan kelengkapan pengunggahan perangkat ajar (Prota, Prosem, RPP) seluruh guru pengampu.</p>
+              </div>
+
+              <div className="bg-slate-50 dark:bg-zinc-950/35 p-4 rounded-2xl border border-slate-100 dark:border-zinc-850 space-y-3.5">
+                {(() => {
+                  let totalAssignments = 0;
+                  let protaFilled = 0;
+                  let prosemFilled = 0;
+                  let rppFilled = 0;
+
+                  teachersPlanningData.forEach(tData => {
+                    tData.assignments.forEach((assign: any) => {
+                      totalAssignments++;
+                      const hasProta = allAnnualPrograms.some((p: any) => p.classId === assign.classId && p.subjectId === assign.subjectId && p.topics && p.topics.length > 0);
+                      if (hasProta) protaFilled++;
+
+                      const hasProsem = allSemesterPrograms.some((p: any) => p.classId === assign.classId && p.subjectId === assign.subjectId && p.allocations && p.allocations.length > 0);
+                      if (hasProsem) prosemFilled++;
+
+                      const hasLessonPlan = allLessonPlans.some((p: any) => p.classId === assign.classId && p.subjectId === assign.subjectId);
+                      if (hasLessonPlan) rppFilled++;
+                    });
+                  });
+
+                  const protaPct = totalAssignments > 0 ? Math.round((protaFilled / totalAssignments) * 100) : 100;
+                  const prosemPct = totalAssignments > 0 ? Math.round((prosemFilled / totalAssignments) * 100) : 100;
+                  const rppPct = totalAssignments > 0 ? Math.round((rppFilled / totalAssignments) * 100) : 100;
+
+                  return (
+                    <>
+                      <div className="space-y-2">
+                        <div onClick={() => setDrilldownModal({ isOpen: true, title: "Daftar Guru Belum Lengkap Prota", type: "missing_prota", data: missingProtaList })} className="flex items-center justify-between hover:bg-slate-100 dark:hover:bg-zinc-800 p-1.5 rounded-lg transition-colors cursor-pointer">
+                          <span className="text-[11px] text-slate-500 font-bold">Program Tahunan</span>
+                          <span className={`text-xs font-black ${protaPct === 100 ? "text-emerald-600" : "text-rose-600"}`}>{protaPct}% Selesai</span>
+                        </div>
+                        <div onClick={() => setDrilldownModal({ isOpen: true, title: "Daftar Guru Belum Lengkap Prosem", type: "missing_prosem", data: missingProsemList })} className="flex items-center justify-between hover:bg-slate-100 dark:hover:bg-zinc-800 p-1.5 rounded-lg transition-colors cursor-pointer">
+                          <span className="text-[11px] text-slate-500 font-bold">Program Semester</span>
+                          <span className={`text-xs font-black ${prosemPct === 100 ? "text-emerald-600" : "text-rose-600"}`}>{prosemPct}% Selesai</span>
+                        </div>
+                        <div onClick={() => setDrilldownModal({ isOpen: true, title: "Daftar Guru Belum Mengunggah Modul Ajar (RPP)", type: "missing_rpp", data: missingRppList })} className="flex items-center justify-between hover:bg-slate-100 dark:hover:bg-zinc-800 p-1.5 rounded-lg transition-colors cursor-pointer">
+                          <span className="text-[11px] text-slate-500 font-bold">Modul Ajar / RPP</span>
+                          <span className={`text-xs font-black ${rppPct === 100 ? "text-emerald-600" : "text-indigo-600"}`}>{rppPct}% Uploaded</span>
+                        </div>
+                      </div>
+                      <div className="text-[10px] text-slate-400 text-center border-t border-slate-200/50 dark:border-zinc-800/50 pt-2.5">
+                        *Klik masing-masing item perencanaan untuk melihat rincian guru belum melengkapi.
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+
+            {/* WIDGET 3: KARAKTER & KEDISIPLINAN */}
+            <div className="bg-white dark:bg-zinc-900 rounded-3xl border border-slate-200 dark:border-zinc-800 p-6 shadow-xs space-y-4 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-black uppercase text-rose-600 bg-rose-50 dark:bg-rose-950/30 px-2.5 py-1 rounded-md">Karakter & Kedisiplinan</span>
+                  <Activity className="h-4 w-4 text-slate-400" />
+                </div>
+                <h3 className="font-black text-slate-800 dark:text-white text-sm">Pencatatan Karakter Santri</h3>
+                <p className="text-[11px] text-slate-400 mt-1">Monitoring pelanggaran adab/ketertiban pondok serta prestasi kepesantrenan santri secara berkala.</p>
+              </div>
+
+              <div className="bg-slate-50 dark:bg-zinc-950/35 p-4 rounded-2xl border border-slate-100 dark:border-zinc-850 space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <button 
+                    onClick={() => setDrilldownModal({ isOpen: true, title: "Daftar Pelanggaran Adab Santri", type: "student_violations", data: studentViolations })}
+                    className="p-3 bg-white dark:bg-zinc-900 border border-slate-150 dark:border-zinc-800 hover:border-rose-400 dark:hover:border-rose-900 rounded-xl transition-all hover:shadow-2xs text-left cursor-pointer space-y-1"
+                  >
+                    <span className="text-[9px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">Pelanggaran</span>
+                    <h4 className="text-lg font-black text-rose-600 dark:text-rose-400">{studentViolations.length} Kasus</h4>
+                    <p className="text-[9px] text-slate-400">Total poin: {studentViolations.reduce((sum: number, v: any) => sum + (v.points || 0), 0)} pts</p>
+                  </button>
+
+                  <button 
+                    onClick={() => setDrilldownModal({ isOpen: true, title: "Daftar Penghargaan & Karakter Baik", type: "student_rewards", data: studentRewards })}
+                    className="p-3 bg-white dark:bg-zinc-900 border border-slate-150 dark:border-zinc-800 hover:border-amber-400 dark:hover:border-amber-900 rounded-xl transition-all hover:shadow-2xs text-left cursor-pointer space-y-1"
+                  >
+                    <span className="text-[9px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">Prestasi</span>
+                    <h4 className="text-lg font-black text-amber-600 dark:text-amber-400">{studentRewards.length} Kasus</h4>
+                    <p className="text-[9px] text-slate-400">Total poin: {studentRewards.reduce((sum: number, r: any) => sum + (r.points || 0), 0)} pts</p>
+                  </button>
+                </div>
+                <div className="text-[10px] text-slate-400 text-center border-t border-slate-200/50 dark:border-zinc-800/50 pt-2">
+                  *Klik pada kotak pelanggaran atau prestasi untuk menginspeksi kasus.
+                </div>
+              </div>
+            </div>
+
+            {/* WIDGET 4: HALAQAH & PENGASUHAN ASRAMA */}
+            <div className="bg-white dark:bg-zinc-900 rounded-3xl border border-slate-200 dark:border-zinc-800 p-6 shadow-xs space-y-4 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-black uppercase text-emerald-600 bg-emerald-50 dark:bg-emerald-950/30 px-2.5 py-1 rounded-md">Halaqah & Pengasuhan</span>
+                  <Heart className="h-4 w-4 text-slate-400" />
+                </div>
+                <h3 className="font-black text-slate-800 dark:text-white text-sm">Disiplin Halaqah Asatidzah</h3>
+                <p className="text-[11px] text-slate-400 mt-1">Pemantauan realtime laporan jurnal mutabaah harian asrama yang disubmit oleh musrif/ustadz pembimbing halaqah.</p>
+              </div>
+
+              <div className="bg-slate-50 dark:bg-zinc-950/35 p-4 rounded-2xl border border-slate-100 dark:border-zinc-850 space-y-4">
+                {(() => {
+                  const totalGroupsCount = allHalaqahGroups.length || 1;
+                  const unfilledGroupsCount = unfilledHalaqahToday.length;
+                  const filledGroupsCount = Math.max(0, totalGroupsCount - unfilledGroupsCount);
+                  const groupRatePct = Math.round((filledGroupsCount / totalGroupsCount) * 100);
+
+                  return (
+                    <>
+                      <div className="flex justify-between items-baseline">
+                        <span className="text-xs text-slate-500">Rasio Jurnal Halaqah</span>
+                        <span className="text-xl font-black text-slate-800 dark:text-white">{groupRatePct}%</span>
+                      </div>
+                      <div className="h-2 w-full bg-slate-100 dark:bg-zinc-800 rounded-full overflow-hidden">
+                        <div className="h-full bg-emerald-600 transition-all duration-500" style={{ width: `${groupRatePct}%` }} />
+                      </div>
+                      <div className="flex justify-between text-[11px] font-medium border-t border-slate-200/50 dark:border-zinc-800/50 pt-3">
+                        <span className="text-slate-500">Grup Halaqah Terlapor:</span>
+                        <span className="font-bold text-emerald-600 dark:text-emerald-400">{filledGroupsCount} / {totalGroupsCount} Halaqah</span>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          if (unfilledGroupsCount > 0) {
+                            setDrilldownModal({
+                              isOpen: true,
+                              title: "Daftar Halaqah Belum Melaporkan Jurnal Hari Ini",
+                              type: "unfilled_halaqah",
+                              data: unfilledHalaqahToday
+                            });
+                          }
+                        }}
+                        className={`w-full text-center py-2 rounded-xl text-xs font-black uppercase transition-all flex items-center justify-center gap-1.5 ${
+                          unfilledGroupsCount > 0 
+                            ? "bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-950/30 dark:text-rose-400 cursor-pointer" 
+                            : "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-400 cursor-default"
+                        }`}
+                      >
+                        {unfilledGroupsCount > 0 ? `⚠️ ${unfilledGroupsCount} Musrif Belum Lapor (Detail)` : "✅ Semua Musrif Mengisi Jurnal"}
+                      </button>
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+
+            {/* WIDGET 5: SARANA & PRASARANA */}
+            <div className="bg-white dark:bg-zinc-900 rounded-3xl border border-slate-200 dark:border-zinc-800 p-6 shadow-xs space-y-4 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-black uppercase text-blue-600 bg-blue-50 dark:bg-blue-950/30 px-2.5 py-1 rounded-md">Sarana & Prasarana</span>
+                  <School className="h-4 w-4 text-slate-400" />
+                </div>
+                <h3 className="font-black text-slate-800 dark:text-white text-sm">Fasilitas & Pemeliharaan Aset</h3>
+                <p className="text-[11px] text-slate-400 mt-1">Daftar inventaris sarpras sekolah yang memerlukan perbaikan segera demi kenyamanan santri.</p>
+              </div>
+
+              <div className="bg-slate-50 dark:bg-zinc-950/35 p-4 rounded-2xl border border-slate-100 dark:border-zinc-850 space-y-4">
+                {(() => {
+                  const brokenItems = sarprasInventory.filter((i: any) => i.damagedConditionCount > 0);
+                  const activeMaint = sarprasMaintenance.filter((m: any) => m.status !== "Selesai");
+
+                  return (
+                    <>
+                      <div className="grid grid-cols-2 gap-4">
+                        <button 
+                          onClick={() => setDrilldownModal({ isOpen: true, title: "Daftar Inventaris Sarpras Rusak", type: "broken_sarpras", data: brokenItems })}
+                          className="p-3 bg-white dark:bg-zinc-900 border border-slate-150 dark:border-zinc-800 hover:border-amber-400 dark:hover:border-amber-900 rounded-xl transition-all hover:shadow-2xs text-left cursor-pointer space-y-1"
+                        >
+                          <span className="text-[9px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">Item Rusak</span>
+                          <h4 className="text-lg font-black text-amber-600 dark:text-amber-400">{brokenItems.length} Jenis</h4>
+                          <p className="text-[9px] text-slate-400">Rusak: {brokenItems.reduce((sum: number, item: any) => sum + (item.damagedConditionCount || 0), 0)} unit</p>
+                        </button>
+
+                        <button 
+                          onClick={() => setDrilldownModal({ isOpen: true, title: "Daftar Pemeliharaan & Perbaikan Aktif", type: "active_maintenance", data: activeMaint })}
+                          className="p-3 bg-white dark:bg-zinc-900 border border-slate-150 dark:border-zinc-800 hover:border-blue-400 dark:hover:border-blue-900 rounded-xl transition-all hover:shadow-2xs text-left cursor-pointer space-y-1"
+                        >
+                          <span className="text-[9px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">Perbaikan Aktif</span>
+                          <h4 className="text-lg font-black text-blue-600 dark:text-blue-400">{activeMaint.length} Pengajuan</h4>
+                          <p className="text-[9px] text-slate-400">Biaya: Rp {(activeMaint.reduce((sum: number, item: any) => sum + (item.cost || 0), 0) || 0).toLocaleString("id-ID")}</p>
+                        </button>
+                      </div>
+                      <div className="text-[10px] text-slate-400 text-center border-t border-slate-200/50 dark:border-zinc-800/50 pt-2">
+                        *Klik pada kotak rusak atau perbaikan untuk memantau detail aset.
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
+
           {/* SECTION: SUPERVISI & PENJAMINAN MUTU */}
           {(currentRole === "kepala_sekolah" || currentRole === "admin" || currentRole === "wakasis" || currentRole === "wakakur" || currentRole === "wakakurikulum") && (
             <div className="bg-white dark:bg-zinc-900 rounded-3xl border border-slate-200 dark:border-zinc-800 p-6 shadow-xs space-y-6">
@@ -1970,43 +2517,7 @@ export const Dashboard: React.FC = () => {
               )}
             </div>
           </div>
-
-          {/* Integration Roadmap (Aplikasi Ekosistem) */}
-          <div className="bg-white dark:bg-zinc-900 rounded-xl border border-slate-200 dark:border-zinc-800 p-6 shadow-xs">
-            <div className="mb-5">
-              <h3 className="text-sm font-bold text-slate-800 dark:text-white">Ekosistem Aplikasi Terintegrasi</h3>
-              <p className="text-xs text-slate-400 dark:text-zinc-500 mt-1">Peta jalan integrasi modul-modul sekolah berikutnya menggunakan database master terpusat ini</p>
-            </div>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-              {[
-                { title: "Kalender Pendidikan", desc: "Penjadwalan hari efektif, libur, dan kegiatan resmi", status: "Siap Integrasi" },
-                { title: "Jadwal Pelajaran", desc: "Penyusunan jadwal otomatis guru dan kelas", status: "Siap Integrasi" },
-                { title: "Jurnal Harian Guru", desc: "Pencatatan materi pelajaran yang diajarkan di kelas", status: "Siap Integrasi" },
-                { title: "Rapor Kinerja", desc: "Penilaian berkala untuk kinerja kepegawaian guru", status: "Siap Integrasi" },
-                { title: "e-Rapor Siswa", desc: "Pencetakan hasil belajar siswa akhir semester", status: "Siap Integrasi" },
-              ].map((item, idx) => (
-                <div key={idx} className="p-4 rounded-xl border border-dashed border-slate-200 dark:border-zinc-800 flex flex-col justify-between hover:border-blue-500/40 dark:hover:border-blue-500/40 transition-all">
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] font-bold tracking-wider text-blue-600 dark:text-blue-400 uppercase bg-blue-50/70 dark:bg-blue-950/20 px-2 py-0.5 rounded-md">
-                        Modul {idx + 1}
-                      </span>
-                    </div>
-                    <h4 className="text-xs font-bold text-slate-700 dark:text-zinc-200">{item.title}</h4>
-                    <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">{item.desc}</p>
-                  </div>
-                  <div className="mt-3 pt-2 border-t border-slate-100 dark:border-zinc-850 flex items-center justify-between text-[10px]">
-                    <span className="text-slate-400 font-medium flex items-center gap-1">
-                      <ArrowRightLeft className="h-3 w-3 text-emerald-500" /> DB Master
-                    </span>
-                    <span className="text-emerald-600 font-bold dark:text-emerald-400">{item.status}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </>
+        </div>
       )}
 
       {activeTab === "monitoring" && (
@@ -2304,6 +2815,205 @@ export const Dashboard: React.FC = () => {
                 })}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* ACTIONABLE EXECUTIVE DRILLDOWN MODAL */}
+      {drilldownModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fade-in">
+          <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-3xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden animate-scale-up">
+            {/* Header */}
+            <div className="p-5 border-b border-slate-100 dark:border-zinc-850 flex items-center justify-between bg-slate-50 dark:bg-zinc-950/20">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-5 w-5 text-indigo-600 dark:text-indigo-400 animate-pulse" />
+                <h3 className="font-extrabold text-slate-850 dark:text-white text-sm">{drilldownModal.title}</h3>
+              </div>
+              <button 
+                onClick={() => setDrilldownModal(prev => ({ ...prev, isOpen: false }))}
+                className="p-1.5 hover:bg-slate-200 dark:hover:bg-zinc-800 rounded-full text-slate-400 hover:text-slate-600 dark:hover:text-zinc-200 transition-colors cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Content Body */}
+            <div className="p-6 overflow-y-auto flex-1 space-y-4">
+              {drilldownModal.data.length === 0 ? (
+                <div className="p-12 text-center text-slate-400 text-xs">
+                  Tidak ada data yang ditemukan untuk indikator ini. Luar biasa!
+                </div>
+              ) : (
+                <div className="overflow-x-auto border border-slate-100 dark:border-zinc-800 rounded-2xl">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-50 dark:bg-zinc-950/30 border-b border-slate-100 dark:border-zinc-800">
+                        {drilldownModal.type === "unfilled_journals" && (
+                          <>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Nama Guru</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Kelas</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Mata Pelajaran</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Slot Waktu</th>
+                          </>
+                        )}
+                        {drilldownModal.type === "unfilled_halaqah" && (
+                          <>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Nama Kelompok</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Nama Musrif</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Keterangan</th>
+                          </>
+                        )}
+                        {["missing_prota", "missing_prosem", "missing_rpp"].includes(drilldownModal.type) && (
+                          <>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Nama Guru</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Kelas</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Mata Pelajaran</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Status</th>
+                          </>
+                        )}
+                        {drilldownModal.type === "student_violations" && (
+                          <>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Tanggal</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Nama Santri</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Kelas</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Jenis Pelanggaran</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase text-center">Poin Minus</th>
+                          </>
+                        )}
+                        {drilldownModal.type === "student_rewards" && (
+                          <>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Tanggal</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Nama Santri</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Kelas</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Prestasi / Akhlak</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase text-center">Poin Plus</th>
+                          </>
+                        )}
+                        {drilldownModal.type === "broken_sarpras" && (
+                          <>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Nama Barang / Aset</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Kategori</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Lokasi</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase text-center">Jumlah Rusak</th>
+                          </>
+                        )}
+                        {drilldownModal.type === "active_maintenance" && (
+                          <>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Nama Barang / Aset</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Pelapor</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Deskripsi Kerusakan</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Status Perbaikan</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase text-right">Estimasi Biaya</th>
+                          </>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-zinc-850">
+                      {drilldownModal.data.map((item, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50/50 dark:hover:bg-zinc-850/30 transition-colors">
+                          {drilldownModal.type === "unfilled_journals" && (
+                            <>
+                              <td className="p-3 font-bold text-slate-850 dark:text-zinc-200">{item.schedule?.teacherName}</td>
+                              <td className="p-3 text-slate-600 dark:text-zinc-400">{item.schedule?.className}</td>
+                              <td className="p-3 text-slate-600 dark:text-zinc-400">{item.schedule?.subjectName}</td>
+                              <td className="p-3">
+                                <span className="font-mono text-indigo-600 dark:text-blue-400 bg-indigo-50 dark:bg-blue-950/30 px-2 py-0.5 rounded">
+                                  JP {item.schedule?.sequence} ({item.period?.startTime || "--:--"} - {item.period?.endTime || "--:--"})
+                                </span>
+                              </td>
+                            </>
+                          )}
+                          {drilldownModal.type === "unfilled_halaqah" && (
+                            <>
+                              <td className="p-3 font-bold text-slate-850 dark:text-zinc-200">{item.group?.groupName}</td>
+                              <td className="p-3 text-slate-600 dark:text-zinc-400">{item.group?.musrifName}</td>
+                              <td className="p-3">
+                                <span className="text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/20 px-2 py-0.5 rounded font-medium">
+                                  Belum Lapor Hari Ini
+                                </span>
+                              </td>
+                            </>
+                          )}
+                          {["missing_prota", "missing_prosem", "missing_rpp"].includes(drilldownModal.type) && (
+                            <>
+                              <td className="p-3 font-bold text-slate-850 dark:text-zinc-200">{item.teacherName}</td>
+                              <td className="p-3 text-slate-600 dark:text-zinc-400">{item.className}</td>
+                              <td className="p-3 text-slate-600 dark:text-zinc-400">{item.subjectName}</td>
+                              <td className="p-3">
+                                <span className="text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/20 px-2 py-0.5 rounded font-semibold">
+                                  Belum Dilengkapi
+                                </span>
+                              </td>
+                            </>
+                          )}
+                          {drilldownModal.type === "student_violations" && (
+                            <>
+                              <td className="p-3 text-slate-500 font-mono">{new Date(item.date).toLocaleDateString("id-ID", { day: "numeric", month: "short" })}</td>
+                              <td className="p-3 font-bold text-slate-850 dark:text-zinc-200">{item.studentName}</td>
+                              <td className="p-3 text-slate-600 dark:text-zinc-400">{item.className}</td>
+                              <td className="p-3">
+                                <span className="font-bold text-slate-850 dark:text-zinc-200">{item.type}</span>
+                                <p className="text-[10px] text-slate-400 mt-0.5">{item.description}</p>
+                              </td>
+                              <td className="p-3 text-center text-rose-600 dark:text-rose-400 font-mono font-bold">-{item.points} pts</td>
+                            </>
+                          )}
+                          {drilldownModal.type === "student_rewards" && (
+                            <>
+                              <td className="p-3 text-slate-500 font-mono">{new Date(item.date).toLocaleDateString("id-ID", { day: "numeric", month: "short" })}</td>
+                              <td className="p-3 font-bold text-slate-850 dark:text-zinc-200">{item.studentName}</td>
+                              <td className="p-3 text-slate-600 dark:text-zinc-400">{item.className}</td>
+                              <td className="p-3">
+                                <span className="font-bold text-slate-850 dark:text-zinc-200">{item.category}</span>
+                                <p className="text-[10px] text-slate-400 mt-0.5">{item.description}</p>
+                              </td>
+                              <td className="p-3 text-center text-emerald-600 dark:text-emerald-400 font-mono font-bold">+{item.points} pts</td>
+                            </>
+                          )}
+                          {drilldownModal.type === "broken_sarpras" && (
+                            <>
+                              <td className="p-3 font-bold text-slate-850 dark:text-zinc-200">{item.itemName}</td>
+                              <td className="p-3 text-slate-600 dark:text-zinc-400">{item.category}</td>
+                              <td className="p-3 text-slate-600 dark:text-zinc-400">{item.location}</td>
+                              <td className="p-3 text-center text-amber-600 dark:text-amber-400 font-mono font-black">{item.damagedConditionCount} Unit</td>
+                            </>
+                          )}
+                          {drilldownModal.type === "active_maintenance" && (
+                            <>
+                              <td className="p-3 font-bold text-slate-850 dark:text-zinc-200">{item.itemName}</td>
+                              <td className="p-3 text-slate-600 dark:text-zinc-400">{item.reporterName}</td>
+                              <td className="p-3 text-slate-400 dark:text-zinc-500 italic truncate max-w-xs">{item.issueDescription}</td>
+                              <td className="p-3">
+                                <span className={`px-2 py-0.5 rounded-md font-extrabold uppercase text-[10px] ${
+                                  item.status === "Menunggu Persetujuan" ? "bg-amber-100 text-amber-850 dark:bg-amber-950/20 dark:text-amber-400" :
+                                  item.status === "Sedang Dikerjakan" ? "bg-blue-100 text-blue-850 dark:bg-blue-950/20 dark:text-blue-400" :
+                                  "bg-emerald-100 text-emerald-850 dark:bg-emerald-950/20 dark:text-emerald-400"
+                                }`}>
+                                  {item.status}
+                                </span>
+                              </td>
+                              <td className="p-3 text-right font-mono font-bold text-slate-850 dark:text-white">
+                                Rp {(item.cost || 0).toLocaleString("id-ID")}
+                              </td>
+                            </>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-slate-100 dark:border-zinc-850 bg-slate-50 dark:bg-zinc-950/25 flex justify-end">
+              <button 
+                onClick={() => setDrilldownModal(prev => ({ ...prev, isOpen: false }))}
+                className="px-5 py-2 bg-slate-800 text-white hover:bg-slate-900 dark:bg-zinc-800 dark:hover:bg-zinc-750 font-bold rounded-xl transition-all cursor-pointer text-xs"
+              >
+                Tutup Jendela
+              </button>
+            </div>
           </div>
         </div>
       )}

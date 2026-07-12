@@ -43,6 +43,7 @@ import AnnualProgram from "./pages/AnnualProgram";
 import SemesterProgram from "./pages/SemesterProgram";
 import { LessonPlans } from "./pages/LessonPlans";
 import TeachingJournals from "./pages/TeachingJournals";
+import { MySchedule } from "./pages/MySchedule";
 import MusrifJournals from "./pages/MusrifJournals";
 import { MutabaahHarian } from "./pages/MutabaahHarian";
 import SdmPerformance from "./pages/SdmPerformance";
@@ -112,6 +113,7 @@ export default function App() {
                     <Route path="semester-programs" element={<SemesterProgram />} />
                     <Route path="lesson-plans" element={<LessonPlans />} />
                     <Route path="teaching-journals" element={<TeachingJournals />} />
+                    <Route path="my-schedule" element={<MySchedule />} />
                     <Route path="musrif-journals" element={<MusrifJournals />} />
                     <Route path="mutabaah-harian" element={<MutabaahHarian />} />
                     <Route path="sdm-performance" element={<SdmPerformance />} />

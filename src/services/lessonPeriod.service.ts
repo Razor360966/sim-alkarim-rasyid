@@ -154,7 +154,9 @@ export const lessonPeriodService = {
         const blocks = generateDailySchedule(mergedSettings, day);
         
         // Filter blocks for ROUTINE, LESSON, BREAK and assign sequences
-        let currentSeq = 1;
+        let lessonSeq = 1;
+        let routineSeq = 1;
+        let breakSeq = 1;
         for (const block of blocks) {
           let type: LessonPeriodType | null = null;
           
@@ -167,10 +169,22 @@ export const lessonPeriodService = {
           }
 
           if (type) {
-            const periodCode = `${day.substring(0, 3).toUpperCase()}-${type}-${currentSeq}`;
+            let seq = 0;
+            if (type === LessonPeriodType.LESSON) {
+              seq = block.jpNumber || lessonSeq;
+              lessonSeq++;
+            } else if (type === LessonPeriodType.ROUTINE) {
+              seq = routineSeq;
+              routineSeq++;
+            } else {
+              seq = breakSeq;
+              breakSeq++;
+            }
+
+            const periodCode = `${day.substring(0, 3).toUpperCase()}-${type}-${seq}`;
             const period: LessonPeriod = {
               day,
-              sequence: currentSeq,
+              sequence: seq,
               periodCode,
               type,
               title: block.name,
@@ -181,7 +195,6 @@ export const lessonPeriodService = {
               generatedAt: generatedAtISO
             };
             generatedPeriods.push(period);
-            currentSeq++;
           }
         }
       }
@@ -269,38 +282,51 @@ export const lessonPeriodService = {
           ]
         };
 
-        const blocks = generateDailySchedule(mergedSettings, day);
-        
-        let currentSeq = 1;
-        for (const block of blocks) {
-          let type: LessonPeriodType | null = null;
-          
-          if (block.type === "assembly" || block.type === "special") {
-            type = LessonPeriodType.ROUTINE;
-          } else if (block.type === "jp") {
-            type = LessonPeriodType.LESSON;
-          } else if (block.type === "break") {
-            type = LessonPeriodType.BREAK;
-          }
-
-          if (type) {
-            const periodCode = `${day.substring(0, 3).toUpperCase()}-${type}-${currentSeq}`;
-            const period: LessonPeriod = {
-              day,
-              sequence: currentSeq,
-              periodCode,
-              type,
-              title: block.name,
-              startTime: block.start,
-              endTime: block.end,
-              duration: block.duration,
-              instructional: type === LessonPeriodType.LESSON,
-              generatedAt: generatedAtISO
-            };
-            generatedPeriods.push(period);
-            currentSeq++;
-          }
-        }
+         const blocks = generateDailySchedule(mergedSettings, day);
+         
+         let lessonSeq = 1;
+         let routineSeq = 1;
+         let breakSeq = 1;
+         for (const block of blocks) {
+           let type: LessonPeriodType | null = null;
+           
+           if (block.type === "assembly" || block.type === "special") {
+             type = LessonPeriodType.ROUTINE;
+           } else if (block.type === "jp") {
+             type = LessonPeriodType.LESSON;
+           } else if (block.type === "break") {
+             type = LessonPeriodType.BREAK;
+           }
+ 
+           if (type) {
+             let seq = 0;
+             if (type === LessonPeriodType.LESSON) {
+               seq = block.jpNumber || lessonSeq;
+               lessonSeq++;
+             } else if (type === LessonPeriodType.ROUTINE) {
+               seq = routineSeq;
+               routineSeq++;
+             } else {
+               seq = breakSeq;
+               breakSeq++;
+             }
+ 
+             const periodCode = `${day.substring(0, 3).toUpperCase()}-${type}-${seq}`;
+             const period: LessonPeriod = {
+               day,
+               sequence: seq,
+               periodCode,
+               type,
+               title: block.name,
+               startTime: block.start,
+               endTime: block.end,
+               duration: block.duration,
+               instructional: type === LessonPeriodType.LESSON,
+               generatedAt: generatedAtISO
+             };
+             generatedPeriods.push(period);
+           }
+         }
       }
 
       // 5. Sync in-place using batch operations
