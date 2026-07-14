@@ -12,7 +12,9 @@ import {
   InventarisExaminer,
   StudentInventarisItem,
   StudentInventaris,
-  RiwayatPemeriksaan
+  RiwayatPemeriksaan,
+  StudentChecklistStatus,
+  AuditStatusLog
 } from "../services/inventarisService";
 import { Student, Class, AcademicYear } from "../types";
 import { Dialog } from "../components/Dialog";
@@ -63,6 +65,8 @@ export const InventarisMasukSantri: React.FC = () => {
   const [allChecklists, setAllChecklists] = useState<StudentInventaris[]>([]);
   const [allHistory, setAllHistory] = useState<RiwayatPemeriksaan[]>([]);
   const [systemUsers, setSystemUsers] = useState<any[]>([]);
+  const [statuses, setStatuses] = useState<StudentChecklistStatus[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditStatusLog[]>([]);
 
   // Loading state
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -74,6 +78,7 @@ export const InventarisMasukSantri: React.FC = () => {
   const [checklistClassId, setChecklistClassId] = useState<string>("");
   const [studentSearch, setStudentSearch] = useState<string>("");
   const [activeChecklistItems, setActiveChecklistItems] = useState<StudentInventarisItem[]>([]);
+  const [generalNotes, setGeneralNotes] = useState<string>("");
 
   // Modals state
   const [isGoodModalOpen, setIsGoodModalOpen] = useState<boolean>(false);
@@ -104,6 +109,8 @@ export const InventarisMasukSantri: React.FC = () => {
   const [filterYear, setFilterYear] = useState<string>("");
   const [filterPetugas, setFilterPetugas] = useState<string>("");
   const [filterSearch, setFilterSearch] = useState<string>("");
+  const [filterStatus, setFilterStatus] = useState<string>("");
+  const [filterRole, setFilterRole] = useState<string>("");
 
   // Load all initial database content
   const loadData = async () => {
@@ -138,6 +145,12 @@ export const InventarisMasukSantri: React.FC = () => {
       const hist = await inventarisService.getAllHistory();
       setAllHistory(hist);
 
+      const statusList = await inventarisService.getStatuses();
+      setStatuses(statusList);
+
+      const logs = await inventarisService.getAuditLogs();
+      setAuditLogs(logs);
+
       if (isAdmin) {
         const users = await userService.getUsers();
         // filter only guru and musrif for potential examiners
@@ -159,24 +172,81 @@ export const InventarisMasukSantri: React.FC = () => {
     loadData();
   }, [user]);
 
+  // Periodic lock/status background synchronization (Part 4)
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const statusList = await inventarisService.getStatuses();
+        setStatuses(statusList);
+      } catch (e) {
+        console.error("Silent reload statuses error:", e);
+      }
+    }, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Heartbeat for actively held student locks (Part 5, 10)
+  useEffect(() => {
+    if (!selectedStudent) return;
+    // Immediate initial heartbeat
+    inventarisService.heartbeat(selectedStudent.id);
+
+    const interval = setInterval(() => {
+      inventarisService.heartbeat(selectedStudent.id);
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, [selectedStudent]);
+
   // Authorization check
   const hasAccess = isAdmin || isAssigned;
 
   // Handle student select for checklist input
   const handleSelectStudent = async (student: Student) => {
-    setSelectedStudent(student);
-    if (student.classId) {
-      setChecklistClassId(student.classId);
+    // Check permission to edit (if existing checklist exists)
+    const existingChecklist = allChecklists.find((c) => c.studentId === student.id);
+    const currentExaminer = examiners.find((ex) => ex.id === user?.uid);
+    const isAdminUser = isAdmin || user?.role === "admin";
+    
+    if (existingChecklist) {
+      const isOriginalExaminer = existingChecklist.updatedBy === user?.uid;
+      const hasEditOthersPrivilege = currentExaminer?.canEditOthers === true;
+      if (!isAdminUser && !isOriginalExaminer && !hasEditOthersPrivilege) {
+        toast("Akses Ditolak: Anda tidak memiliki hak untuk mengubah hasil pemeriksaan petugas lain.", "warning");
+        return;
+      }
     }
-    setActiveTab("checklist");
+
     setIsLoading(true);
     try {
-      // Check if checklist already exists in inventaris_santri
+      // Acquire lock first
+      const lockRes = await inventarisService.acquireLock(
+        student.id,
+        student.name,
+        user?.uid || "",
+        user?.displayName || user?.email || "Petugas"
+      );
+
+      if (!lockRes.success) {
+        toast(`Gagal memeriksa: Santri ini sedang diperiksa oleh ${lockRes.lockedBy}`, "warning");
+        // Reload statuses to keep UI in sync
+        const statusList = await inventarisService.getStatuses();
+        setStatuses(statusList);
+        return;
+      }
+
+      // Lock acquired successfully! Now proceed with loading
+      setSelectedStudent(student);
+      if (student.classId) {
+        setChecklistClassId(student.classId);
+      }
+      setActiveTab("checklist");
+
       const existing = await inventarisService.getStudentChecklist(student.id);
-      
       const activeGoods = masterGoods.filter((g) => g.isActive);
 
       if (existing) {
+        setGeneralNotes(existing.generalNotes || "");
         // Map existing items, if any new active master goods are added after the checklist was created, merge them too!
         const existingItemsMap = new Map(existing.items.map((i) => [i.itemId, i]));
         const mergedItems: StudentInventarisItem[] = activeGoods.map((good) => {
@@ -203,6 +273,7 @@ export const InventarisMasukSantri: React.FC = () => {
         });
         setActiveChecklistItems(mergedItems);
       } else {
+        setGeneralNotes("");
         // Build new checklist based on current Master Goods
         const newItems: StudentInventarisItem[] = activeGoods.map((good) => ({
           itemId: good.id,
@@ -299,6 +370,9 @@ export const InventarisMasukSantri: React.FC = () => {
       const ayObj = academicYears.find((y) => y.id === selectedStudent.academicYearId);
       const academicYear = ayObj ? ayObj.name : "Lainnya";
 
+      const currentEx = examiners.find((e) => e.id === user?.uid);
+      const examinerRole = currentEx?.role || (isAdmin ? "admin" : "guru");
+
       await inventarisService.saveChecklist(
         selectedStudent.id,
         selectedStudent.name,
@@ -306,7 +380,9 @@ export const InventarisMasukSantri: React.FC = () => {
         academicYear,
         activeChecklistItems,
         examinerId,
-        examinerName
+        examinerName,
+        examinerRole,
+        generalNotes
       );
 
       toast(`Ceklis barang ${selectedStudent.name} berhasil disimpan!`, "success");
@@ -316,6 +392,10 @@ export const InventarisMasukSantri: React.FC = () => {
       setAllChecklists(chkls);
       const hist = await inventarisService.getAllHistory();
       setAllHistory(hist);
+      const statusList = await inventarisService.getStatuses();
+      setStatuses(statusList);
+      const logs = await inventarisService.getAuditLogs();
+      setAuditLogs(logs);
 
       // Deselect or keep
       setSelectedStudent(null);
@@ -323,6 +403,32 @@ export const InventarisMasukSantri: React.FC = () => {
     } catch (err) {
       console.error(err);
       toast("Gagal menyimpan pemeriksaan inventaris", "error");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleCancelChecklist = async () => {
+    if (!selectedStudent) return;
+    setIsSaving(true);
+    try {
+      await inventarisService.releaseLock(
+        selectedStudent.id,
+        selectedStudent.name,
+        user?.uid || "",
+        user?.displayName || user?.email || "Petugas"
+      );
+      toast("Pemeriksaan dibatalkan, kunci dilepas.", "info");
+
+      // Refresh states
+      const statusList = await inventarisService.getStatuses();
+      setStatuses(statusList);
+      
+      setSelectedStudent(null);
+      setChecklistClassId("");
+    } catch (err) {
+      console.error(err);
+      toast("Gagal melepas kunci pemeriksaan", "error");
     } finally {
       setIsSaving(false);
     }
@@ -336,12 +442,21 @@ export const InventarisMasukSantri: React.FC = () => {
     }
     setIsSaving(true);
     try {
-      await inventarisService.resetChecklist(selectedStudent.id);
+      await inventarisService.resetChecklist(
+        selectedStudent.id,
+        selectedStudent.name,
+        user?.uid || "",
+        user?.displayName || user?.email || "Petugas"
+      );
       toast(`Ceklis barang ${selectedStudent.name} berhasil direset!`, "success");
       
-      // Reload checklists
+      // Reload checklists & statuses & logs
       const chkls = await inventarisService.getChecklists();
       setAllChecklists(chkls);
+      const statusList = await inventarisService.getStatuses();
+      setStatuses(statusList);
+      const logs = await inventarisService.getAuditLogs();
+      setAuditLogs(logs);
 
       // Reset active checklist items to default state based on Master Goods
       const activeGoods = masterGoods.filter((g) => g.isActive);
@@ -354,6 +469,8 @@ export const InventarisMasukSantri: React.FC = () => {
         notes: ""
       }));
       setActiveChecklistItems(newItems);
+      
+      setSelectedStudent(null);
     } catch (err) {
       console.error(err);
       toast("Gagal mereset ceklis barang bawaan", "error");
@@ -362,15 +479,32 @@ export const InventarisMasukSantri: React.FC = () => {
     }
   };
 
-  // Dynamic checklist filtering by Class - exclude already checked students
+  // Dynamic checklist filtering by Class - exclude already checked or locked students (Part 4, 10)
   const studentsFilteredByChecklistClass = useMemo(() => {
-    const checkedStudentIds = new Set(allChecklists.map((c) => c.studentId));
     let filteredList = students;
     if (checklistClassId) {
       filteredList = filteredList.filter((s) => s.classId === checklistClassId);
     }
-    return filteredList.filter((s) => !checkedStudentIds.has(s.id) || s.id === selectedStudent?.id);
-  }, [students, checklistClassId, allChecklists, selectedStudent]);
+    
+    return filteredList.filter((s) => {
+      if (s.id === selectedStudent?.id) return true;
+
+      const statusObj = statuses.find((st) => st.studentId === s.id);
+      if (!statusObj) return true; // Belum Diperiksa (unlocked)
+      
+      if (statusObj.status === "Selesai") return false;
+
+      if (statusObj.lockedBy && statusObj.lockedBy !== user?.uid) {
+        const lastActiveTime = statusObj.lastActive ? new Date(statusObj.lastActive).getTime() : 0;
+        const now = new Date().getTime();
+        if (now - lastActiveTime < 5 * 60 * 1000) {
+          return false; // Locked by another active examiner
+        }
+      }
+
+      return true;
+    });
+  }, [students, checklistClassId, statuses, selectedStudent, user]);
 
   // Group checklist items by category, sorted by category urutan and item urutan
   const groupedChecklistItems = useMemo(() => {
@@ -425,6 +559,31 @@ export const InventarisMasukSantri: React.FC = () => {
     const found = students.find((s) => s.id === studentId);
     if (found) {
       handleSelectStudent(found);
+    }
+  };
+
+  const handleToggleEditOthers = async (examinerId: string, value: boolean) => {
+    try {
+      await inventarisService.updateExaminerPrivilege(examinerId, value);
+      toast("Hak khusus petugas berhasil diperbarui!", "success");
+      const examinersList = await inventarisService.getExaminers();
+      setExaminers(examinersList);
+    } catch (err) {
+      console.error(err);
+      toast("Gagal memperbarui hak khusus petugas", "error");
+    }
+  };
+
+  const handleForceUnlock = async (studentId: string, studentName: string, lockedByUserId: string, lockedByUserName: string) => {
+    if (!window.confirm(`Apakah Anda yakin ingin melepaskan kunci pemeriksaan untuk santri ${studentName} secara paksa?`)) return;
+    try {
+      await inventarisService.releaseLock(studentId, studentName, lockedByUserId, lockedByUserName, true);
+      toast(`Kunci pemeriksaan santri ${studentName} berhasil dilepas secara paksa.`, "success");
+      const statusList = await inventarisService.getStatuses();
+      setStatuses(statusList);
+    } catch (err) {
+      console.error(err);
+      toast("Gagal melepas kunci secara paksa", "error");
     }
   };
 
@@ -743,46 +902,69 @@ export const InventarisMasukSantri: React.FC = () => {
   // --- REKAP DATA CALCULATIONS (Part 8) ---
   const rekapData = useMemo(() => {
     // List checklists mapped to student objects to have student data (nis, classId, class, status, etc)
-    const checklistsMap = new Map(allChecklists.map((c) => [c.studentId, c]));
+    const checklistsMap = new Map<string, StudentInventaris>(allChecklists.map((c) => [c.studentId, c]));
 
-    let filtered = students.map((std) => {
+    let mapped = students.map((std) => {
       const chk = checklistsMap.get(std.id);
+      const statusObj = statuses.find((st) => st.studentId === std.id);
+      const computedStatus = statusObj?.status || (chk ? "Selesai" : "Belum Diperiksa");
       const classObj = classes.find((c) => c.id === std.classId);
       const ayObj = academicYears.find((y) => y.id === std.academicYearId);
+      const examinerRole = chk?.examinerRole || examiners.find((e) => e.id === chk?.updatedBy)?.role || "";
 
       return {
         student: std,
         className: classObj ? classObj.name : "Tanpa Kelas",
         classCode: classObj ? classObj.code : "",
         academicYear: ayObj ? ayObj.name : "Lainnya",
-        checklist: chk || null
+        checklist: chk || null,
+        status: computedStatus,
+        examinerRole
       };
     });
 
-    // Apply filters
+    // Apply pre-filters (class, year, search)
+    let preFiltered = mapped;
     if (filterClass) {
-      filtered = filtered.filter((f) => f.student.classId === filterClass);
+      preFiltered = preFiltered.filter((f) => f.student.classId === filterClass);
     }
     if (filterYear) {
-      filtered = filtered.filter((f) => f.student.academicYearId === filterYear);
-    }
-    if (filterPetugas) {
-      filtered = filtered.filter((f) => f.checklist?.updatedBy === filterPetugas);
+      preFiltered = preFiltered.filter((f) => f.student.academicYearId === filterYear);
     }
     if (filterSearch.trim()) {
       const term = filterSearch.toLowerCase();
-      filtered = filtered.filter(
+      preFiltered = preFiltered.filter(
         (f) =>
           f.student.name.toLowerCase().includes(term) ||
           f.student.nis.toLowerCase().includes(term)
       );
     }
 
-    // Totals
-    const totalSantri = filtered.length;
+    // Compute Dashboard Counters
+    const totalSantri = preFiltered.length;
+    const belumDicekCount = preFiltered.filter((f) => f.status === "Belum Diperiksa").length;
+    const sedangDiperiksaCount = preFiltered.filter((f) => f.status === "Sedang Diperiksa").length;
+    const sudahDicekCount = preFiltered.filter((f) => f.status === "Selesai").length;
+    
+    const pemeriksaanGuruCount = preFiltered.filter((f) => f.checklist && f.examinerRole === "guru").length;
+    const pemeriksaanMusrifCount = preFiltered.filter((f) => f.checklist && f.examinerRole === "musrif").length;
+    const pemeriksaanAdminCount = preFiltered.filter((f) => f.checklist && f.examinerRole === "admin").length;
+
+    // Apply specific status/role filters
+    let filtered = preFiltered;
+    if (filterPetugas) {
+      filtered = filtered.filter((f) => f.checklist?.updatedBy === filterPetugas);
+    }
+    if (filterStatus) {
+      filtered = filtered.filter((f) => f.status === filterStatus);
+    }
+    if (filterRole) {
+      filtered = filtered.filter((f) => f.examinerRole === filterRole);
+    }
+
     const sudahDicekList = filtered.filter((f) => f.checklist !== null);
     const sudahDicek = sudahDicekList.length;
-    const belumDicek = totalSantri - sudahDicek;
+    const belumDicek = filtered.filter((f) => f.checklist === null).length;
 
     // A student is "Lengkap" if they have checked items AND all of them have status === "Lengkap"
     const lengkap = sudahDicekList.filter((f) => {
@@ -826,9 +1008,15 @@ export const InventarisMasukSantri: React.FC = () => {
       lengkap,
       belumLengkap,
       mostDeficientItems,
-      mostMissingItems
+      mostMissingItems,
+      belumDicekCount,
+      sedangDiperiksaCount,
+      sudahDicekCount,
+      pemeriksaanGuruCount,
+      pemeriksaanMusrifCount,
+      pemeriksaanAdminCount
     };
-  }, [students, allChecklists, classes, academicYears, filterClass, filterYear, filterPetugas, filterSearch]);
+  }, [students, allChecklists, classes, academicYears, statuses, examiners, filterClass, filterYear, filterPetugas, filterSearch, filterStatus, filterRole]);
 
   if (isLoading && masterGoods.length === 0) {
     return (
@@ -931,6 +1119,46 @@ export const InventarisMasukSantri: React.FC = () => {
       {/* TAB 1: FORM CEKLIS BARANG */}
       {activeTab === "checklist" && (
         <div className="bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 rounded-3xl p-6 shadow-xs space-y-6">
+          
+          {/* EXAMINER MINI-DASHBOARD (Part 9) */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-slate-50/50 dark:bg-zinc-950/20 p-4 rounded-2xl border border-slate-100 dark:border-zinc-850">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-indigo-50 dark:bg-zinc-800 rounded-xl text-indigo-600 dark:text-indigo-400">
+                <CheckCircle2 className="h-5 w-5" />
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Sudah Anda Periksa</span>
+                <span className="text-lg font-black text-slate-800 dark:text-white">
+                  {allChecklists.filter((c) => c.updatedBy === user?.uid).length} <span className="text-xs font-normal text-slate-400">Santri</span>
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 border-t sm:border-t-0 sm:border-l border-slate-150 dark:border-zinc-800 sm:pl-4">
+              <div className="p-2 bg-amber-50 dark:bg-zinc-800 rounded-xl text-amber-600 dark:text-amber-400">
+                <Clock className="h-5 w-5" />
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Belum Diperiksa</span>
+                <span className="text-lg font-black text-slate-800 dark:text-white">
+                  {students.length - allChecklists.length} <span className="text-xs font-normal text-slate-400">Santri</span>
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 border-t sm:border-t-0 sm:border-l border-slate-150 dark:border-zinc-800 sm:pl-4">
+              <div className="p-2 bg-emerald-50 dark:bg-zinc-800 rounded-xl text-emerald-600 dark:text-emerald-400">
+                <User className="h-5 w-5" />
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Tersedia untuk Diperiksa</span>
+                <span className="text-lg font-black text-slate-800 dark:text-white">
+                  {studentsFilteredByChecklistClass.length} <span className="text-xs font-normal text-slate-400">Santri</span>
+                </span>
+              </div>
+            </div>
+          </div>
+
           {/* TOP SECTION: KELAS & NAMA SELECTORS */}
           <div className="space-y-4">
             <div>
@@ -1008,10 +1236,8 @@ export const InventarisMasukSantri: React.FC = () => {
                   <History className="h-3.5 w-3.5" /> Lihat Riwayat
                 </button>
                 <button
-                  onClick={() => {
-                    setSelectedStudent(null);
-                    setChecklistClassId("");
-                  }}
+                  onClick={handleCancelChecklist}
+                  disabled={isSaving}
                   className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-600 dark:text-zinc-300 rounded-xl text-xs font-semibold transition"
                 >
                   Batal
@@ -1141,6 +1367,19 @@ export const InventarisMasukSantri: React.FC = () => {
                   </tbody>
                 </table>
               </div>
+
+              {/* Catatan Pemeriksa Umum (Part 6) */}
+              <div className="space-y-2 pt-2">
+                <label className="block text-xs font-bold text-slate-700 dark:text-zinc-300">
+                  Catatan Umum Pemeriksa
+                </label>
+                <textarea
+                  value={generalNotes}
+                  onChange={(e) => setGeneralNotes(e.target.value)}
+                  placeholder="Masukkan catatan atau keterangan umum tambahan mengenai kelengkapan barang bawaan santri ini..."
+                  className="w-full h-20 p-3 border border-slate-150 dark:border-zinc-850 rounded-2xl text-xs bg-slate-50 dark:bg-zinc-950 text-slate-800 dark:text-zinc-100 placeholder-slate-400 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center py-20 text-center text-slate-400 border-t border-slate-100 dark:border-zinc-800">
@@ -1155,47 +1394,175 @@ export const InventarisMasukSantri: React.FC = () => {
       {/* TAB 2: REKAPITULASI DATA KESELURUHAN (Part 8) */}
       {activeTab === "rekap" && (
         <div className="space-y-6">
-          {/* STATS HIGHLIGHTS (Part 8) */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 rounded-3xl p-5 flex items-center justify-between">
-              <div>
-                <p className="text-[11px] text-slate-400 font-bold uppercase tracking-wider mb-1">Sudah Dicek</p>
-                <h3 className="text-2xl font-black text-slate-800 dark:text-white">{rekapData.sudahDicek}</h3>
+          {/* STATS HIGHLIGHTS - DASBOR UNTUK ADMIN (Part 8) */}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            {/* 1. Belum Diperiksa */}
+            <button
+              onClick={() => {
+                setFilterStatus(filterStatus === "Belum Diperiksa" ? "" : "Belum Diperiksa");
+                setFilterRole("");
+              }}
+              className={`text-left rounded-3xl p-5 flex flex-col justify-between border transition-all relative overflow-hidden group ${
+                filterStatus === "Belum Diperiksa"
+                  ? "bg-amber-500 text-white border-amber-600 shadow-md scale-[1.02]"
+                  : "bg-white dark:bg-zinc-900 border-slate-100 dark:border-zinc-800 hover:border-amber-200 dark:hover:border-amber-900/40 hover:shadow-xs"
+              }`}
+            >
+              <div className="flex items-center justify-between w-full">
+                <p className={`text-[10px] font-bold uppercase tracking-wider ${
+                  filterStatus === "Belum Diperiksa" ? "text-amber-100" : "text-slate-400"
+                }`}>Belum Diperiksa</p>
+                <Clock className={`h-4 w-4 ${
+                  filterStatus === "Belum Diperiksa" ? "text-white" : "text-amber-500"
+                }`} />
               </div>
-              <div className="p-3 bg-indigo-50 dark:bg-zinc-850 rounded-2xl text-indigo-600 dark:text-indigo-400">
-                <CheckCircle2 className="h-6 w-6" />
+              <div className="mt-4">
+                <h3 className="text-2xl font-black">{rekapData.belumDicekCount}</h3>
+                <p className={`text-[9px] mt-0.5 ${
+                  filterStatus === "Belum Diperiksa" ? "text-amber-100" : "text-slate-400"
+                }`}>Klik untuk filter</p>
               </div>
-            </div>
+            </button>
 
-            <div className="bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 rounded-3xl p-5 flex items-center justify-between">
-              <div>
-                <p className="text-[11px] text-slate-400 font-bold uppercase tracking-wider mb-1">Belum Dicek</p>
-                <h3 className="text-2xl font-black text-slate-800 dark:text-white">{rekapData.belumDicek}</h3>
+            {/* 2. Sedang Diperiksa */}
+            <button
+              onClick={() => {
+                setFilterStatus(filterStatus === "Sedang Diperiksa" ? "" : "Sedang Diperiksa");
+                setFilterRole("");
+              }}
+              className={`text-left rounded-3xl p-5 flex flex-col justify-between border transition-all relative overflow-hidden group ${
+                filterStatus === "Sedang Diperiksa"
+                  ? "bg-indigo-600 text-white border-indigo-700 shadow-md scale-[1.02]"
+                  : "bg-white dark:bg-zinc-900 border-slate-100 dark:border-zinc-800 hover:border-indigo-200 dark:hover:border-indigo-900/40 hover:shadow-xs"
+              }`}
+            >
+              <div className="flex items-center justify-between w-full">
+                <p className={`text-[10px] font-bold uppercase tracking-wider ${
+                  filterStatus === "Sedang Diperiksa" ? "text-indigo-100" : "text-slate-400"
+                }`}>Sedang Diperiksa</p>
+                <RefreshCw className={`h-4 w-4 ${
+                  filterStatus === "Sedang Diperiksa" ? "text-white animate-spin" : "text-indigo-600 dark:text-indigo-400"
+                }`} />
               </div>
-              <div className="p-3 bg-amber-50 dark:bg-zinc-850 rounded-2xl text-amber-600 dark:text-amber-400">
-                <Clock className="h-6 w-6" />
+              <div className="mt-4">
+                <h3 className="text-2xl font-black">{rekapData.sedangDiperiksaCount}</h3>
+                <p className={`text-[9px] mt-0.5 ${
+                  filterStatus === "Sedang Diperiksa" ? "text-indigo-100" : "text-slate-400"
+                }`}>Klik untuk filter</p>
               </div>
-            </div>
+            </button>
 
-            <div className="bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 rounded-3xl p-5 flex items-center justify-between">
-              <div>
-                <p className="text-[11px] text-slate-400 font-bold uppercase tracking-wider mb-1">Barang Lengkap</p>
-                <h3 className="text-2xl font-black text-emerald-600 dark:text-emerald-400">{rekapData.lengkap}</h3>
+            {/* 3. Sudah Diperiksa */}
+            <button
+              onClick={() => {
+                setFilterStatus(filterStatus === "Selesai" ? "" : "Selesai");
+                setFilterRole("");
+              }}
+              className={`text-left rounded-3xl p-5 flex flex-col justify-between border transition-all relative overflow-hidden group ${
+                filterStatus === "Selesai"
+                  ? "bg-emerald-600 text-white border-emerald-700 shadow-md scale-[1.02]"
+                  : "bg-white dark:bg-zinc-900 border-slate-100 dark:border-zinc-800 hover:border-emerald-200 dark:hover:border-emerald-900/40 hover:shadow-xs"
+              }`}
+            >
+              <div className="flex items-center justify-between w-full">
+                <p className={`text-[10px] font-bold uppercase tracking-wider ${
+                  filterStatus === "Selesai" ? "text-emerald-100" : "text-slate-400"
+                }`}>Sudah Diperiksa</p>
+                <CheckCircle2 className={`h-4 w-4 ${
+                  filterStatus === "Selesai" ? "text-white" : "text-emerald-600 dark:text-emerald-400"
+                }`} />
               </div>
-              <div className="p-3 bg-emerald-50 dark:bg-zinc-850 rounded-2xl text-emerald-600 dark:text-emerald-400">
-                <CheckCircle2 className="h-6 w-6" />
+              <div className="mt-4">
+                <h3 className="text-2xl font-black">{rekapData.sudahDicekCount}</h3>
+                <p className={`text-[9px] mt-0.5 ${
+                  filterStatus === "Selesai" ? "text-emerald-100" : "text-slate-400"
+                }`}>Klik untuk filter</p>
               </div>
-            </div>
+            </button>
 
-            <div className="bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 rounded-3xl p-5 flex items-center justify-between">
-              <div>
-                <p className="text-[11px] text-slate-400 font-bold uppercase tracking-wider mb-1">Belum Lengkap</p>
-                <h3 className="text-2xl font-black text-rose-600 dark:text-rose-400">{rekapData.belumLengkap}</h3>
+            {/* 4. Pemeriksaan per Guru */}
+            <button
+              onClick={() => {
+                setFilterRole(filterRole === "guru" ? "" : "guru");
+                setFilterStatus("");
+              }}
+              className={`text-left rounded-3xl p-5 flex flex-col justify-between border transition-all relative overflow-hidden group ${
+                filterRole === "guru"
+                  ? "bg-sky-600 text-white border-sky-700 shadow-md scale-[1.02]"
+                  : "bg-white dark:bg-zinc-900 border-slate-100 dark:border-zinc-800 hover:border-sky-200 dark:hover:border-sky-900/40 hover:shadow-xs"
+              }`}
+            >
+              <div className="flex items-center justify-between w-full">
+                <p className={`text-[10px] font-bold uppercase tracking-wider ${
+                  filterRole === "guru" ? "text-sky-100" : "text-slate-400"
+                }`}>Oleh Guru</p>
+                <UserCheck className={`h-4 w-4 ${
+                  filterRole === "guru" ? "text-white" : "text-sky-600 dark:text-sky-400"
+                }`} />
               </div>
-              <div className="p-3 bg-rose-50 dark:bg-zinc-850 rounded-2xl text-rose-600 dark:text-rose-400">
-                <AlertTriangle className="h-6 w-6" />
+              <div className="mt-4">
+                <h3 className="text-2xl font-black">{rekapData.pemeriksaanGuruCount}</h3>
+                <p className={`text-[9px] mt-0.5 ${
+                  filterRole === "guru" ? "text-sky-100" : "text-slate-400"
+                }`}>Klik untuk filter</p>
               </div>
-            </div>
+            </button>
+
+            {/* 5. Pemeriksaan per Musrif */}
+            <button
+              onClick={() => {
+                setFilterRole(filterRole === "musrif" ? "" : "musrif");
+                setFilterStatus("");
+              }}
+              className={`text-left rounded-3xl p-5 flex flex-col justify-between border transition-all relative overflow-hidden group ${
+                filterRole === "musrif"
+                  ? "bg-purple-600 text-white border-purple-700 shadow-md scale-[1.02]"
+                  : "bg-white dark:bg-zinc-900 border-slate-100 dark:border-zinc-800 hover:border-purple-200 dark:hover:border-purple-900/40 hover:shadow-xs"
+              }`}
+            >
+              <div className="flex items-center justify-between w-full">
+                <p className={`text-[10px] font-bold uppercase tracking-wider ${
+                  filterRole === "musrif" ? "text-purple-100" : "text-slate-400"
+                }`}>Oleh Musrif</p>
+                <UserCheck className={`h-4 w-4 ${
+                  filterRole === "musrif" ? "text-white" : "text-purple-600 dark:text-purple-400"
+                }`} />
+              </div>
+              <div className="mt-4">
+                <h3 className="text-2xl font-black">{rekapData.pemeriksaanMusrifCount}</h3>
+                <p className={`text-[9px] mt-0.5 ${
+                  filterRole === "musrif" ? "text-purple-100" : "text-slate-400"
+                }`}>Klik untuk filter</p>
+              </div>
+            </button>
+
+            {/* 6. Pemeriksaan per Admin */}
+            <button
+              onClick={() => {
+                setFilterRole(filterRole === "admin" ? "" : "admin");
+                setFilterStatus("");
+              }}
+              className={`text-left rounded-3xl p-5 flex flex-col justify-between border transition-all relative overflow-hidden group ${
+                filterRole === "admin"
+                  ? "bg-slate-700 text-white border-slate-800 shadow-md scale-[1.02]"
+                  : "bg-white dark:bg-zinc-900 border-slate-100 dark:border-zinc-800 hover:border-slate-300 dark:hover:border-zinc-700 hover:shadow-xs"
+              }`}
+            >
+              <div className="flex items-center justify-between w-full">
+                <p className={`text-[10px] font-bold uppercase tracking-wider ${
+                  filterRole === "admin" ? "text-slate-200" : "text-slate-400"
+                }`}>Oleh Admin</p>
+                <UserCheck className={`h-4 w-4 ${
+                  filterRole === "admin" ? "text-white" : "text-slate-600 dark:text-zinc-400"
+                }`} />
+              </div>
+              <div className="mt-4">
+                <h3 className="text-2xl font-black">{rekapData.pemeriksaanAdminCount}</h3>
+                <p className={`text-[9px] mt-0.5 ${
+                  filterRole === "admin" ? "text-slate-200" : "text-slate-400"
+                }`}>Klik untuk filter</p>
+              </div>
+            </button>
           </div>
 
           {/* ANALYSIS ROW (Parts 8) */}
@@ -1253,6 +1620,18 @@ export const InventarisMasukSantri: React.FC = () => {
               <div>
                 <h3 className="text-sm font-extrabold text-slate-800 dark:text-white">Rekapitulasi Santri</h3>
                 <p className="text-[11px] text-slate-400">Gunakan filter di bawah untuk memetakan hasil audit asrama.</p>
+                {(filterStatus || filterRole) && (
+                  <button
+                    onClick={() => {
+                      setFilterStatus("");
+                      setFilterRole("");
+                    }}
+                    className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 bg-rose-50 text-rose-600 dark:bg-rose-950/20 dark:text-rose-400 border border-rose-100 dark:border-rose-900 rounded-md text-[10px] font-bold transition hover:bg-rose-100 dark:hover:bg-rose-950/40"
+                  >
+                    <span>Filter Aktif: {filterStatus || filterRole}</span>
+                    <XCircle className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </div>
 
               {/* FILTERING CONTROLS (Part 8) */}
@@ -1305,77 +1684,103 @@ export const InventarisMasukSantri: React.FC = () => {
 
             {/* MAIN TABLE */}
             <div className="overflow-x-auto border border-slate-100 dark:border-zinc-800 rounded-2xl">
-              <table className="w-full text-left text-xs">
+              <table className="w-full text-left text-[11px]">
                 <thead>
-                  <tr className="bg-slate-50 dark:bg-zinc-950 text-slate-400 border-b border-slate-100 dark:border-zinc-800">
-                    <th className="py-3 px-4 font-bold">Nama Santri / NIS</th>
-                    <th className="py-3 px-4 font-bold">Kelas</th>
-                    <th className="py-3 px-4 font-bold">Tahun Pelajaran</th>
-                    <th className="py-3 px-4 text-center font-bold">Hasil Audit</th>
-                    <th className="py-3 px-4 text-center font-bold">Terakhir Dicek</th>
-                    <th className="py-3 px-4 text-center font-bold">Petugas</th>
-                    <th className="py-3 px-4 text-center font-bold">Aksi</th>
+                  <tr className="bg-slate-50 dark:bg-zinc-950 text-slate-400 border-b border-slate-100 dark:border-zinc-800 font-bold">
+                    <th className="py-3 px-4">Nama Santri / NIS</th>
+                    <th className="py-3 px-4">Kelas</th>
+                    <th className="py-3 px-4 text-center">Status</th>
+                    <th className="py-3 px-4 text-center">Tanggal</th>
+                    <th className="py-3 px-4 text-center">Jam</th>
+                    <th className="py-3 px-4">Pemeriksa</th>
+                    <th className="py-3 px-4 text-center">Role</th>
+                    <th className="py-3 px-2 text-center">Lengkap</th>
+                    <th className="py-3 px-2 text-center">Kurang</th>
+                    <th className="py-3 px-2 text-center">Tidak Bawa</th>
+                    <th className="py-3 px-4">Catatan</th>
+                    <th className="py-3 px-4 text-center">Aksi</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-zinc-850">
                   {rekapData.filtered.length > 0 ? (
-                    rekapData.filtered.map(({ student, className, academicYear, checklist }) => {
-                      // calculate summary ratios
-                      let summaryLabel = (
-                        <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-100 dark:bg-zinc-800 text-slate-400">
-                          Belum Dicek
+                    rekapData.filtered.map(({ student, className, status, examinerRole, checklist }) => {
+                      const chk = checklist;
+                      const totalItems = chk?.items.length || 0;
+                      const lengkapQty = chk?.items.filter((i) => i.status === "Lengkap").length || 0;
+                      const kurangQty = chk?.items.filter((i) => i.status === "Kurang").length || 0;
+                      const tidakMembawaQty = chk?.items.filter((i) => i.status === "Tidak Membawa").length || 0;
+
+                      // status badge
+                      let statusBadge = (
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-500 dark:bg-zinc-800 dark:text-zinc-400 whitespace-nowrap">
+                          Belum Diperiksa
                         </span>
                       );
-
-                      if (checklist) {
-                        const total = checklist.items.length;
-                        const lengkapCount = checklist.items.filter((i) => i.status === "Lengkap").length;
-                        const kurangCount = checklist.items.filter((i) => i.status === "Kurang").length;
-                        const tidakMembawaCount = checklist.items.filter((i) => i.status === "Tidak Membawa").length;
-                        const rusakCount = checklist.items.filter((i) => i.status === "Rusak").length;
-
-                        if (lengkapCount === total) {
-                          summaryLabel = (
-                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400">
-                              Lengkap (100%)
-                            </span>
-                          );
-                        } else {
-                          summaryLabel = (
-                            <div className="flex flex-col items-center gap-1">
-                              <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400">
-                                Belum Lengkap
-                              </span>
-                              <p className="text-[9px] text-slate-400">
-                                {lengkapCount} L • {kurangCount} K • {tidakMembawaCount} TB • {rusakCount} R
-                              </p>
-                            </div>
-                          );
-                        }
+                      if (status === "Sedang Diperiksa") {
+                        statusBadge = (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700 dark:bg-amber-950/20 dark:text-amber-400 whitespace-nowrap">
+                            Sedang Diperiksa
+                          </span>
+                        );
+                      } else if (status === "Selesai") {
+                        statusBadge = (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-400 whitespace-nowrap">
+                            Selesai
+                          </span>
+                        );
                       }
+
+                      const roleDisplay = examinerRole ? (examinerRole.charAt(0).toUpperCase() + examinerRole.slice(1)) : "-";
 
                       return (
                         <tr key={student.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-950/20">
                           <td className="py-3 px-4">
-                            <p className="font-bold text-slate-800 dark:text-zinc-100">{student.name}</p>
-                            <span className="text-[9px] text-slate-400">NIS: {student.nis || "-"}</span>
+                            <p className="font-bold text-slate-800 dark:text-zinc-100 whitespace-nowrap">{student.name}</p>
+                            <span className="text-[9px] text-slate-400 font-mono">NIS: {student.nis || "-"}</span>
                           </td>
-                          <td className="py-3 px-4 text-slate-600 dark:text-zinc-300 font-medium">{className}</td>
-                          <td className="py-3 px-4 text-slate-500">{academicYear}</td>
-                          <td className="py-3 px-4 text-center">{summaryLabel}</td>
-                          <td className="py-3 px-4 text-center text-slate-500 font-mono">
-                            {checklist ? new Date(checklist.updatedAt).toLocaleDateString("id-ID") : "-"}
+                          <td className="py-3 px-4 text-slate-600 dark:text-zinc-300 font-medium whitespace-nowrap">{className}</td>
+                          <td className="py-3 px-4 text-center">{statusBadge}</td>
+                          <td className="py-3 px-4 text-center text-slate-500 font-mono whitespace-nowrap">
+                            {chk ? new Date(chk.updatedAt).toLocaleDateString("id-ID") : "-"}
                           </td>
-                          <td className="py-3 px-4 text-center text-slate-600 dark:text-zinc-300 font-bold">
-                            {checklist ? checklist.examinerName : "-"}
+                          <td className="py-3 px-4 text-center text-slate-500 font-mono whitespace-nowrap">
+                            {chk?.time || (chk ? new Date(chk.updatedAt).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }) : "-")}
+                          </td>
+                          <td className="py-3 px-4 text-slate-600 dark:text-zinc-300 font-bold whitespace-nowrap">
+                            {chk ? chk.examinerName : "-"}
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            {chk ? (
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-bold whitespace-nowrap ${
+                                examinerRole === "admin" 
+                                  ? "bg-slate-100 text-slate-800 dark:bg-zinc-850 dark:text-zinc-300 border border-slate-200 dark:border-zinc-800"
+                                  : examinerRole === "guru"
+                                  ? "bg-sky-50 text-sky-700 dark:bg-sky-950/20 dark:text-sky-400"
+                                  : "bg-purple-50 text-purple-700 dark:bg-purple-950/20 dark:text-purple-400"
+                              }`}>
+                                {roleDisplay}
+                              </span>
+                            ) : "-"}
+                          </td>
+                          <td className="py-3 px-2 text-center font-bold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                            {chk ? `${lengkapQty}/${totalItems}` : "-"}
+                          </td>
+                          <td className="py-3 px-2 text-center font-bold text-amber-600 dark:text-amber-400 whitespace-nowrap">
+                            {chk ? kurangQty : "-"}
+                          </td>
+                          <td className="py-3 px-2 text-center font-bold text-rose-600 dark:text-rose-400 whitespace-nowrap">
+                            {chk ? tidakMembawaQty : "-"}
+                          </td>
+                          <td className="py-3 px-4 text-slate-500 max-w-[150px] truncate" title={chk?.generalNotes || ""}>
+                            {chk?.generalNotes || "-"}
                           </td>
                           <td className="py-3 px-4">
                             <div className="flex items-center justify-center gap-2">
                               <button
                                 onClick={() => handleSelectStudent(student)}
-                                className="px-2 py-1 bg-indigo-50 dark:bg-zinc-800 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 rounded-lg text-[11px] font-bold transition"
+                                className="px-2 py-1 bg-indigo-50 dark:bg-zinc-800 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 rounded-lg text-[10px] font-bold transition whitespace-nowrap"
                               >
-                                {checklist ? "Edit Ceklis" : "Cek Barang"}
+                                {chk ? "Edit Ceklis" : "Cek Barang"}
                               </button>
                               <button
                                 onClick={() => handleOpenStudentHistory(student)}
@@ -1391,7 +1796,7 @@ export const InventarisMasukSantri: React.FC = () => {
                     })
                   ) : (
                     <tr>
-                      <td colSpan={7} className="py-8 text-center text-slate-400">
+                      <td colSpan={12} className="py-8 text-center text-slate-400">
                         Belum ada data pemeriksaan.
                       </td>
                     </tr>
@@ -1713,6 +2118,7 @@ export const InventarisMasukSantri: React.FC = () => {
                     <th className="py-3 px-4 font-bold">Nama Lengkap</th>
                     <th className="py-3 px-4 font-bold">Email</th>
                     <th className="py-3 px-4 font-bold">Role Sistem</th>
+                    <th className="py-3 px-4 text-center font-bold">Hak Edit Ceklis Lain</th>
                     <th className="py-3 px-4 text-center font-bold">Ditugaskan Pada</th>
                     <th className="py-3 px-4 text-center font-bold">Aksi</th>
                   </tr>
@@ -1729,6 +2135,14 @@ export const InventarisMasukSantri: React.FC = () => {
                         </td>
                         <td className="py-3 px-4 text-slate-500">{ex.email}</td>
                         <td className="py-3 px-4 text-slate-500 uppercase tracking-wider font-semibold text-[10px]">{ex.role}</td>
+                        <td className="py-3 px-4 text-center">
+                          <input
+                            type="checkbox"
+                            checked={ex.canEditOthers || false}
+                            onChange={(e) => handleToggleEditOthers(ex.id, e.target.checked)}
+                            className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-slate-300 dark:border-zinc-850 rounded cursor-pointer"
+                          />
+                        </td>
                         <td className="py-3 px-4 text-center text-slate-500 font-mono">
                           {new Date(ex.assignedAt).toLocaleString("id-ID")}
                         </td>
@@ -1745,8 +2159,178 @@ export const InventarisMasukSantri: React.FC = () => {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={5} className="py-8 text-center text-slate-400">
+                      <td colSpan={6} className="py-8 text-center text-slate-400">
                         Belum ada petugas ditugaskan. Secara default hanya Admin yang memegang kendali.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* PEMANTAUAN REALTIME & LOCKS (Part 11) */}
+          <div className="bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 rounded-3xl p-6 shadow-xs space-y-4">
+            <div>
+              <h2 className="text-sm font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
+                <ShieldAlert className="h-5 w-5 text-indigo-500" />
+                Pemantauan Pemeriksaan Aktif & Penguncian (Real-time)
+              </h2>
+              <p className="text-[11px] text-slate-400">
+                Berikut adalah status penguncian nyata saat petugas sedang memeriksa santri di asrama. Anda dapat melepas kunci secara paksa jika diperlukan.
+              </p>
+            </div>
+
+            <div className="overflow-x-auto border border-slate-100 dark:border-zinc-800 rounded-2xl">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="bg-slate-50 dark:bg-zinc-950 text-slate-400 border-b border-slate-100 dark:border-zinc-800">
+                    <th className="py-3 px-4 font-bold">Nama Santri</th>
+                    <th className="py-3 px-4 font-bold">Status Pemeriksaan</th>
+                    <th className="py-3 px-4 font-bold">Pemeriksa / Pemegang Kunci</th>
+                    <th className="py-3 px-4 text-center font-bold">Waktu Penguncian / Aktif</th>
+                    <th className="py-3 px-4 text-center font-bold">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-zinc-850">
+                  {statuses.length > 0 ? (
+                    statuses.map((statusObj) => {
+                      const isCurrentlyLocked = !!statusObj.lockedBy;
+                      const lastActiveTime = statusObj.lastActive ? new Date(statusObj.lastActive).getTime() : 0;
+                      const now = new Date().getTime();
+                      const isLockExpired = (now - lastActiveTime) >= 5 * 60 * 1000;
+                      const isActiveLock = isCurrentlyLocked && !isLockExpired;
+
+                      return (
+                        <tr key={statusObj.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-950/20">
+                          <td className="py-3.5 px-4 font-bold text-slate-800 dark:text-zinc-100">
+                            {statusObj.studentName}
+                          </td>
+                          <td className="py-3.5 px-4">
+                            {statusObj.status === "Selesai" ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-600 dark:bg-emerald-950/20 dark:text-emerald-400">
+                                Selesai Diperiksa
+                              </span>
+                            ) : isActiveLock ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-600 dark:bg-amber-950/20 dark:text-amber-400 animate-pulse">
+                                Sedang Diperiksa (Kunci Aktif)
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-500 dark:bg-zinc-800 dark:text-zinc-400">
+                                Belum Diperiksa / Kunci Bebas
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3.5 px-4 text-slate-600 dark:text-zinc-300 font-medium">
+                            {isActiveLock ? (
+                              <span className="text-indigo-600 dark:text-indigo-400 font-bold">{statusObj.lockedByName}</span>
+                            ) : statusObj.status === "Selesai" ? (
+                              <span className="text-slate-500">Pemeriksaan Selesai</span>
+                            ) : (
+                              <span className="text-slate-400 italic">Tidak ada</span>
+                            )}
+                          </td>
+                          <td className="py-3.5 px-4 text-center font-mono text-slate-500">
+                            {isActiveLock && statusObj.lockedAt ? (
+                              new Date(statusObj.lockedAt).toLocaleTimeString("id-ID")
+                            ) : statusObj.updatedAt ? (
+                              new Date(statusObj.updatedAt).toLocaleTimeString("id-ID")
+                            ) : (
+                              "-"
+                            )}
+                          </td>
+                          <td className="py-3.5 px-4 text-center">
+                            {isActiveLock ? (
+                              <button
+                                onClick={() => handleForceUnlock(statusObj.studentId, statusObj.studentName, statusObj.lockedBy || "", statusObj.lockedByName || "")}
+                                className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg text-[11px] font-bold transition border border-rose-100"
+                                title="Lepas kunci pemeriksaan santri ini agar dapat diakses petugas lain"
+                              >
+                                Unlock Paksa
+                              </button>
+                            ) : (
+                              <span className="text-slate-300 dark:text-zinc-700 text-[11px] font-medium">-</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  ) : (
+                    <tr>
+                      <td colSpan={5} className="py-8 text-center text-slate-400">
+                        Belum ada aktifitas penguncian atau pemeriksaan santri saat ini.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* AUDIT STATUS LOGS HISTORY (Part 12) */}
+          <div className="bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 rounded-3xl p-6 shadow-xs space-y-4">
+            <div>
+              <h2 className="text-sm font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
+                <History className="h-5 w-5 text-indigo-500" />
+                Histori Log Aktivitas & Audit Pemeriksaan
+              </h2>
+              <p className="text-[11px] text-slate-400">
+                Catatan kronologis perubahan status pemeriksaan santri untuk audit keamanan dan pencegahan kesalahan pemeriksaan ganda.
+              </p>
+            </div>
+
+            <div className="overflow-x-auto border border-slate-100 dark:border-zinc-800 rounded-2xl max-h-[300px]">
+              <table className="w-full text-left text-xs">
+                <thead className="sticky top-0 bg-slate-50 dark:bg-zinc-950 text-slate-400 border-b border-slate-100 dark:border-zinc-800 z-10">
+                  <tr>
+                    <th className="py-3 px-4 font-bold">Waktu Kejadian</th>
+                    <th className="py-3 px-4 font-bold">Petugas</th>
+                    <th className="py-3 px-4 font-bold">Santri</th>
+                    <th className="py-3 px-4 text-center font-bold">Perubahan Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-zinc-850">
+                  {auditLogs.length > 0 ? (
+                    auditLogs.map((log) => (
+                      <tr key={log.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-950/20">
+                        <td className="py-3 px-4 font-mono text-slate-500">
+                          {new Date(log.timestamp).toLocaleString("id-ID")}
+                        </td>
+                        <td className="py-3 px-4 font-bold text-slate-700 dark:text-zinc-200">
+                          {log.examinerName}
+                        </td>
+                        <td className="py-3 px-4 text-slate-600 dark:text-zinc-300">
+                          {log.studentName}
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <div className="flex items-center justify-center gap-2">
+                            <span className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold ${
+                              log.statusSebelum === "Selesai"
+                                ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/20 dark:text-emerald-400"
+                                : log.statusSebelum === "Sedang Diperiksa"
+                                ? "bg-amber-50 text-amber-600 dark:bg-amber-950/20 dark:text-amber-400"
+                                : "bg-slate-100 text-slate-500 dark:bg-zinc-800 dark:text-zinc-400"
+                            }`}>
+                              {log.statusSebelum}
+                            </span>
+                            <span className="text-slate-400">→</span>
+                            <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold ${
+                              log.statusSesudah === "Selesai"
+                                ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/20 dark:text-emerald-400"
+                                : log.statusSesudah === "Sedang Diperiksa"
+                                ? "bg-amber-50 text-amber-600 dark:bg-amber-950/20 dark:text-amber-400"
+                                : "bg-slate-100 text-slate-500 dark:bg-zinc-800 dark:text-zinc-400"
+                            }`}>
+                              {log.statusSesudah}
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={4} className="py-8 text-center text-slate-400">
+                        Belum ada histori aktivitas pemeriksaan terekam.
                       </td>
                     </tr>
                   )}

@@ -39,6 +39,30 @@ export interface InventarisExaminer {
   email: string;
   role: string;
   assignedAt: string;
+  canEditOthers?: boolean; // Granted permission to edit other examiner's data
+}
+
+export interface StudentChecklistStatus {
+  id: string; // studentId
+  studentId: string;
+  studentName: string;
+  status: "Belum Diperiksa" | "Sedang Diperiksa" | "Selesai";
+  lockedBy: string | null;
+  lockedByName: string | null;
+  lockedAt: string | null; // ISO string
+  lastActive: string | null; // ISO string
+  updatedAt: string;
+}
+
+export interface AuditStatusLog {
+  id: string;
+  studentId: string;
+  studentName: string;
+  examinerId: string;
+  examinerName: string;
+  statusSebelum: "Belum Diperiksa" | "Sedang Diperiksa" | "Selesai";
+  statusSesudah: "Belum Diperiksa" | "Sedang Diperiksa" | "Selesai";
+  timestamp: string;
 }
 
 export interface StudentInventarisItem {
@@ -60,6 +84,9 @@ export interface StudentInventaris {
   updatedAt: string;
   updatedBy: string; // userId of examiner
   examinerName: string;
+  examinerRole?: string;
+  generalNotes?: string;
+  time?: string;
 }
 
 export interface RiwayatPemeriksaan {
@@ -67,9 +94,13 @@ export interface RiwayatPemeriksaan {
   studentId: string;
   studentName: string;
   className: string;
+  academicYear?: string;
   date: string; // YYYY-MM-DD
+  time?: string; // HH:MM:SS or HH:MM
   examinerId: string;
   examinerName: string;
+  examinerRole?: string;
+  generalNotes?: string;
   summary: {
     lengkap: number;
     kurang: number;
@@ -86,6 +117,8 @@ const CATEGORIES_COL = "inventaris_categories";
 const EXAMINERS_COL = "inventaris_examiners";
 const STUDENT_INV_COL = "inventaris_santri";
 const HISTORY_COL = "riwayat_pemeriksaan";
+const STATUS_COL = "inventaris_status";
+const AUDIT_LOG_COL = "inventaris_status_logs";
 
 export const inventarisService = {
   // --- Master Barang ---
@@ -333,6 +366,200 @@ export const inventarisService = {
     }
   },
 
+  async updateExaminerPrivilege(id: string, canEditOthers: boolean): Promise<void> {
+    const docRef = doc(db, EXAMINERS_COL, id);
+    try {
+      await updateDoc(docRef, { canEditOthers });
+    } catch (error) {
+      return handleFirestoreError(error, OperationType.WRITE, `${EXAMINERS_COL}/${id}`);
+    }
+  },
+
+  // --- Student Checklist Statuses & Locking (Part 4, 5, 10) ---
+  async getStatuses(): Promise<StudentChecklistStatus[]> {
+    try {
+      const snapshot = await getDocs(collection(db, STATUS_COL));
+      const items: StudentChecklistStatus[] = [];
+      snapshot.forEach((d) => {
+        items.push({ id: d.id, ...d.data() } as StudentChecklistStatus);
+      });
+      return items;
+    } catch (error) {
+      return handleFirestoreError(error, OperationType.LIST, STATUS_COL);
+    }
+  },
+
+  async getStudentStatus(studentId: string): Promise<StudentChecklistStatus | null> {
+    const docRef = doc(db, STATUS_COL, studentId);
+    try {
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        return { id: snap.id, ...snap.data() } as StudentChecklistStatus;
+      }
+      return null;
+    } catch (error) {
+      return handleFirestoreError(error, OperationType.GET, `${STATUS_COL}/${studentId}`);
+    }
+  },
+
+  async logAudit(
+    studentId: string,
+    studentName: string,
+    examinerId: string,
+    examinerName: string,
+    statusSebelum: "Belum Diperiksa" | "Sedang Diperiksa" | "Selesai",
+    statusSesudah: "Belum Diperiksa" | "Sedang Diperiksa" | "Selesai"
+  ): Promise<void> {
+    if (statusSebelum === statusSesudah) return;
+    const colRef = collection(db, AUDIT_LOG_COL);
+    const newDoc = doc(colRef);
+    const auditData: AuditStatusLog = {
+      id: newDoc.id,
+      studentId,
+      studentName,
+      examinerId,
+      examinerName,
+      statusSebelum,
+      statusSesudah,
+      timestamp: new Date().toISOString()
+    };
+    try {
+      await setDoc(newDoc, auditData);
+    } catch (error) {
+      console.error("Failed to log audit status change:", error);
+    }
+  },
+
+  async acquireLock(
+    studentId: string,
+    studentName: string,
+    userId: string,
+    userName: string
+  ): Promise<{ success: boolean; lockedBy?: string }> {
+    const docRef = doc(db, STATUS_COL, studentId);
+    try {
+      const snap = await getDoc(docRef);
+      let currentStatus: "Belum Diperiksa" | "Sedang Diperiksa" | "Selesai" = "Belum Diperiksa";
+      let isLockedByOther = false;
+      let lockedByName = "";
+
+      if (snap.exists()) {
+        const data = snap.data() as StudentChecklistStatus;
+        currentStatus = data.status || "Belum Diperiksa";
+
+        if (data.lockedBy && data.lockedBy !== userId) {
+          const lastActiveTime = data.lastActive ? new Date(data.lastActive).getTime() : 0;
+          const now = new Date().getTime();
+          if (now - lastActiveTime < 5 * 60 * 1000) {
+            isLockedByOther = true;
+            lockedByName = data.lockedByName || "Petugas Lain";
+          }
+        }
+      }
+
+      if (isLockedByOther) {
+        return { success: false, lockedBy: lockedByName };
+      }
+
+      const updatedStatus: StudentChecklistStatus = {
+        id: studentId,
+        studentId,
+        studentName,
+        status: "Sedang Diperiksa",
+        lockedBy: userId,
+        lockedByName: userName,
+        lockedAt: new Date().toISOString(),
+        lastActive: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      await setDoc(docRef, updatedStatus);
+
+      await this.logAudit(
+        studentId,
+        studentName,
+        userId,
+        userName,
+        currentStatus,
+        "Sedang Diperiksa"
+      );
+
+      return { success: true };
+    } catch (error) {
+      return handleFirestoreError(error, OperationType.WRITE, `${STATUS_COL}/${studentId}`);
+    }
+  },
+
+  async releaseLock(
+    studentId: string,
+    studentName: string,
+    userId: string,
+    userName: string,
+    forceUnlock: boolean = false
+  ): Promise<void> {
+    const docRef = doc(db, STATUS_COL, studentId);
+    try {
+      const snap = await getDoc(docRef);
+      if (!snap.exists()) return;
+
+      const data = snap.data() as StudentChecklistStatus;
+      
+      if (data.lockedBy === userId || forceUnlock) {
+        const chkDoc = await getDoc(doc(db, STUDENT_INV_COL, studentId));
+        const finalStatus = chkDoc.exists() ? "Selesai" : "Belum Diperiksa";
+
+        const updated: StudentChecklistStatus = {
+          ...data,
+          status: finalStatus,
+          lockedBy: null,
+          lockedByName: null,
+          lockedAt: null,
+          lastActive: null,
+          updatedAt: new Date().toISOString()
+        };
+
+        await setDoc(docRef, updated);
+
+        await this.logAudit(
+          studentId,
+          studentName,
+          userId,
+          forceUnlock ? `Admin Force Unlock` : userName,
+          data.status,
+          finalStatus
+        );
+      }
+    } catch (error) {
+      console.error("Error releasing lock:", error);
+    }
+  },
+
+  async heartbeat(studentId: string): Promise<void> {
+    const docRef = doc(db, STATUS_COL, studentId);
+    try {
+      await updateDoc(docRef, {
+        lastActive: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error("Heartbeat error:", studentId, error);
+    }
+  },
+
+  async getAuditLogs(): Promise<AuditStatusLog[]> {
+    try {
+      const q = query(collection(db, AUDIT_LOG_COL), orderBy("timestamp", "desc"));
+      const snapshot = await getDocs(q);
+      const items: AuditStatusLog[] = [];
+      snapshot.forEach((d) => {
+        items.push({ id: d.id, ...d.data() } as AuditStatusLog);
+      });
+      return items;
+    } catch (error) {
+      return handleFirestoreError(error, OperationType.LIST, AUDIT_LOG_COL);
+    }
+  },
+
   // --- Inventaris Santri ---
   async getChecklists(): Promise<StudentInventaris[]> {
     try {
@@ -367,9 +594,13 @@ export const inventarisService = {
     academicYear: string,
     items: StudentInventarisItem[],
     examinerId: string,
-    examinerName: string
+    examinerName: string,
+    examinerRole?: string,
+    generalNotes?: string
   ): Promise<void> {
-    const dateStr = new Date().toISOString().split("T")[0];
+    const now = new Date();
+    const dateStr = now.toISOString().split("T")[0];
+    const timeStr = now.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
 
     // Calculate summary of status
     const summary = {
@@ -396,9 +627,12 @@ export const inventarisService = {
       className,
       academicYear,
       items,
-      updatedAt: new Date().toISOString(),
+      updatedAt: now.toISOString(),
       updatedBy: examinerId,
-      examinerName
+      examinerName,
+      examinerRole,
+      generalNotes,
+      time: timeStr
     };
 
     const historyRef = doc(collection(db, HISTORY_COL));
@@ -407,12 +641,16 @@ export const inventarisService = {
       studentId,
       studentName,
       className,
+      academicYear,
       date: dateStr,
+      time: timeStr,
       examinerId,
       examinerName,
+      examinerRole,
+      generalNotes,
       summary,
       items,
-      createdAt: new Date().toISOString()
+      createdAt: now.toISOString()
     };
 
     try {
@@ -420,6 +658,40 @@ export const inventarisService = {
       await setDoc(docRef, checklistData);
       // Append a historic record that is never deleted
       await setDoc(historyRef, historyData);
+
+      // Update status doc (Part 4)
+      const statusRef = doc(db, STATUS_COL, studentId);
+      let previousStatus: "Belum Diperiksa" | "Sedang Diperiksa" | "Selesai" = "Belum Diperiksa";
+      try {
+        const statusSnap = await getDoc(statusRef);
+        if (statusSnap.exists()) {
+          previousStatus = (statusSnap.data() as StudentChecklistStatus).status || "Belum Diperiksa";
+        }
+      } catch (err) {
+        console.error("Error fetching previous status:", err);
+      }
+
+      const newStatus: StudentChecklistStatus = {
+        id: studentId,
+        studentId,
+        studentName,
+        status: "Selesai",
+        lockedBy: null,
+        lockedByName: null,
+        lockedAt: null,
+        lastActive: null,
+        updatedAt: new Date().toISOString()
+      };
+
+      await setDoc(statusRef, newStatus);
+      await this.logAudit(
+        studentId,
+        studentName,
+        examinerId,
+        examinerName,
+        previousStatus,
+        "Selesai"
+      );
     } catch (error) {
       return handleFirestoreError(error, OperationType.WRITE, `${STUDENT_INV_COL}/${studentId}`);
     }
@@ -459,10 +731,41 @@ export const inventarisService = {
     }
   },
 
-  async resetChecklist(studentId: string): Promise<void> {
+  async resetChecklist(studentId: string, studentName: string = "Santri", examinerId: string = "system", examinerName: string = "System"): Promise<void> {
     const docRef = doc(db, STUDENT_INV_COL, studentId);
     try {
       await deleteDoc(docRef);
+
+      const statusRef = doc(db, STATUS_COL, studentId);
+      let previousStatus: "Belum Diperiksa" | "Sedang Diperiksa" | "Selesai" = "Selesai";
+      try {
+        const statusSnap = await getDoc(statusRef);
+        if (statusSnap.exists()) {
+          previousStatus = (statusSnap.data() as StudentChecklistStatus).status || "Selesai";
+        }
+      } catch (err) {}
+
+      const clearedStatus: StudentChecklistStatus = {
+        id: studentId,
+        studentId,
+        studentName,
+        status: "Belum Diperiksa",
+        lockedBy: null,
+        lockedByName: null,
+        lockedAt: null,
+        lastActive: null,
+        updatedAt: new Date().toISOString()
+      };
+      await setDoc(statusRef, clearedStatus);
+
+      await this.logAudit(
+        studentId,
+        studentName,
+        examinerId,
+        examinerName,
+        previousStatus,
+        "Belum Diperiksa"
+      );
     } catch (error) {
       return handleFirestoreError(error, OperationType.DELETE, `${STUDENT_INV_COL}/${studentId}`);
     }
