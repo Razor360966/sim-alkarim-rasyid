@@ -575,6 +575,44 @@ export const userService = {
     }
   },
 
+  // Update user profile fields (NUPTK, NIY, TTL, Sertifikasi)
+  async updateProfile(
+    uid: string,
+    data: {
+      nuptk: string;
+      niy: string;
+      tempatLahir: string;
+      tanggalLahir: string;
+      sertifikasi: "Sudah" | "Belum" | "";
+      name?: string;
+      phoneNumber?: string;
+    }
+  ): Promise<void> {
+    try {
+      const docRef = doc(db, COLLECTION_NAME, uid);
+      await updateDoc(docRef, {
+        nuptk: data.nuptk,
+        niy: data.niy,
+        tempatLahir: data.tempatLahir,
+        tanggalLahir: data.tanggalLahir,
+        sertifikasi: data.sertifikasi,
+        ...(data.name ? { name: data.name } : {}),
+        ...(data.phoneNumber ? { phoneNumber: data.phoneNumber } : {}),
+        updatedAt: serverTimestamp()
+      });
+
+      await logActivity(
+        uid,
+        data.name || "User",
+        "UPDATE_PROFILE",
+        uid,
+        `Memperbarui profil: NUPTK=${data.nuptk}, NIY=${data.niy}, TTL=${data.tempatLahir}, ${data.tanggalLahir}, Sertifikasi=${data.sertifikasi}`
+      );
+    } catch (error) {
+      return handleFirestoreError(error, OperationType.WRITE, `${COLLECTION_NAME}/${uid}`);
+    }
+  },
+
   // Log Login details to login_history
   async logLogin(userId: string, email: string, name: string, status: "Sukses" | "Gagal", reason?: string) {
     try {

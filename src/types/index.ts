@@ -79,6 +79,13 @@ export interface UserProfile {
   lastLogin?: string | null;
   requirePasswordChange?: boolean;
   createdAt: string;
+
+  // Mandatory Profile Fields for Teachers / Musrifs
+  nuptk?: string;
+  niy?: string;
+  tempatLahir?: string;
+  tanggalLahir?: string;
+  sertifikasi?: "Sudah" | "Belum" | "";
 }
 
 export interface CurriculumMatrix {

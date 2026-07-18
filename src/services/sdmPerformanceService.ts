@@ -74,7 +74,7 @@ const EVAL_COLLECTION = "sdm_performance_evaluations";
 // Default Master Jabatan data
 export const DEFAULT_JABATANS: MasterJabatan[] = [
   { id: "guru", name: "Guru", description: "Pendidik yang bertugas merencanakan dan melaksanakan pembelajaran serta menilai hasil belajar." },
-  { id: "musrif", name: "Musrif", description: "Pembina asrama yang bertanggung jawab atas adab, ibadah, dan hafalan santri." },
+  { id: "musrif", name: "Guru Halaqoh", description: "Pembina asrama yang bertanggung jawab atas adab, ibadah, dan hafalan santri." },
   { id: "kepala_sekolah", name: "Kepala Sekolah", description: "Pimpinan tertinggi satuan pendidikan yang menyelenggarakan manajemen sekolah." },
   { id: "wakakur", name: "Wakakur", description: "Wakil Kepala Sekolah Bidang Kurikulum yang mengelola perencanaan akademik sekolah." },
   { id: "wakasis", name: "Wakasis", description: "Wakil Kepala Sekolah Bidang Kesiswaan yang mengelola ketertiban dan karakter siswa." },

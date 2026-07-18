@@ -103,7 +103,7 @@ export interface SupervisionInstrument {
   code: string; // Kode instrumen (e.g. INST-001)
   name: string; // Nama Instrumen
   type: SupervisionType; // Jenis Supervisi: Akademik / Manajerial
-  targetSdmType?: "Guru" | "Wakil Kepala Sekolah" | "Musrif" | "Tenaga Kependidikan"; // Target group
+  targetSdmType?: "Guru" | "Wakil Kepala Sekolah" | "Guru Halaqoh" | "Tenaga Kependidikan"; // Target group
   indicators: SupervisionIndicator[]; // Flexible indicators
   aspects: string[]; // Keep for backward compatibility/quick aspects representation
   description?: string; // Description/bobot/kriteria

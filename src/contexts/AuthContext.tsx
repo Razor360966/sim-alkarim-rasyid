@@ -75,7 +75,12 @@ const buildProfile = async (dbUser: any): Promise<UserProfile> => {
     permissions: dbUser.permissions,
     lastLogin: dbUser.lastLogin,
     requirePasswordChange: dbUser.requirePasswordChange || false,
-    createdAt: dbUser.createdAt
+    createdAt: dbUser.createdAt,
+    nuptk: dbUser.nuptk || "",
+    niy: dbUser.niy || "",
+    tempatLahir: dbUser.tempatLahir || "",
+    tanggalLahir: dbUser.tanggalLahir || "",
+    sertifikasi: dbUser.sertifikasi || ""
   };
 };
 

@@ -524,10 +524,10 @@ export const supervisionService = {
           {
             id: "inst_mj_musrif_1",
             code: "INST-MJ-MUSRIF",
-            name: "Supervisi Musrif Asrama",
+            name: "Supervisi Guru Halaqoh",
             category: "Pembinaan & Kedisiplinan",
             type: "Manajerial",
-            targetSdmType: "Musrif",
+            targetSdmType: "Guru Halaqoh",
             aspects: ["Pembinaan Halaqah", "Mutabaah Santri", "Kehadiran", "Keteladanan", "Administrasi Halaqah", "Capaian Target Santri"],
             weight: 100,
             isActive: true,

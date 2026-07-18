@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
+import { useToast } from "../contexts/ToastContext";
 import { academicYearService } from "../services/academicYearService";
 import { AcademicYear } from "../types";
 import { doc, getDoc } from "firebase/firestore";
@@ -37,6 +38,7 @@ import { motion, AnimatePresence } from "motion/react";
 export const MainLayout: React.FC = () => {
   const { user, logout, switchRole } = useAuth();
   const { theme, toggleTheme } = useTheme();
+  const { toast } = useToast();
   const location = useLocation();
   const navigate = useNavigate();
   
@@ -44,14 +46,26 @@ export const MainLayout: React.FC = () => {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [activeYear, setActiveYear] = useState<AcademicYear | null>(null);
 
-  // Guard routing & Force password change
+  const isTeacherOrMusrif = user && (user.role === "guru" || user.role === "musrif");
+  const isIncompleteProfile = isTeacherOrMusrif && (
+    !user?.nuptk || user.nuptk.trim() === "" ||
+    !user?.niy || user.niy.trim() === "" ||
+    !user?.tempatLahir || user.tempatLahir.trim() === "" ||
+    !user?.tanggalLahir || user.tanggalLahir.trim() === "" ||
+    !user?.sertifikasi
+  );
+
+  // Guard routing & Force password change & Force profile completion
   useEffect(() => {
     if (!user) {
       navigate("/login", { replace: true });
     } else if (user.requirePasswordChange && location.pathname !== "/change-password") {
       navigate("/change-password", { replace: true });
+    } else if (isIncompleteProfile && location.pathname !== "/profile" && location.pathname !== "/change-password") {
+      toast("Sesi terbatas: Anda wajib melengkapi data profil pribadi (NUPTK, NIY, TTL, Sertifikasi) terlebih dahulu agar aplikasi dapat berjalan optimal.", "error");
+      navigate("/profile", { replace: true });
     }
-  }, [user, navigate, location.pathname]);
+  }, [user, isIncompleteProfile, navigate, location.pathname, toast]);
 
   // Load active academic year
   useEffect(() => {
@@ -158,11 +172,11 @@ export const MainLayout: React.FC = () => {
   if (user.role === "musrif") {
     allowedMenuItems = [
       { name: "Dashboard", path: "/", icon: LayoutDashboard, roles: ["musrif"] },
-      { name: "Kelompok Halaqah", path: "/musrif-journals?tab=kelompok", icon: Users, roles: ["musrif"], group: "Halaqah Musrif" },
-      { name: "Jurnal Halaqah", path: "/musrif-journals?tab=jurnal", icon: BookOpen, roles: ["musrif"], group: "Halaqah Musrif" },
-      { name: "Rekap Perkembangan Santri", path: "/musrif-journals?tab=rekap", icon: Award, roles: ["musrif"], group: "Halaqah Musrif" },
-      { name: "Mutabaah Harian Saya", path: "/mutabaah-harian", icon: ClipboardList, roles: ["musrif"], group: "Halaqah Musrif" },
-      ...(isAssignedPetugas ? [{ name: "Ceklis Barang Santri", path: "/inventaris-santri", icon: ClipboardList, roles: ["musrif"], group: "Halaqah Musrif" }] : []),
+      { name: "Kelompok Halaqah", path: "/musrif-journals?tab=kelompok", icon: Users, roles: ["musrif"], group: "Halaqah Guru Halaqoh" },
+      { name: "Jurnal Halaqah", path: "/musrif-journals?tab=jurnal", icon: BookOpen, roles: ["musrif"], group: "Halaqah Guru Halaqoh" },
+      { name: "Rekap Perkembangan Santri", path: "/musrif-journals?tab=rekap", icon: Award, roles: ["musrif"], group: "Halaqah Guru Halaqoh" },
+      { name: "Mutabaah Harian Saya", path: "/mutabaah-harian", icon: ClipboardList, roles: ["musrif"], group: "Halaqah Guru Halaqoh" },
+      ...(isAssignedPetugas ? [{ name: "Ceklis Barang Santri", path: "/inventaris-santri", icon: ClipboardList, roles: ["musrif"], group: "Halaqah Guru Halaqoh" }] : []),
       { name: "Profil Saya", path: "/profile", icon: UserIcon, roles: ["musrif"], group: "Akun Saya" },
       { name: "Pengaturan Akun", path: "/change-password", icon: SettingsIcon, roles: ["musrif"], group: "Akun Saya" }
     ];
@@ -179,6 +193,7 @@ export const MainLayout: React.FC = () => {
 
   const capitalizeRole = (role: string | undefined | null) => {
     if (!role) return "";
+    if (role.toLowerCase() === "musrif") return "Guru Halaqoh";
     return role.split(" ").map(word => word ? word.charAt(0).toUpperCase() + word.slice(1) : "").join(" ");
   };
 

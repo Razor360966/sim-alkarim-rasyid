@@ -72,7 +72,7 @@ export default function SupervisionInstruments() {
     code: "",
     name: "",
     type: "Akademik" as SupervisionType,
-    targetSdmType: "Guru" as "Guru" | "Wakil Kepala Sekolah" | "Musrif" | "Tenaga Kependidikan",
+    targetSdmType: "Guru" as "Guru" | "Wakil Kepala Sekolah" | "Guru Halaqoh" | "Tenaga Kependidikan",
     description: "",
     category: "",
     academicYear: "2025/2026",
@@ -776,7 +776,7 @@ export default function SupervisionInstruments() {
                   className="w-full px-3 py-2 border border-slate-250 dark:border-zinc-800 rounded-xl bg-slate-50 dark:bg-zinc-950 text-sm focus:ring-2 focus:ring-blue-500/20 cursor-pointer"
                 >
                   <option value="Wakil Kepala Sekolah">Wakil Kepala Sekolah</option>
-                  <option value="Musrif">Musrif</option>
+                  <option value="Guru Halaqoh">Guru Halaqoh</option>
                   <option value="Tenaga Kependidikan">Tenaga Kependidikan</option>
                 </select>
                 {formErrors.targetSdmType && <p className="text-[11px] text-rose-500 mt-0.5">{formErrors.targetSdmType}</p>}

@@ -15,6 +15,13 @@ export interface UserSystem {
 
   permissions?: string[];
 
+  // Mandatory Profile Fields for Teachers / Musrifs
+  nuptk?: string;
+  niy?: string;
+  tempatLahir?: string;
+  tanggalLahir?: string;
+  sertifikasi?: "Sudah" | "Belum" | "";
+
   lastLogin: string | null; // ISO Date String
   requirePasswordChange?: boolean;
 
