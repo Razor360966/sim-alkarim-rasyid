@@ -62,6 +62,39 @@ import { Loading } from "../components/Loading";
 
 export const Dashboard: React.FC = () => {
   const { user } = useAuth();
+  
+  const getGreetingTitle = (): string => {
+    if (user?.gender === "P") {
+      return "Ustadzah";
+    }
+    if (user?.gender === "L") {
+      return "Ustadz";
+    }
+    // Fallback heuristic based on name
+    const name = (user?.displayName || user?.name || "").toLowerCase();
+    if (
+      name.includes("ustadzah") ||
+      name.includes("ibu") ||
+      name.includes("fitri") ||
+      name.includes("putri") ||
+      name.includes("anisa") ||
+      name.includes("annisa") ||
+      name.includes("siti") ||
+      name.includes("fatimah") ||
+      name.includes("aisyah") ||
+      name.includes("nur") ||
+      name.includes("indah") ||
+      name.includes("dewi") ||
+      name.endsWith("ah") ||
+      name.endsWith("ti") ||
+      name.endsWith("ni") ||
+      name.endsWith("na")
+    ) {
+      return "Ustadzah";
+    }
+    return "Ustadz";
+  };
+
   const navigate = useNavigate();
   const currentRole = user?.role?.toLowerCase() || "";
   const [viewingRole, setViewingRole] = React.useState<string>(currentRole);
@@ -913,7 +946,7 @@ export const Dashboard: React.FC = () => {
               <span>Dashboard Personal Asatidzah</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-              Ahlan Wa Sahlan, Ustadz/Ustadzah {user?.displayName}!
+              Ahlan Wa Sahlan, {getGreetingTitle()} {user?.displayName}!
             </h1>
             <p className="text-sm text-emerald-50 leading-relaxed font-light">
               SMP Alkarim Rasyid berkomitmen untuk terus meningkatkan mutu pendidikan Islami terpadu. Pantau terus jurnal harian, agenda mengajar, dan rapor kinerja akademik Anda secara real-time.
@@ -1301,7 +1334,7 @@ export const Dashboard: React.FC = () => {
               <span>Pusat Aktivitas Musrif & Pembina Asrama</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-              Ahlan Wa Sahlan, Ustadz {user?.displayName}!
+              Ahlan Wa Sahlan, {getGreetingTitle()} {user?.displayName}!
             </h1>
             <p className="text-sm text-blue-50 leading-relaxed font-light">
               Selamat datang di Dashboard Operasional Halaqah Anda. Kelola mutabaah harian, evaluasi tahfidz, tahsin, serta pantau agenda harian santri asuhan Anda secara terpusat.
@@ -1842,7 +1875,7 @@ export const Dashboard: React.FC = () => {
             <span>School Command Center</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-            Assalamu'alaikum, {user?.displayName}!
+            Assalamu'alaikum, {getGreetingTitle()} {user?.displayName}!
           </h1>
           <p className="text-sm text-blue-100 leading-relaxed font-light">
             Selamat datang di <strong>Master Data Sekolah SMP Alkarim Rasyid</strong>. Modul ini merupakan satu-satunya sumber kebenaran (Single Source of Truth) data guru, siswa, kelas, mapel, dan kalender untuk seluruh sistem lain.

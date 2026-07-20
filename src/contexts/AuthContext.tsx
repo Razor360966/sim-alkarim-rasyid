@@ -45,18 +45,44 @@ const fetchTeacherFullName = async (teacherId?: string | null, email?: string | 
   return fallbackName || "";
 };
 
-// Helper to construct fully formatted UserProfile with teacher full name and titles
+// Helper to construct fully formatted UserProfile with teacher full name, titles, and gender
 const buildProfile = async (dbUser: any): Promise<UserProfile> => {
   const roles = dbUser.roles || [dbUser.role || "operator"];
   let displayName = dbUser.name || dbUser.email.split("@")[0] || "User";
+  let gender: "L" | "P" | undefined = undefined;
   
   try {
-    const formattedName = await fetchTeacherFullName(dbUser.teacherId, dbUser.email, dbUser.name);
-    if (formattedName) {
-      displayName = formattedName;
+    let teacherData: any = null;
+    if (dbUser.teacherId) {
+      const teacherDocRef = doc(db, "teachers", dbUser.teacherId);
+      const docSnap = await getDoc(teacherDocRef);
+      if (docSnap.exists()) {
+        teacherData = docSnap.data();
+      }
+    }
+    
+    if (!teacherData && dbUser.email) {
+      const teachersRef = collection(db, "teachers");
+      const q = query(teachersRef, where("email", "==", dbUser.email), where("isDeleted", "==", false));
+      const querySnapshot = await getDocs(q);
+      if (!querySnapshot.empty) {
+        teacherData = querySnapshot.docs[0].data();
+      }
+    }
+
+    if (teacherData) {
+      const front = teacherData.frontTitle ? teacherData.frontTitle.trim() + " " : "";
+      const back = teacherData.backTitle ? ", " + teacherData.backTitle.trim() : "";
+      const name = teacherData.name || "";
+      if (name) {
+        displayName = `${front}${name}${back}`;
+      }
+      if (teacherData.gender) {
+        gender = teacherData.gender;
+      }
     }
   } catch (e) {
-    console.error("Error setting formatted name in buildProfile:", e);
+    console.error("Error setting formatted name or gender in buildProfile:", e);
   }
 
   return {
@@ -80,7 +106,8 @@ const buildProfile = async (dbUser: any): Promise<UserProfile> => {
     niy: dbUser.niy || "",
     tempatLahir: dbUser.tempatLahir || "",
     tanggalLahir: dbUser.tanggalLahir || "",
-    sertifikasi: dbUser.sertifikasi || ""
+    sertifikasi: dbUser.sertifikasi || "",
+    gender: gender
   };
 };
 
