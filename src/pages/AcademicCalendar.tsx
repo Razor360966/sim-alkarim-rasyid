@@ -475,7 +475,12 @@ export const AcademicCalendar: React.FC = () => {
       );
 
       showToast("Pengaturan pekan efektif berhasil disimpan!", "success");
-      await loadInitialData();
+      const updatedSems = await semesterService.getSemesters();
+      setSemesters(updatedSems);
+      const targetSem = updatedSems.find(s => s.id === weeksConfigSemesterId) || sem;
+      if (targetSem) {
+        await loadWeeksConfig(targetSem);
+      }
     } catch (error: any) {
       showToast("Gagal menyimpan pengaturan pekan: " + error.message, "error");
     } finally {

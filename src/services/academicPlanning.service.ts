@@ -938,41 +938,59 @@ export const academicPlanningService = {
             const storedDetails = semData.details || [];
             
             if (storedDetails.length > 0) {
-              // Ensure every month in storedDetails has a valid weeks array
+              // Ensure every month in storedDetails has a valid weeks array and correct totals
               storedDetails.forEach((storedMonth: any) => {
                 if (!Array.isArray(storedMonth.weeks)) {
                   storedMonth.weeks = [];
                 }
                 
-                // If weeks list is empty but totalWeeks > 0, reconstruct it
-                if (storedMonth.weeks.length === 0 && storedMonth.totalWeeks > 0) {
-                  const storedEffCount = Number(storedMonth.effectiveWeeks) || 0;
-                  storedMonth.weeks = Array.from({ length: storedMonth.totalWeeks }, (_, idx) => {
-                    const isEff = idx < storedEffCount;
-                    return {
+                const targetTotal = typeof storedMonth.totalWeeks === "number" && storedMonth.totalWeeks >= 0
+                  ? storedMonth.totalWeeks
+                  : storedMonth.weeks.length;
+
+                const targetEff = typeof storedMonth.effectiveWeeks === "number" && storedMonth.effectiveWeeks >= 0
+                  ? Math.min(storedMonth.effectiveWeeks, targetTotal)
+                  : storedMonth.weeks.filter((w: any) => w.isEffective).length;
+
+                // Adjust storedMonth.weeks array length to match targetTotal
+                if (storedMonth.weeks.length < targetTotal) {
+                  for (let idx = storedMonth.weeks.length; idx < targetTotal; idx++) {
+                    const isEff = idx < targetEff;
+                    storedMonth.weeks.push({
                       weekNum: idx + 1,
                       isEffective: isEff,
                       notes: isEff ? "" : (storedMonth.notes || "Minggu Tidak Efektif"),
                       dates: []
-                    };
-                  });
+                    });
+                  }
+                } else if (storedMonth.weeks.length > targetTotal) {
+                  storedMonth.weeks = storedMonth.weeks.slice(0, targetTotal);
                 }
-                
-                // Recalculate monthly totals for consistency
-                const mTotal = storedMonth.weeks.length;
-                const mEff = storedMonth.weeks.filter((w: any) => w.isEffective).length;
-                const mIneff = mTotal - mEff;
+
+                // Sync isEffective flags in storedMonth.weeks
+                storedMonth.weeks.forEach((w: any, idx: number) => {
+                  w.weekNum = idx + 1;
+                  w.isEffective = idx < targetEff;
+                });
+
+                const mIneff = Math.max(0, targetTotal - targetEff);
                 const mNotesList = storedMonth.weeks.filter((w: any) => !w.isEffective).map((w: any) => w.notes).filter(Boolean);
 
-                storedMonth.totalWeeks = mTotal;
-                storedMonth.effectiveWeeks = mEff;
+                storedMonth.totalWeeks = targetTotal;
+                storedMonth.effectiveWeeks = targetEff;
                 storedMonth.ineffectiveWeeks = mIneff;
-                storedMonth.effectiveWeeksByGrade = {
-                  "VII": mEff,
-                  "VIII": mEff,
-                  "IX": mEff
-                };
-                storedMonth.notes = mNotesList.length > 0 ? mNotesList.join(", ") : "Hari efektif belajar penuh";
+
+                if (!storedMonth.effectiveWeeksByGrade || typeof storedMonth.effectiveWeeksByGrade !== "object") {
+                  storedMonth.effectiveWeeksByGrade = {
+                    "VII": targetEff,
+                    "VIII": targetEff,
+                    "IX": targetEff
+                  };
+                }
+                
+                if (storedMonth.notes === undefined) {
+                  storedMonth.notes = mNotesList.length > 0 ? mNotesList.join(", ") : "Hari efektif belajar penuh";
+                }
               });
 
               // Merge any dynamically computed months that are not in storedDetails
