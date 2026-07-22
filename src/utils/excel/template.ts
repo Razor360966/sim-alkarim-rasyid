@@ -115,12 +115,12 @@ export function createSignatureFooter(
   sheet.mergeCells(`${startR}${r2}:${endR}${r2}`);
 
   const cellL2 = sheet.getCell(`${startL}${r2}`);
-  cellL2.value = "Kepala Sekolah";
+  cellL2.value = "Waka Kurikulum";
   cellL2.font = EXCEL_FONTS.BODY_BOLD;
   cellL2.alignment = EXCEL_ALIGNMENTS.CENTER_MIDDLE;
 
   const cellR2 = sheet.getCell(`${startR}${r2}`);
-  cellR2.value = "Waka Kurikulum";
+  cellR2.value = "Kepala Sekolah";
   cellR2.font = EXCEL_FONTS.BODY_BOLD;
   cellR2.alignment = EXCEL_ALIGNMENTS.CENTER_MIDDLE;
 
@@ -133,12 +133,12 @@ export function createSignatureFooter(
   sheet.mergeCells(`${startR}${r3}:${endR}${r3}`);
 
   const cellL3 = sheet.getCell(`${startL}${r3}`);
-  cellL3.value = hName;
+  cellL3.value = wName;
   cellL3.font = { ...EXCEL_FONTS.BODY_BOLD, underline: true };
   cellL3.alignment = EXCEL_ALIGNMENTS.CENTER_MIDDLE;
 
   const cellR3 = sheet.getCell(`${startR}${r3}`);
-  cellR3.value = wName;
+  cellR3.value = hName;
   cellR3.font = { ...EXCEL_FONTS.BODY_BOLD, underline: true };
   cellR3.alignment = EXCEL_ALIGNMENTS.CENTER_MIDDLE;
 
@@ -150,12 +150,12 @@ export function createSignatureFooter(
   sheet.mergeCells(`${startR}${r4}:${endR}${r4}`);
 
   const cellL4 = sheet.getCell(`${startL}${r4}`);
-  cellL4.value = hNiy;
+  cellL4.value = wNiy;
   cellL4.font = EXCEL_FONTS.SMALL_ITALIC;
   cellL4.alignment = EXCEL_ALIGNMENTS.CENTER_MIDDLE;
 
   const cellR4 = sheet.getCell(`${startR}${r4}`);
-  cellR4.value = wNiy;
+  cellR4.value = hNiy;
   cellR4.font = EXCEL_FONTS.SMALL_ITALIC;
   cellR4.alignment = EXCEL_ALIGNMENTS.CENTER_MIDDLE;
 

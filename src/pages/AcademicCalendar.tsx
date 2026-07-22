@@ -5,6 +5,7 @@ import { academicYearService } from "../services/academicYearService";
 import { schoolSettingsService } from "../services/schoolSettings.service";
 import { Semester, AcademicYear, AcademicReference, AcademicCalendarDay, AcademicEvent, Teacher } from "../types";
 import { teacherService } from "../services/teacherService";
+import { userService } from "../services/user.service";
 import { classService } from "../services/classService";
 import ExcelJS from "exceljs";
 import { useAuth } from "../contexts/AuthContext";
@@ -914,8 +915,11 @@ export const AcademicCalendar: React.FC = () => {
 
       showToast("Sedang menyiapkan dokumen Excel...", "info");
 
-      // Load active school settings to get accurate active school days
-      const settings = await schoolSettingsService.getSettings();
+      // Load active school settings & users to get accurate active school days & user management roles
+      const [settings, usersList] = await Promise.all([
+        schoolSettingsService.getSettings(),
+        userService.getUsers().catch(() => [])
+      ]);
 
       await exportAcademicCalendarExcel({
         currentSemester,
@@ -923,7 +927,8 @@ export const AcademicCalendar: React.FC = () => {
         weeksConfig,
         teachers,
         user,
-        schoolSettings: settings
+        schoolSettings: settings,
+        users: usersList
       });
 
       showToast("Unduh Kalender Pendidikan Excel berhasil!", "success");

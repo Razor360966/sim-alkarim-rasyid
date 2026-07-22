@@ -22,6 +22,7 @@ interface ExportKaldikParams {
   teachers: Teacher[];
   user: any;
   schoolSettings: SchoolSettings | null;
+  users?: any[];
 }
 
 const indonesianMonths = [
@@ -527,27 +528,101 @@ export async function exportAcademicCalendarExcel({
   // 7. Dynamic SIGNATURES
   currentRow += 3; // elegant separation space
 
-  const headmaster = teachers.find(t => {
-    const roles = (t as any).roles || [];
-    const type = (t.employeeType || "").toLowerCase();
-    return roles.includes("kepala_sekolah") || type.includes("kepala sekolah");
+  const formatTeacherFullName = (t: Teacher) => {
+    const front = t.frontTitle && t.frontTitle.trim() ? t.frontTitle.trim() + " " : "";
+    const back = t.backTitle && t.backTitle.trim() ? ", " + t.backTitle.trim() : "";
+    return `${front}${t.name}${back}`;
+  };
+
+  // A. Resolve Kepala Sekolah (Principal) from Manajemen Akun (users) or teachers list
+  let headmasterName = "";
+  let headmasterNiy = "";
+
+  const headmasterUser = (users || []).find(u => {
+    if (u.isDeleted) return false;
+    const rList = (u.roles || (u.role ? [u.role] : [])).map((r: string) => String(r).toLowerCase());
+    return rList.some((r: string) => r === "kepala sekolah" || r === "kepala_sekolah" || r.includes("kepala sekolah"));
   });
 
-  const wakaKurikulum = teachers.find(t => {
-    const roles = (t as any).roles || [];
-    const type = (t.employeeType || "").toLowerCase();
-    return roles.includes("wakakur") || type.includes("wakakur") || type.includes("kurikulum");
+  if (headmasterUser) {
+    const linkedTeacher = teachers.find(t => 
+      (headmasterUser.teacherId && (t.id === headmasterUser.teacherId || t.teacherId === headmasterUser.teacherId)) ||
+      (t.email && headmasterUser.email && t.email.toLowerCase() === headmasterUser.email.toLowerCase()) ||
+      (t.name && headmasterUser.name && t.name.toLowerCase() === headmasterUser.name.toLowerCase())
+    );
+
+    if (linkedTeacher) {
+      headmasterName = formatTeacherFullName(linkedTeacher);
+      headmasterNiy = linkedTeacher.niy || linkedTeacher.nuptk ? `NIY: ${linkedTeacher.niy || linkedTeacher.nuptk}` : "";
+    } else {
+      headmasterName = headmasterUser.name || headmasterUser.teacherName || "";
+      headmasterNiy = headmasterUser.niy || headmasterUser.nuptk ? `NIY: ${headmasterUser.niy || headmasterUser.nuptk}` : "";
+    }
+  }
+
+  if (!headmasterName) {
+    const headmasterTeacher = teachers.find(t => {
+      const roles = (t as any).roles || [];
+      const type = (t.employeeType || "").toLowerCase();
+      return roles.includes("kepala_sekolah") || roles.includes("kepala sekolah") || type.includes("kepala sekolah");
+    });
+    if (headmasterTeacher) {
+      headmasterName = formatTeacherFullName(headmasterTeacher);
+      headmasterNiy = headmasterTeacher.niy || headmasterTeacher.nuptk ? `NIY: ${headmasterTeacher.niy || headmasterTeacher.nuptk}` : "";
+    }
+  }
+
+  if (!headmasterName) {
+    headmasterName = "Kepala Sekolah";
+    headmasterNiy = "NIY: -";
+  } else if (!headmasterNiy) {
+    headmasterNiy = "NIY: -";
+  }
+
+  // B. Resolve Waka Kurikulum from Manajemen Akun (users) or teachers list
+  let wakaName = "";
+  let wakaNiy = "";
+
+  const wakaUser = (users || []).find(u => {
+    if (u.isDeleted) return false;
+    const rList = (u.roles || (u.role ? [u.role] : [])).map((r: string) => String(r).toLowerCase());
+    return rList.some((r: string) => r === "wakil kepala sekolah" || r === "wakakur" || r.includes("wakil kepala sekolah") || r.includes("wakakur") || r.includes("kurikulum"));
   });
 
-  const headmasterName = headmaster 
-    ? `${headmaster.frontTitle ? headmaster.frontTitle + ' ' : ''}${headmaster.name}${headmaster.backTitle ? ', ' + headmaster.backTitle : ''}`
-    : "Dr. H. Alkarim Rasyid, M.Pd.";
-  const headmasterNiy = headmaster ? `NIY: ${headmaster.niy || headmaster.nuptk || "-"}` : "NIY: 197808202005111002";
+  if (wakaUser) {
+    const linkedTeacher = teachers.find(t => 
+      (wakaUser.teacherId && (t.id === wakaUser.teacherId || t.teacherId === wakaUser.teacherId)) ||
+      (t.email && wakaUser.email && t.email.toLowerCase() === wakaUser.email.toLowerCase()) ||
+      (t.name && wakaUser.name && t.name.toLowerCase() === wakaUser.name.toLowerCase())
+    );
 
-  const wakaName = wakaKurikulum
-    ? `${wakaKurikulum.frontTitle ? wakaKurikulum.frontTitle + ' ' : ''}${wakaKurikulum.name}${wakaKurikulum.backTitle ? ', ' + wakaKurikulum.backTitle : ''}`
-    : "Ahmad Syaifuddin, S.Pd., M.P.I.";
-  const wakaNiy = wakaKurikulum ? `NIY: ${wakaKurikulum.niy || wakaKurikulum.nuptk || "-"}` : "NIY: 198511042010121003";
+    if (linkedTeacher) {
+      wakaName = formatTeacherFullName(linkedTeacher);
+      wakaNiy = linkedTeacher.niy || linkedTeacher.nuptk ? `NIY: ${linkedTeacher.niy || linkedTeacher.nuptk}` : "";
+    } else {
+      wakaName = wakaUser.name || wakaUser.teacherName || "";
+      wakaNiy = wakaUser.niy || wakaUser.nuptk ? `NIY: ${wakaUser.niy || wakaUser.nuptk}` : "";
+    }
+  }
+
+  if (!wakaName) {
+    const wakaTeacher = teachers.find(t => {
+      const roles = (t as any).roles || [];
+      const type = (t.employeeType || "").toLowerCase();
+      return roles.includes("wakakur") || roles.includes("wakil kepala sekolah") || type.includes("wakakur") || type.includes("kurikulum");
+    });
+    if (wakaTeacher) {
+      wakaName = formatTeacherFullName(wakaTeacher);
+      wakaNiy = wakaTeacher.niy || wakaTeacher.nuptk ? `NIY: ${wakaTeacher.niy || wakaTeacher.nuptk}` : "";
+    }
+  }
+
+  if (!wakaName) {
+    wakaName = "Waka Kurikulum";
+    wakaNiy = "NIY: -";
+  } else if (!wakaNiy) {
+    wakaNiy = "NIY: -";
+  }
 
   currentRow = createSignatureFooter(sheet, currentRow, {
     headmasterName,
