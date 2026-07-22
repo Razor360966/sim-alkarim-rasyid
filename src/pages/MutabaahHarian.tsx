@@ -266,8 +266,19 @@ export const MutabaahHarian: React.FC = () => {
     const emptyVals: Record<string, any> = {};
     const emptyAtts: Record<string, string> = {};
 
+    const formatPrayerValue = (val: any) => {
+      if (typeof val === "object" && val !== null) {
+        return { subuh: false, dzuhur: false, ashar: false, maghrib: false, isya: false, ...val };
+      }
+      if (val === true) {
+        return { subuh: true, dzuhur: true, ashar: true, maghrib: true, isya: true };
+      }
+      return { subuh: false, dzuhur: false, ashar: false, maghrib: false, isya: false };
+    };
+
     myApplicableIndicators.forEach((ind) => {
       if (ind.inputType === "boolean") emptyVals[ind.id] = false;
+      else if (ind.inputType === "prayers_5") emptyVals[ind.id] = { subuh: false, dzuhur: false, ashar: false, maghrib: false, isya: false };
       else if (ind.inputType === "number") emptyVals[ind.id] = 0;
       else if (ind.inputType === "percentage") emptyVals[ind.id] = 0;
       else if (ind.inputType === "choice") emptyVals[ind.id] = "Cukup";
@@ -286,15 +297,19 @@ export const MutabaahHarian: React.FC = () => {
           if (entry.date.substring(0, 7) !== targetMonth) return false;
           const val = entry.values?.[ind.id];
           if (ind.inputType === "boolean") return val === true;
+          if (ind.inputType === "prayers_5") {
+            const p = formatPrayerValue(val);
+            return p.subuh && p.dzuhur && p.ashar && p.maghrib && p.isya;
+          }
           if (ind.inputType === "number" || ind.inputType === "percentage") return (parseFloat(val) || 0) > 0;
           if (ind.inputType === "choice") return val && val !== "Cukup" && val !== "Perlu Pembinaan";
           return val && String(val).trim().length > 0;
         });
 
         if (todayVals[ind.id] !== undefined) {
-          emptyVals[ind.id] = todayVals[ind.id];
+          emptyVals[ind.id] = ind.inputType === "prayers_5" ? formatPrayerValue(todayVals[ind.id]) : todayVals[ind.id];
         } else if (sameMonthEntry && sameMonthEntry.values?.[ind.id] !== undefined) {
-          emptyVals[ind.id] = sameMonthEntry.values[ind.id];
+          emptyVals[ind.id] = ind.inputType === "prayers_5" ? formatPrayerValue(sameMonthEntry.values[ind.id]) : sameMonthEntry.values[ind.id];
         }
 
         if (todayAtts[ind.id] !== undefined) {
@@ -304,7 +319,7 @@ export const MutabaahHarian: React.FC = () => {
         }
       } else {
         if (todayVals[ind.id] !== undefined) {
-          emptyVals[ind.id] = todayVals[ind.id];
+          emptyVals[ind.id] = ind.inputType === "prayers_5" ? formatPrayerValue(todayVals[ind.id]) : todayVals[ind.id];
         }
         if (todayAtts[ind.id] !== undefined) {
           emptyAtts[ind.id] = todayAtts[ind.id];
@@ -354,6 +369,11 @@ export const MutabaahHarian: React.FC = () => {
     
     if (ind.inputType === "boolean") {
       hasValue = rawVal === true;
+    } else if (ind.inputType === "prayers_5") {
+      const pObj = typeof rawVal === "object" && rawVal !== null
+        ? rawVal
+        : (rawVal === true ? { subuh: true, dzuhur: true, ashar: true, maghrib: true, isya: true } : {});
+      hasValue = !!(pObj.subuh && pObj.dzuhur && pObj.ashar && pObj.maghrib && pObj.isya);
     } else if (ind.inputType === "number" || ind.inputType === "percentage") {
       const num = parseFloat(rawVal) || 0;
       hasValue = num >= ind.target;
@@ -412,6 +432,12 @@ export const MutabaahHarian: React.FC = () => {
 
       if (ind.inputType === "boolean") {
         compliance = rawVal === true ? 1 : 0;
+      } else if (ind.inputType === "prayers_5") {
+        const pObj = typeof rawVal === "object" && rawVal !== null
+          ? rawVal
+          : (rawVal === true ? { subuh: true, dzuhur: true, ashar: true, maghrib: true, isya: true } : {});
+        const checkedCount = ["subuh", "dzuhur", "ashar", "maghrib", "isya"].filter(p => !!pObj[p]).length;
+        compliance = checkedCount / 5;
       } else if (ind.inputType === "number") {
         const num = parseFloat(rawVal) || 0;
         compliance = ind.target > 0 ? Math.min(num / ind.target, 1) : 1;
@@ -712,6 +738,13 @@ export const MutabaahHarian: React.FC = () => {
           if (val !== undefined) {
             totalCount++;
             if (ind.inputType === "boolean" && val === true) trueCount++;
+            else if (ind.inputType === "prayers_5") {
+              if (typeof val === "object" && val !== null && val.subuh && val.dzuhur && val.ashar && val.maghrib && val.isya) {
+                trueCount++;
+              } else if (val === true) {
+                trueCount++;
+              }
+            }
             else if ((ind.inputType === "number" || ind.inputType === "percentage") && (parseFloat(val) || 0) >= ind.target) trueCount++;
             else if (ind.inputType === "choice" && (val === "Sangat Baik" || val === "Baik")) trueCount++;
             else if (ind.inputType === "text" && String(val).trim().length > 0) trueCount++;
@@ -1216,6 +1249,79 @@ export const MutabaahHarian: React.FC = () => {
                                         >
                                           Belum
                                         </button>
+                                      </div>
+                                    )}
+
+                                    {ind.inputType === "prayers_5" && (
+                                      <div className="space-y-3">
+                                        <div className="p-3 bg-slate-50/90 dark:bg-zinc-900/70 rounded-xl border border-slate-200/80 dark:border-zinc-800">
+                                          <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
+                                            {[
+                                              { id: "subuh", label: "Subuh" },
+                                              { id: "dzuhur", label: "Dzuhur" },
+                                              { id: "ashar", label: "Ashar" },
+                                              { id: "maghrib", label: "Maghrib" },
+                                              { id: "isya", label: "Isya" },
+                                            ].map((p) => {
+                                              const currentObj = typeof formValues[ind.id] === "object" && formValues[ind.id] !== null
+                                                ? formValues[ind.id]
+                                                : (formValues[ind.id] === true ? { subuh: true, dzuhur: true, ashar: true, maghrib: true, isya: true } : {});
+                                              const isChecked = !!currentObj[p.id];
+
+                                              return (
+                                                <button
+                                                  key={p.id}
+                                                  type="button"
+                                                  onClick={() => {
+                                                    const newObj = {
+                                                      subuh: false,
+                                                      dzuhur: false,
+                                                      ashar: false,
+                                                      maghrib: false,
+                                                      isya: false,
+                                                      ...currentObj,
+                                                      [p.id]: !isChecked
+                                                    };
+                                                    handleValueChange(ind.id, newObj);
+                                                  }}
+                                                  className={`flex-1 min-w-[95px] sm:min-w-[105px] py-2 px-3 rounded-lg text-xs font-bold transition-all border flex items-center justify-center gap-2 cursor-pointer select-none active:scale-98 whitespace-nowrap ${
+                                                    isChecked
+                                                      ? "bg-emerald-600 text-white border-emerald-600 shadow-xs ring-2 ring-emerald-600/20"
+                                                      : "bg-white dark:bg-zinc-800 text-slate-700 dark:text-zinc-200 border-slate-200 dark:border-zinc-700 hover:bg-slate-100 dark:hover:bg-zinc-750 hover:border-slate-300 dark:hover:border-zinc-600"
+                                                  }`}
+                                                >
+                                                  <span className={`text-xs font-black shrink-0 ${isChecked ? "text-white" : "text-emerald-600 dark:text-emerald-400"}`}>
+                                                    {isChecked ? "✓" : "○"}
+                                                  </span>
+                                                  <span className="tracking-wide font-semibold">{p.label}</span>
+                                                </button>
+                                              );
+                                            })}
+                                          </div>
+                                        </div>
+
+                                        {(() => {
+                                          const currentObj = typeof formValues[ind.id] === "object" && formValues[ind.id] !== null
+                                            ? formValues[ind.id]
+                                            : (formValues[ind.id] === true ? { subuh: true, dzuhur: true, ashar: true, maghrib: true, isya: true } : {});
+                                          const checkedCount = ["subuh", "dzuhur", "ashar", "maghrib", "isya"].filter(p => !!currentObj[p]).length;
+                                          return (
+                                            <div className="flex items-center justify-between text-[11px] px-1 text-slate-500 dark:text-zinc-400">
+                                              <span>
+                                                Status: <strong className={checkedCount === 5 ? "text-emerald-600 dark:text-emerald-400 font-bold" : "text-slate-800 dark:text-zinc-200"}>{checkedCount}/5 Waktu Terceklis</strong>
+                                              </span>
+                                              {checkedCount < 5 ? (
+                                                <span className="text-amber-600 dark:text-amber-400 font-medium text-[10px]">
+                                                  (Belum lengkap, semua 5 waktu harus diceklis)
+                                                </span>
+                                              ) : (
+                                                <span className="text-emerald-600 dark:text-emerald-400 font-medium text-[10px]">
+                                                  ✓ Shalat 5 Waktu Lengkap
+                                                </span>
+                                              )}
+                                            </div>
+                                          );
+                                        })()}
                                       </div>
                                     )}
 
@@ -1750,7 +1856,9 @@ export const MutabaahHarian: React.FC = () => {
                               {ind.category}
                             </span>
                           </td>
-                          <td className="p-4 capitalize font-semibold text-slate-500">{ind.inputType}</td>
+                          <td className="p-4 capitalize font-semibold text-slate-500">
+                            {ind.inputType === "prayers_5" ? "Shalat 5 Waktu" : ind.inputType}
+                          </td>
                           <td className="p-4 text-center font-bold text-slate-700 dark:text-zinc-300">{ind.weight}%</td>
                           <td className="p-4 text-center">
                             <button
@@ -1895,6 +2003,7 @@ export const MutabaahHarian: React.FC = () => {
                   className="w-full text-xs border border-slate-200 dark:border-zinc-750 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-200 rounded-lg p-2 focus:outline-none focus:ring-1 focus:ring-rose-500"
                 >
                   <option value="boolean">Pilihan Ya/Tidak (Boolean)</option>
+                  <option value="prayers_5">Shalat 5 Waktu (Subuh, Dzuhur, Ashar, Maghrib, Isya)</option>
                   <option value="number">Input Angka (Number)</option>
                   <option value="percentage">Input Persentase (Slider)</option>
                   <option value="choice">Pilihan Skala Sikap (Sangat Baik/Baik/Cukup)</option>

@@ -22,10 +22,10 @@ const DEFAULT_INDICATORS: Omit<SdmMutabaahIndicator, "createdAt" | "updatedAt" |
   // --- IBADAH WAJIB ---
   {
     id: "m_shalat_berjamaah",
-    name: "Shalat Berjamaah",
+    name: "Shalat Berjamaah 5 Waktu",
     category: "Ibadah Wajib",
-    inputType: "boolean",
-    target: 1,
+    inputType: "prayers_5",
+    target: 5,
     unit: "waktu",
     applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah", "tata usaha"],
     weight: 15,
@@ -39,10 +39,10 @@ const DEFAULT_INDICATORS: Omit<SdmMutabaahIndicator, "createdAt" | "updatedAt" |
   },
   {
     id: "m_shalat_tepat_waktu",
-    name: "Ketepatan Waktu Shalat",
+    name: "Ketepatan Waktu Shalat 5 Waktu",
     category: "Ibadah Wajib",
-    inputType: "boolean",
-    target: 1,
+    inputType: "prayers_5",
+    target: 5,
     unit: "waktu",
     applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah", "tata usaha"],
     weight: 15,

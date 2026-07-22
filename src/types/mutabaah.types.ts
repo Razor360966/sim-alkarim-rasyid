@@ -2,7 +2,7 @@ export interface SdmMutabaahIndicator {
   id: string;
   name: string;
   category: string; // "Ibadah" | "Pengembangan Diri" | "Administrasi" | "Kedisiplinan" | "Kepemimpinan" | "Pembinaan" | "Literasi" | "Tahfizh" | "Tahsin" | "Adab"
-  inputType: "boolean" | "number" | "percentage" | "choice" | "text" | "document" | "photo";
+  inputType: "boolean" | "number" | "percentage" | "choice" | "text" | "document" | "photo" | "prayers_5";
   target: number;
   unit: string; // e.g., "halaman", "kali", "ayat", "buku"
   applicableRoles: string[]; // ["guru", "musrif", "staff", "wakil kepala sekolah", "kepala sekolah"]
