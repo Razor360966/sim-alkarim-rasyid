@@ -114,6 +114,7 @@ export const MutabaahHarian: React.FC = () => {
   const isOperator = originalUserRoles.some(r => ["operator", "tata usaha", "admin"].includes((r || "").toLowerCase().trim())) || (user?.role || "").toLowerCase() === "operator";
 
   const canManageIndicators = isKepalaSekolah || isWakaKurikulum || isKetuaYayasan || isAdmin || isOperator;
+  const canViewAllRekap = isKepalaSekolah || isWakaKurikulum || isKetuaYayasan || isAdmin;
 
   // Active Tab synchronized with URL search parameter
   const urlTab = searchParams.get("tab") || "dashboard";
@@ -639,8 +640,21 @@ export const MutabaahHarian: React.FC = () => {
 
   // Filtered monitoring table data
   const filteredMonitoringList = useMemo(() => {
-    return allUsers
-      .filter((u) => u.status === "Aktif")
+    let sdmList = allUsers.filter((u) => u.status === "Aktif");
+    if (!canViewAllRekap) {
+      sdmList = sdmList.filter((u) => u.userId === user?.userId || u.id === user?.userId);
+      if (sdmList.length === 0 && user) {
+        sdmList = [{
+          userId: user.userId,
+          name: user.name || user.displayName || "Saya",
+          role: user.role || "guru",
+          roles: user.roles || [user.role || "guru"],
+          status: "Aktif"
+        } as any];
+      }
+    }
+
+    return sdmList
       .map((u) => {
         const uRole = u.role || "";
         const uRoles = u.roles || [uRole];
@@ -658,9 +672,9 @@ export const MutabaahHarian: React.FC = () => {
       })
       .filter((u) => {
         if (monitoredRole === "Semua") return true;
-        return u.roles.includes(monitoredRole.toLowerCase());
+        return u.roles.some((r: string) => (r || "").toLowerCase().trim() === monitoredRole.toLowerCase().trim());
       });
-  }, [allUsers, monitoringEntries, monitoredRole]);
+  }, [allUsers, monitoringEntries, monitoredRole, canViewAllRekap, user]);
 
   // --- ANALYTICS DASHBOARD CALCULATIONS ---
   const dashboardStats = useMemo(() => {
@@ -731,11 +745,27 @@ export const MutabaahHarian: React.FC = () => {
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
   const [selectedSemester, setSelectedSemester] = useState<number>(1);
 
+  // Helper to get active SDM list according to permissions
+  const activeSdmList = useMemo(() => {
+    let sdm = allUsers.filter(u => u.status === "Aktif");
+    if (!canViewAllRekap) {
+      sdm = sdm.filter(u => u.userId === user?.userId || u.id === user?.userId);
+      if (sdm.length === 0 && user) {
+        sdm = [{
+          userId: user.userId,
+          name: user.name || user.displayName || "Saya",
+          role: user.role || "guru",
+          status: "Aktif"
+        } as any];
+      }
+    }
+    return sdm;
+  }, [allUsers, canViewAllRekap, user]);
+
   // Weekly report calculations
   const weeklyReportData = useMemo(() => {
-    // Generate 4 standard weeks of the chosen month
     const yearMonth = `${selectedYear}-${String(selectedMonth).padStart(2, "0")}`;
-    const activeSdm = allUsers.filter(u => u.status === "Aktif");
+    const activeSdm = activeSdmList;
 
     return activeSdm.map(u => {
       const uEntries = globalEntries.filter(e => e.userId === u.userId && e.date.startsWith(yearMonth));
@@ -772,11 +802,11 @@ export const MutabaahHarian: React.FC = () => {
         overall
       };
     });
-  }, [globalEntries, allUsers, selectedYear, selectedMonth]);
+  }, [globalEntries, activeSdmList, selectedYear, selectedMonth]);
 
   // Monthly report calculations
   const monthlyReportData = useMemo(() => {
-    const activeSdm = allUsers.filter(u => u.status === "Aktif");
+    const activeSdm = activeSdmList;
     return activeSdm.map(u => {
       const uEntries = globalEntries.filter(e => e.userId === u.userId && e.date.startsWith(String(selectedYear)));
       const monthlyAverages = Array.from({ length: 12 }, (_, i) => {
@@ -799,11 +829,11 @@ export const MutabaahHarian: React.FC = () => {
         overall
       };
     });
-  }, [globalEntries, allUsers, selectedYear]);
+  }, [globalEntries, activeSdmList, selectedYear]);
 
   // Semester report calculations
   const semesterReportData = useMemo(() => {
-    const activeSdm = allUsers.filter(u => u.status === "Aktif");
+    const activeSdm = activeSdmList;
     const targetMonths = selectedSemester === 1 ? [7, 8, 9, 10, 11, 12] : [1, 2, 3, 4, 5, 6];
 
     return activeSdm.map(u => {
@@ -834,7 +864,7 @@ export const MutabaahHarian: React.FC = () => {
         overall
       };
     });
-  }, [globalEntries, allUsers, selectedYear, selectedSemester]);
+  }, [globalEntries, activeSdmList, selectedYear, selectedSemester]);
 
   // Export to CSV helper
   const handleExportCSV = (filename: string, headers: string[], rows: string[][]) => {
@@ -1161,102 +1191,101 @@ export const MutabaahHarian: React.FC = () => {
                                   </div>
 
                                   {/* Inputs depending on indicator inputType */}
-                                  {status !== "Dikecualikan" && status !== "Belum Waktunya" && (
-                                    <div className="pt-1">
-                                      {ind.inputType === "boolean" && (
-                                        <div className="flex items-center gap-3">
-                                          <button
-                                            type="button"
-                                            onClick={() => handleValueChange(ind.id, true)}
-                                            className={`px-3 py-1 rounded-md text-[10px] font-bold cursor-pointer transition-all ${
-                                              formValues[ind.id] === true
-                                                ? "bg-emerald-600 text-white"
-                                                : "bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300 hover:bg-slate-200 dark:hover:bg-zinc-700"
-                                            }`}
-                                          >
-                                            Sudah
-                                          </button>
-                                          <button
-                                            type="button"
-                                            onClick={() => handleValueChange(ind.id, false)}
-                                            className={`px-3 py-1 rounded-md text-[10px] font-bold cursor-pointer transition-all ${
-                                              formValues[ind.id] === false
-                                                ? "bg-red-600 text-white"
-                                                : "bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300 hover:bg-slate-200 dark:hover:bg-zinc-700"
-                                            }`}
-                                          >
-                                            Belum
-                                          </button>
-                                        </div>
-                                      )}
-
-                                      {ind.inputType === "number" && (
-                                        <div className="flex items-center gap-2">
-                                          <input
-                                            type="number"
-                                            value={formValues[ind.id] || 0}
-                                            onChange={(e) => handleValueChange(ind.id, parseFloat(e.target.value) || 0)}
-                                            className="w-20 px-2 py-1 text-xs border border-slate-200 dark:border-zinc-700 roundedbg-white dark:bg-zinc-800 rounded-lg text-slate-800 dark:text-zinc-200"
-                                          />
-                                          <span className="text-[10px] text-slate-400">
-                                            {ind.unit} (Target: {ind.target})
-                                          </span>
-                                        </div>
-                                      )}
-
-                                      {ind.inputType === "percentage" && (
-                                        <div className="flex items-center gap-2">
-                                          <input
-                                            type="range"
-                                            min="0"
-                                            max="100"
-                                            value={formValues[ind.id] || 0}
-                                            onChange={(e) => handleValueChange(ind.id, parseFloat(e.target.value) || 0)}
-                                            className="w-full h-1.5 bg-slate-200 dark:bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-rose-500"
-                                          />
-                                          <span className="text-xs font-black text-rose-600">
-                                            {formValues[ind.id] || 0}%
-                                          </span>
-                                        </div>
-                                      )}
-
-                                      {ind.inputType === "choice" && (
-                                        <select
-                                          value={formValues[ind.id] || "Cukup"}
-                                          onChange={(e) => handleValueChange(ind.id, e.target.value)}
-                                          className="text-xs border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-200 rounded-lg p-1 w-full"
+                                  <div className="pt-1">
+                                    {ind.inputType === "boolean" && (
+                                      <div className="flex items-center gap-3">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleValueChange(ind.id, true)}
+                                          className={`px-3 py-1 rounded-md text-[10px] font-bold cursor-pointer transition-all ${
+                                            formValues[ind.id] === true
+                                              ? "bg-emerald-600 text-white"
+                                              : "bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300 hover:bg-slate-200 dark:hover:bg-zinc-700"
+                                          }`}
                                         >
-                                          <option value="Sangat Baik">Sangat Baik</option>
-                                          <option value="Baik">Baik</option>
-                                          <option value="Cukup">Cukup</option>
-                                          <option value="Perlu Pembinaan">Perlu Pembinaan</option>
-                                        </select>
-                                      )}
+                                          Sudah
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleValueChange(ind.id, false)}
+                                          className={`px-3 py-1 rounded-md text-[10px] font-bold cursor-pointer transition-all ${
+                                            formValues[ind.id] === false
+                                              ? "bg-red-600 text-white"
+                                              : "bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300 hover:bg-slate-200 dark:hover:bg-zinc-700"
+                                          }`}
+                                        >
+                                          Belum
+                                        </button>
+                                      </div>
+                                    )}
 
-                                      {ind.inputType === "text" && (
+                                    {ind.inputType === "number" && (
+                                      <div className="flex items-center gap-2">
+                                        <input
+                                          type="number"
+                                          value={formValues[ind.id] !== undefined ? formValues[ind.id] : ""}
+                                          onChange={(e) => handleValueChange(ind.id, e.target.value === "" ? "" : parseFloat(e.target.value) || 0)}
+                                          className="w-20 px-2 py-1 text-xs border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 rounded-lg text-slate-800 dark:text-zinc-200"
+                                          placeholder="0"
+                                        />
+                                        <span className="text-[10px] text-slate-400">
+                                          {ind.unit} (Target: {ind.target})
+                                        </span>
+                                      </div>
+                                    )}
+
+                                    {ind.inputType === "percentage" && (
+                                      <div className="flex items-center gap-2">
+                                        <input
+                                          type="range"
+                                          min="0"
+                                          max="100"
+                                          value={formValues[ind.id] !== undefined ? formValues[ind.id] : 0}
+                                          onChange={(e) => handleValueChange(ind.id, parseFloat(e.target.value) || 0)}
+                                          className="w-full h-1.5 bg-slate-200 dark:bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-rose-500"
+                                        />
+                                        <span className="text-xs font-black text-rose-600">
+                                          {formValues[ind.id] !== undefined ? formValues[ind.id] : 0}%
+                                        </span>
+                                      </div>
+                                    )}
+
+                                    {ind.inputType === "choice" && (
+                                      <select
+                                        value={formValues[ind.id] || "Cukup"}
+                                        onChange={(e) => handleValueChange(ind.id, e.target.value)}
+                                        className="text-xs border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-200 rounded-lg p-1 w-full"
+                                      >
+                                        <option value="Sangat Baik">Sangat Baik</option>
+                                        <option value="Baik">Baik</option>
+                                        <option value="Cukup">Cukup</option>
+                                        <option value="Perlu Pembinaan">Perlu Pembinaan</option>
+                                      </select>
+                                    )}
+
+                                    {ind.inputType === "text" && (
+                                      <input
+                                        type="text"
+                                        placeholder="Tulis deskripsi / laporan..."
+                                        value={formValues[ind.id] || ""}
+                                        onChange={(e) => handleValueChange(ind.id, e.target.value)}
+                                        className="w-full text-xs border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-200 rounded-lg p-2"
+                                      />
+                                    )}
+
+                                    {/* Photo/Document simulated uploader */}
+                                    {(ind.inputType === "photo" || ind.inputType === "document") && (
+                                      <div className="space-y-1 mt-1">
                                         <input
                                           type="text"
-                                          placeholder="Tulis deskripsi / laporan..."
-                                          value={formValues[ind.id] || ""}
-                                          onChange={(e) => handleValueChange(ind.id, e.target.value)}
-                                          className="w-full text-xs border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-200 rounded-lg p-2"
+                                          placeholder={ind.inputType === "photo" ? "Paste Link Foto Pendukung..." : "Paste Link Bukti Dokumen..."}
+                                          value={formAttachments[ind.id] || ""}
+                                          onChange={(e) => handleAttachmentChange(ind.id, e.target.value)}
+                                          className="w-full text-[10px] border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-200 rounded-lg p-1.5"
                                         />
-                                      )}
-
-                                      {/* Photo/Document simulated uploader */}
-                                      {(ind.inputType === "photo" || ind.inputType === "document") && (
-                                        <div className="space-y-1 mt-1">
-                                          <input
-                                            type="text"
-                                            placeholder={ind.inputType === "photo" ? "Paste Link Foto Pendukung..." : "Paste Link Bukti Dokumen..."}
-                                            value={formAttachments[ind.id] || ""}
-                                            onChange={(e) => handleAttachmentChange(ind.id, e.target.value)}
-                                            className="w-full text-[10px] border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-200 rounded-lg p-1.5"
-                                          />
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
                               );
                             })}
@@ -1836,7 +1865,10 @@ export const MutabaahHarian: React.FC = () => {
               label="Nama Indikator"
               type="text"
               value={indicatorForm.name}
-              onChange={(val) => setIndicatorForm((p) => ({ ...p, name: val }))}
+              onChange={(e: any) => {
+                const val = e && e.target ? e.target.value : e;
+                setIndicatorForm((p) => ({ ...p, name: val }));
+              }}
               placeholder="Contoh: Shalat Berjamaah tepat waktu"
             />
 
@@ -1878,14 +1910,20 @@ export const MutabaahHarian: React.FC = () => {
                 label="Target Nilai"
                 type="number"
                 value={indicatorForm.target}
-                onChange={(val) => setIndicatorForm((p) => ({ ...p, target: parseFloat(val) || 0 }))}
+                onChange={(e: any) => {
+                  const val = e && e.target ? e.target.value : e;
+                  setIndicatorForm((p) => ({ ...p, target: val === "" ? "" : (parseFloat(val) || 0) as any }));
+                }}
                 placeholder="1"
               />
               <FormInput
                 label="Satuan Unit"
                 type="text"
                 value={indicatorForm.unit}
-                onChange={(val) => setIndicatorForm((p) => ({ ...p, unit: val }))}
+                onChange={(e: any) => {
+                  const val = e && e.target ? e.target.value : e;
+                  setIndicatorForm((p) => ({ ...p, unit: val }));
+                }}
                 placeholder="kali"
               />
             </div>
@@ -1895,7 +1933,10 @@ export const MutabaahHarian: React.FC = () => {
                 label="Bobot Nilai (%)"
                 type="number"
                 value={indicatorForm.weight}
-                onChange={(val) => setIndicatorForm((p) => ({ ...p, weight: parseFloat(val) || 0 }))}
+                onChange={(e: any) => {
+                  const val = e && e.target ? e.target.value : e;
+                  setIndicatorForm((p) => ({ ...p, weight: val === "" ? "" : (parseFloat(val) || 0) as any }));
+                }}
                 placeholder="10"
               />
               <div className="space-y-1">
@@ -1920,14 +1961,20 @@ export const MutabaahHarian: React.FC = () => {
                   label="Jam Mulai"
                   type="text"
                   value={indicatorForm.startTime || ""}
-                  onChange={(val) => setIndicatorForm((p) => ({ ...p, startTime: val }))}
+                  onChange={(e: any) => {
+                    const val = e && e.target ? e.target.value : e;
+                    setIndicatorForm((p) => ({ ...p, startTime: val }));
+                  }}
                   placeholder="04:30"
                 />
                 <FormInput
                   label="Jam Selesai"
                   type="text"
                   value={indicatorForm.endTime || ""}
-                  onChange={(val) => setIndicatorForm((p) => ({ ...p, endTime: val }))}
+                  onChange={(e: any) => {
+                    const val = e && e.target ? e.target.value : e;
+                    setIndicatorForm((p) => ({ ...p, endTime: val }));
+                  }}
                   placeholder="06:00"
                 />
               </div>
