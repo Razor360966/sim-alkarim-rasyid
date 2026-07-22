@@ -943,54 +943,42 @@ export const academicPlanningService = {
                 if (!Array.isArray(storedMonth.weeks)) {
                   storedMonth.weeks = [];
                 }
-                
-                const targetTotal = typeof storedMonth.totalWeeks === "number" && storedMonth.totalWeeks >= 0
-                  ? storedMonth.totalWeeks
-                  : storedMonth.weeks.length;
 
-                const targetEff = typeof storedMonth.effectiveWeeks === "number" && storedMonth.effectiveWeeks >= 0
-                  ? Math.min(storedMonth.effectiveWeeks, targetTotal)
-                  : storedMonth.weeks.filter((w: any) => w.isEffective).length;
-
-                // Adjust storedMonth.weeks array length to match targetTotal
-                if (storedMonth.weeks.length < targetTotal) {
-                  for (let idx = storedMonth.weeks.length; idx < targetTotal; idx++) {
-                    const isEff = idx < targetEff;
-                    storedMonth.weeks.push({
-                      weekNum: idx + 1,
-                      isEffective: isEff,
-                      notes: isEff ? "" : (storedMonth.notes || "Minggu Tidak Efektif"),
-                      dates: []
-                    });
-                  }
-                } else if (storedMonth.weeks.length > targetTotal) {
-                  storedMonth.weeks = storedMonth.weeks.slice(0, targetTotal);
+                // If storedMonth.weeks is empty but totalWeeks > 0, generate default weeks array
+                if (storedMonth.weeks.length === 0 && (storedMonth.totalWeeks > 0 || storedMonth.effectiveWeeks > 0)) {
+                  const targetTotal = typeof storedMonth.totalWeeks === "number" && storedMonth.totalWeeks > 0 ? storedMonth.totalWeeks : 4;
+                  const targetEff = typeof storedMonth.effectiveWeeks === "number" ? storedMonth.effectiveWeeks : targetTotal;
+                  storedMonth.weeks = Array.from({ length: targetTotal }, (_, idx) => ({
+                    weekNum: idx + 1,
+                    isEffective: idx < targetEff,
+                    notes: idx < targetEff ? "" : (storedMonth.notes || "Minggu Tidak Efektif"),
+                    dates: []
+                  }));
                 }
 
-                // Sync isEffective flags in storedMonth.weeks
+                // Ensure weekNum and valid isEffective flag on every week without overwriting
                 storedMonth.weeks.forEach((w: any, idx: number) => {
                   w.weekNum = idx + 1;
-                  w.isEffective = idx < targetEff;
+                  if (typeof w.isEffective !== "boolean") {
+                    w.isEffective = true;
+                  }
                 });
 
-                const mIneff = Math.max(0, targetTotal - targetEff);
+                // Calculate actual totals directly from the weeks array
+                const mTotal = storedMonth.weeks.length;
+                const mEff = storedMonth.weeks.filter((w: any) => w.isEffective).length;
+                const mIneff = mTotal - mEff;
                 const mNotesList = storedMonth.weeks.filter((w: any) => !w.isEffective).map((w: any) => w.notes).filter(Boolean);
 
-                storedMonth.totalWeeks = targetTotal;
-                storedMonth.effectiveWeeks = targetEff;
+                storedMonth.totalWeeks = mTotal;
+                storedMonth.effectiveWeeks = mEff;
                 storedMonth.ineffectiveWeeks = mIneff;
-
-                if (!storedMonth.effectiveWeeksByGrade || typeof storedMonth.effectiveWeeksByGrade !== "object") {
-                  storedMonth.effectiveWeeksByGrade = {
-                    "VII": targetEff,
-                    "VIII": targetEff,
-                    "IX": targetEff
-                  };
-                }
-                
-                if (storedMonth.notes === undefined) {
-                  storedMonth.notes = mNotesList.length > 0 ? mNotesList.join(", ") : "Hari efektif belajar penuh";
-                }
+                storedMonth.effectiveWeeksByGrade = {
+                  "VII": mEff,
+                  "VIII": mEff,
+                  "IX": mEff
+                };
+                storedMonth.notes = mNotesList.length > 0 ? mNotesList.join(", ") : "Hari efektif belajar penuh";
               });
 
               // Merge any dynamically computed months that are not in storedDetails
