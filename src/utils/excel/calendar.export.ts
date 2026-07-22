@@ -41,7 +41,8 @@ export async function exportAcademicCalendarExcel({
   weeksConfig,
   teachers,
   user,
-  schoolSettings
+  schoolSettings,
+  users
 }: ExportKaldikParams): Promise<void> {
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("Kaldik " + currentSemester.name);
