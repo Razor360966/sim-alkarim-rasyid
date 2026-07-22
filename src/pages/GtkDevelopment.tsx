@@ -5,7 +5,8 @@ import {
   Plus, Edit, Trash, Check, X, Search, Filter, Download, Printer, 
   BookOpen, Clock, Calendar, Award, AlertCircle, Settings, CheckCircle, 
   XCircle, HelpCircle, ExternalLink, ChevronDown, Sparkles, ChevronRight,
-  User, Activity, PieChart as PieIcon, LineChart as LineIcon, BarChart2
+  User, Activity, PieChart as PieIcon, LineChart as LineIcon, BarChart2,
+  FileSpreadsheet
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
@@ -13,7 +14,7 @@ import { gtkDevelopmentService } from "../services/gtkDevelopmentService";
 import { academicYearService } from "../services/academicYearService";
 import { semesterService } from "../services/semester.service";
 import { userService } from "../services/user.service";
-import { GtkDevelopmentActivity, MutabaahIndicator, MutabaahLog } from "../types";
+import { GtkDevelopmentActivity } from "../types";
 import { exportToExcel } from "../utils/exportUtils";
 import { 
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, 
@@ -49,15 +50,6 @@ export default function GtkDevelopment() {
   const [showValidationModal, setShowValidationModal] = useState(false);
   const [validatingActivity, setValidatingActivity] = useState<GtkDevelopmentActivity | null>(null);
   const [validationNotes, setValidationNotes] = useState("");
-
-  // Mutaba'ah Harian Entry States
-  const [showMutabaahModal, setShowMutabaahModal] = useState(false);
-  const [mutabaahDate, setMutabaahDate] = useState<string>(new Date().toISOString().split("T")[0]);
-  const [mutabaahValues, setMutabaahValues] = useState<{ [key: string]: 'Terlaksana' | 'Belum Terlaksana' | 'Tidak Berlaku' }>({});
-
-  // Admin Indicators Manager States
-  const [showIndicatorModal, setShowIndicatorModal] = useState(false);
-  const [newIndicatorName, setNewIndicatorName] = useState("");
 
   // --- QUERY MASTER DATA ---
   const { data: academicYears = [] } = useQuery({
@@ -104,16 +96,6 @@ export default function GtkDevelopment() {
     queryFn: () => gtkDevelopmentService.getActivities()
   });
 
-  const { data: indicators = [], isLoading: isLoadingIndicators } = useQuery({
-    queryKey: ["mutabaahIndicators"],
-    queryFn: () => gtkDevelopmentService.getMutabaahIndicators()
-  });
-
-  const { data: mutabaahLogs = [], isLoading: isLoadingLogs } = useQuery({
-    queryKey: ["mutabaahLogs"],
-    queryFn: () => gtkDevelopmentService.getMutabaahLogs()
-  });
-
   // --- MUTATIONS ---
   const createActivityMutation = useMutation({
     mutationFn: (data: Omit<GtkDevelopmentActivity, "id" | "createdAt" | "updatedAt">) => gtkDevelopmentService.createActivity(data),
@@ -136,7 +118,7 @@ export default function GtkDevelopment() {
       setEditingActivity(null);
     },
     onError: (err: any) => {
-      toast("Gagal memperbarui data: " + err.message, "error");
+      toast("Gagal diperbarui: " + err.message, "error");
     }
   });
 
@@ -163,58 +145,6 @@ export default function GtkDevelopment() {
     },
     onError: (err: any) => {
       toast("Gagal menyimpan validasi: " + err.message, "error");
-    }
-  });
-
-  const saveMutabaahMutation = useMutation({
-    mutationFn: (data: { date: string; indicators: { [key: string]: 'Terlaksana' | 'Belum Terlaksana' | 'Tidak Berlaku' } }) => {
-      if (!activeYear || !activeSemester) throw new Error("Tahun ajaran atau semester aktif belum ditentukan.");
-      return gtkDevelopmentService.saveMutabaahLog(
-        data.date,
-        currentUser?.uid || "",
-        currentUser?.displayName || "Guru",
-        activeYear.id,
-        activeSemester.id,
-        data.indicators
-      );
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["mutabaahLogs"] });
-      toast("Log Mutaba'ah Ruhiyah berhasil disimpan!", "success");
-      setShowMutabaahModal(false);
-    },
-    onError: (err: any) => {
-      toast("Gagal menyimpan log: " + err.message, "error");
-    }
-  });
-
-  const createIndicatorMutation = useMutation({
-    mutationFn: (name: string) => gtkDevelopmentService.createMutabaahIndicator(name),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["mutabaahIndicators"] });
-      toast("Indikator baru berhasil ditambahkan!", "success");
-      setNewIndicatorName("");
-    },
-    onError: (err: any) => {
-      toast("Gagal menambahkan indikator: " + err.message, "error");
-    }
-  });
-
-  const updateIndicatorMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: Partial<MutabaahIndicator> }) => gtkDevelopmentService.updateMutabaahIndicator(id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["mutabaahIndicators"] });
-    }
-  });
-
-  const deleteIndicatorMutation = useMutation({
-    mutationFn: (id: string) => gtkDevelopmentService.deleteMutabaahIndicator(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["mutabaahIndicators"] });
-      toast("Indikator berhasil dihapus!", "success");
-    },
-    onError: (err: any) => {
-      toast("Gagal menghapus indikator: " + err.message, "error");
     }
   });
 
@@ -269,36 +199,6 @@ export default function GtkDevelopment() {
     }
   };
 
-  const handleOpenMutabaahEntry = () => {
-    // Fill current date values if they exist
-    const logForDate = mutabaahLogs.find(l => l.date === mutabaahDate && l.gtkId === currentUser?.uid);
-    const initialValues: any = {};
-    indicators.forEach(ind => {
-      initialValues[ind.id] = logForDate?.indicators?.[ind.id] || 'Belum Terlaksana';
-    });
-    setMutabaahValues(initialValues);
-    setShowMutabaahModal(true);
-  };
-
-  // Keep values synced when date changes in Mutaba'ah Modal
-  useEffect(() => {
-    if (showMutabaahModal) {
-      const logForDate = mutabaahLogs.find(l => l.date === mutabaahDate && l.gtkId === currentUser?.uid);
-      const updatedValues: any = {};
-      indicators.forEach(ind => {
-        updatedValues[ind.id] = logForDate?.indicators?.[ind.id] || 'Belum Terlaksana';
-      });
-      setMutabaahValues(updatedValues);
-    }
-  }, [mutabaahDate, showMutabaahModal, mutabaahLogs, indicators, currentUser]);
-
-  const handleSaveMutabaah = () => {
-    saveMutabaahMutation.mutate({
-      date: mutabaahDate,
-      indicators: mutabaahValues
-    });
-  };
-
   // --- FILTERED DATA SETS ---
   const filteredActivities = useMemo(() => {
     return activities.filter(act => {
@@ -329,20 +229,9 @@ export default function GtkDevelopment() {
     });
   }, [activities, finalGtkFilter, selectedTypeFilter, selectedCategoryFilter, selectedStatusFilter, selectedYearFilter, selectedSemesterFilter, startDateFilter, endDateFilter, searchQuery]);
 
-  // Filter logs for stats
-  const filteredLogs = useMemo(() => {
-    return mutabaahLogs.filter(log => {
-      if (finalGtkFilter !== "ALL" && log.gtkId !== finalGtkFilter) return false;
-      if (selectedYearFilter !== "ALL" && log.academicYearId !== selectedYearFilter) return false;
-      if (selectedSemesterFilter !== "ALL" && log.semesterId !== selectedSemesterFilter) return false;
-      return true;
-    });
-  }, [mutabaahLogs, finalGtkFilter, selectedYearFilter, selectedSemesterFilter]);
-
   // --- STATS COMPUTATIONS ---
   const stats = useMemo(() => {
     const currentMonth = new Date().toISOString().substring(0, 7); // "YYYY-MM"
-    const currentYearStr = new Date().getFullYear().toString();
 
     // Activities in current month
     const thisMonthActivities = filteredActivities.filter(a => a.date.startsWith(currentMonth));
@@ -397,35 +286,6 @@ export default function GtkDevelopment() {
     };
   }, [filteredActivities, activeSemester, activeYear]);
 
-  // Mutaba'ah Stats (Calculate compliance % / stats)
-  const mutabaahStats = useMemo(() => {
-    let totalTerlaksana = 0;
-    let totalItems = 0;
-
-    filteredLogs.forEach(log => {
-      Object.entries(log.indicators).forEach(([indId, status]) => {
-        // Only count active indicators
-        const ind = indicators.find(i => i.id === indId);
-        if (ind && ind.isActive) {
-          if (status === 'Terlaksana') {
-            totalTerlaksana++;
-            totalItems++;
-          } else if (status === 'Belum Terlaksana') {
-            totalItems++;
-          }
-        }
-      });
-    });
-
-    const complianceRate = totalItems > 0 ? Math.round((totalTerlaksana / totalItems) * 100) : 0;
-
-    return {
-      totalTerlaksana,
-      totalItems,
-      complianceRate
-    };
-  }, [filteredLogs, indicators]);
-
   // --- EXPORT TO EXCEL ---
   const handleExportExcel = () => {
     const dataToExport = filteredActivities.map((act, index) => ({
@@ -472,50 +332,30 @@ export default function GtkDevelopment() {
               <Sparkles className="h-4 w-4 text-amber-400 animate-pulse" />
             </div>
             <h1 className="text-2xl font-black text-white tracking-tight">
-              Pusat Pengembangan Diri & Mutaba'ah GTK
+              Pusat Pengembangan Kompetensi Diri GTK
             </h1>
             <p className="text-xs text-slate-400 font-medium">
-              Pencatatan kompetensi, pelatihan, sertifikasi, serta evaluasi diri spiritualitas pendidik secara berkala.
+              Pencatatan kompetensi profesional, digital, pedagogik, dan keikutsertaan pelatihan asatidzah secara berkala.
             </p>
           </div>
           
           <div className="flex flex-wrap gap-2">
-            {isGuruOrStaff && (
-              <button
-                onClick={handleOpenMutabaahEntry}
-                className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all hover:scale-105 cursor-pointer shadow-md shadow-emerald-950/20"
-              >
-                <Activity className="h-3.5 w-3.5" />
-                Isi Mutaba'ah
-              </button>
-            )}
-            
             {(isAdmin || isGuruOrStaff) && (
               <button
                 onClick={() => {
                   setEditingActivity(null);
                   setShowAddEditModal(true);
                 }}
-                className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition-all hover:scale-105 cursor-pointer shadow-md shadow-blue-950/20"
+                className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all hover:scale-105 cursor-pointer shadow-md shadow-indigo-950/20"
               >
                 <Plus className="h-4 w-4" />
                 Tambah Kegiatan
               </button>
             )}
-
-            {isAdmin && (
-              <button
-                onClick={() => setShowIndicatorModal(true)}
-                className="flex items-center gap-1.5 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
-              >
-                <Settings className="h-3.5 w-3.5" />
-                Kelola Mutaba'ah
-              </button>
-            )}
           </div>
         </div>
 
-        {/* Info pill active state */}
+        {/* Info active state */}
         <div className="flex flex-wrap items-center gap-4 mt-6 pt-4 border-t border-slate-800/60 text-xs">
           <div className="flex items-center gap-1.5 text-slate-300">
             <Clock className="h-4 w-4 text-indigo-400" />
@@ -563,7 +403,7 @@ export default function GtkDevelopment() {
         })}
       </div>
 
-      {/* --- FILTER CONTROL BAR (Applicable for multiple tabs) --- */}
+      {/* --- FILTER CONTROL BAR --- */}
       <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-850 p-4 rounded-2xl shadow-xs space-y-4 print:hidden">
         <div className="flex items-center gap-2 border-b border-slate-100 dark:border-zinc-800 pb-2">
           <Filter className="h-4 w-4 text-indigo-500" />
@@ -612,19 +452,19 @@ export default function GtkDevelopment() {
                 "Menjadi Peserta", "Menulis Artikel", "Menulis Buku", "Menyusun Modul Ajar", 
                 "Membuat Media Pembelajaran", "Belajar Mandiri", "Studi Banding", 
                 "Pelatihan Kepemimpinan", "Kegiatan Pengembangan Profesional lainnya"
-              ].map(t => (
-                <option key={t} value={t}>{t}</option>
+              ].map(type => (
+                <option key={type} value={type}>{type}</option>
               ))}
             </select>
           </div>
 
-          {/* Kategori Pengembangan */}
+          {/* Kategori */}
           <div className="space-y-1">
-            <label className="text-[10px] font-black uppercase text-slate-500 dark:text-zinc-400">Kategori</label>
+            <label className="text-[10px] font-black uppercase text-slate-500 dark:text-zinc-400">Kategori Kegiatan</label>
             <select
               value={selectedCategoryFilter}
               onChange={e => setSelectedCategoryFilter(e.target.value)}
-              className="w-full px-3 py-1.5 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl text-xs font-semibold focus:outline-hidden focus:border-indigo-500"
+              className="w-full px-3 py-1.5 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl text-xs font-semibold focus:outline-hidden"
             >
               <option value="ALL">Semua Kategori</option>
               {["Internal Sekolah", "Dinas Pendidikan", "Kementerian Agama", "MGMP", "Organisasi Profesi", "Perguruan Tinggi", "Lembaga Swasta", "Mandiri", "Lainnya"].map(c => (
@@ -633,116 +473,82 @@ export default function GtkDevelopment() {
             </select>
           </div>
 
-          {/* Status Kegiatan */}
+          {/* Status */}
           <div className="space-y-1">
-            <label className="text-[10px] font-black uppercase text-slate-500 dark:text-zinc-400">Status</label>
+            <label className="text-[10px] font-black uppercase text-slate-500 dark:text-zinc-400">Status Validasi</label>
             <select
               value={selectedStatusFilter}
               onChange={e => setSelectedStatusFilter(e.target.value)}
-              className="w-full px-3 py-1.5 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl text-xs font-semibold focus:outline-hidden focus:border-indigo-500"
+              className="w-full px-3 py-1.5 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl text-xs font-semibold focus:outline-hidden"
             >
               <option value="ALL">Semua Status</option>
-              <option value="Direncanakan">Direncanakan</option>
-              <option value="Sedang Berlangsung">Sedang Berlangsung</option>
-              <option value="Selesai">Selesai</option>
+              <option value="Disetujui">Disetujui</option>
+              <option value="Pending">Pending</option>
             </select>
           </div>
+        </div>
 
-          {/* Academic Year Filter */}
+        {/* Search input & date range filters */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2">
           <div className="space-y-1">
-            <label className="text-[10px] font-black uppercase text-slate-500 dark:text-zinc-400">Tahun Pelajaran</label>
-            <select
-              value={selectedYearFilter}
-              onChange={e => setSelectedYearFilter(e.target.value)}
-              className="w-full px-3 py-1.5 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl text-xs font-semibold focus:outline-hidden focus:border-indigo-500"
-            >
-              <option value="ALL">Semua Tahun Pelajaran</option>
-              {academicYears.map(y => (
-                <option key={y.id} value={y.id}>{y.name}</option>
-              ))}
-            </select>
+            <label className="text-[10px] font-black uppercase text-slate-500">Pencarian Kata Kunci</label>
+            <div className="relative">
+              <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Cari judul kegiatan, penyelenggara..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-3 py-1.5 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl text-xs focus:outline-hidden"
+              />
+            </div>
           </div>
 
-          {/* Semester Filter */}
           <div className="space-y-1">
-            <label className="text-[10px] font-black uppercase text-slate-500 dark:text-zinc-400">Semester</label>
-            <select
-              value={selectedSemesterFilter}
-              onChange={e => setSelectedSemesterFilter(e.target.value)}
-              className="w-full px-3 py-1.5 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl text-xs font-semibold focus:outline-hidden focus:border-indigo-500"
-            >
-              <option value="ALL">Semua Semester</option>
-              {semesters.filter(s => selectedYearFilter === "ALL" || s.academicYearId === selectedYearFilter).map(s => (
-                <option key={s.id} value={s.id}>{s.name} ({s.academicYearName})</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Date Range Start */}
-          <div className="space-y-1">
-            <label className="text-[10px] font-black uppercase text-slate-500 dark:text-zinc-400">Rentang Tanggal Mulai</label>
+            <label className="text-[10px] font-black uppercase text-slate-500">Tanggal Mulai</label>
             <input
               type="date"
               value={startDateFilter}
               onChange={e => setStartDateFilter(e.target.value)}
-              className="w-full px-3 py-1.5 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl text-xs font-semibold focus:outline-hidden focus:border-indigo-500"
+              className="w-full px-3 py-1.5 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl text-xs"
             />
           </div>
 
-          {/* Date Range End */}
           <div className="space-y-1">
-            <label className="text-[10px] font-black uppercase text-slate-500 dark:text-zinc-400">Rentang Tanggal Selesai</label>
+            <label className="text-[10px] font-black uppercase text-slate-500">Tanggal Selesai</label>
             <input
               type="date"
               value={endDateFilter}
               onChange={e => setEndDateFilter(e.target.value)}
-              className="w-full px-3 py-1.5 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl text-xs font-semibold focus:outline-hidden focus:border-indigo-500"
+              className="w-full px-3 py-1.5 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl text-xs"
             />
           </div>
         </div>
 
-        {/* Quick Search */}
-        <div className="flex flex-col sm:flex-row gap-3 pt-2">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Cari berdasarkan nama kegiatan, penyelenggara, atau nama GTK..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl text-xs font-semibold focus:outline-hidden focus:border-indigo-500"
-            />
-          </div>
-
-          <div className="flex gap-2">
-            <button
-              onClick={handleExportExcel}
-              className="flex items-center justify-center gap-1.5 px-4 py-2 border border-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400 rounded-xl text-xs font-bold transition-all cursor-pointer"
-            >
-              <Download className="h-4 w-4" />
-              Excel
-            </button>
-            <button
-              onClick={handlePrint}
-              className="flex items-center justify-center gap-1.5 px-4 py-2 border border-slate-300 dark:border-zinc-800 hover:bg-slate-100 dark:hover:bg-zinc-800 text-slate-600 dark:text-zinc-300 rounded-xl text-xs font-bold transition-all cursor-pointer"
-            >
-              <Printer className="h-4 w-4" />
-              Cetak PDF
-            </button>
-          </div>
+        {/* Buttons for Print / Excel Export */}
+        <div className="flex justify-end gap-2 border-t border-slate-100 dark:border-zinc-800 pt-3">
+          <button
+            onClick={handlePrint}
+            className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 dark:border-zinc-800 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer"
+          >
+            <Printer className="h-3.5 w-3.5" />
+            Cetak Laporan
+          </button>
+          <button
+            onClick={handleExportExcel}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs cursor-pointer shadow"
+          >
+            <FileSpreadsheet className="h-3.5 w-3.5" />
+            Ekspor Excel
+          </button>
         </div>
       </div>
 
-      {/* --- RENDER TAB CONTENT --- */}
-
-      {/* 1. DASHBOARD TAB */}
+      {/* --- DASHBOARD TAB --- */}
       {activeTab === "dashboard" && (
         <div className="space-y-6">
-          
-          {/* Top Info Cards Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             
-            {/* Card 1: Activities Month */}
             <div className="bg-white dark:bg-zinc-900 p-5 rounded-2xl border border-slate-200 dark:border-zinc-850 shadow-xs space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-black uppercase text-slate-500 dark:text-zinc-400">Kegiatan Bulan Ini</span>
@@ -756,7 +562,6 @@ export default function GtkDevelopment() {
               </div>
             </div>
 
-            {/* Card 2: Activities Semester */}
             <div className="bg-white dark:bg-zinc-900 p-5 rounded-2xl border border-slate-200 dark:border-zinc-850 shadow-xs space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-black uppercase text-slate-500 dark:text-zinc-400">Kegiatan Semester Ini</span>
@@ -770,7 +575,6 @@ export default function GtkDevelopment() {
               </div>
             </div>
 
-            {/* Card 3: Activities Year */}
             <div className="bg-white dark:bg-zinc-900 p-5 rounded-2xl border border-slate-200 dark:border-zinc-850 shadow-xs space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-black uppercase text-slate-500 dark:text-zinc-400">Kegiatan Tahun Ini</span>
@@ -784,25 +588,22 @@ export default function GtkDevelopment() {
               </div>
             </div>
 
-            {/* Card 4: Active GTK */}
             <div className="bg-white dark:bg-zinc-900 p-5 rounded-2xl border border-slate-200 dark:border-zinc-850 shadow-xs space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-[10px] font-black uppercase text-slate-500 dark:text-zinc-400">GTK Aktif Terlibat</span>
+                <span className="text-[10px] font-black uppercase text-slate-500 dark:text-zinc-400">Total Jam Pelatihan (JP)</span>
                 <div className="h-8 w-8 rounded-lg bg-amber-50 dark:bg-amber-950/30 flex items-center justify-center text-amber-600 dark:text-amber-400">
-                  <User className="h-4 w-4" />
+                  <Clock className="h-4 w-4" />
                 </div>
               </div>
               <div className="space-y-0.5">
-                <div className="text-2xl font-black text-slate-900 dark:text-white">{stats.activeGtkCount}</div>
-                <div className="text-[10px] text-slate-400 font-semibold uppercase">Jumlah GTK Terdaftar: {users.length}</div>
+                <div className="text-2xl font-black text-slate-900 dark:text-white">{stats.totalJp} JP</div>
+                <div className="text-[10px] text-slate-400 font-semibold uppercase">Akumulasi Jam Pendidik</div>
               </div>
             </div>
           </div>
 
-          {/* Graphical Analytics Section */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             
-            {/* Chart: MoM activity */}
             <div className="lg:col-span-2 bg-white dark:bg-zinc-900 p-5 rounded-3xl border border-slate-200 dark:border-zinc-850 shadow-xs space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 dark:border-zinc-800 pb-2">
                 <div className="flex items-center gap-2">
@@ -832,7 +633,6 @@ export default function GtkDevelopment() {
               </div>
             </div>
 
-            {/* Chart: Categories Distribution */}
             <div className="bg-white dark:bg-zinc-900 p-5 rounded-3xl border border-slate-200 dark:border-zinc-850 shadow-xs space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 dark:border-zinc-800 pb-2">
                 <div className="flex items-center gap-2">
@@ -865,7 +665,6 @@ export default function GtkDevelopment() {
                         </PieChart>
                       </ResponsiveContainer>
                     </div>
-                    {/* Legends list */}
                     <div className="grid grid-cols-2 gap-2 text-[10px] font-bold text-slate-500 border-t border-slate-50 dark:border-zinc-850 pt-2">
                       {stats.categoryDistribution.slice(0, 4).map((entry, index) => (
                         <div key={entry.name} className="flex items-center gap-1 truncate">
@@ -884,58 +683,17 @@ export default function GtkDevelopment() {
               </div>
             </div>
           </div>
-
-          {/* Mutaba'ah Ruhiyah Overview Summary */}
-          <div className="bg-gradient-to-br from-indigo-50 to-blue-50 dark:from-zinc-900/40 dark:to-zinc-950/20 p-6 rounded-3xl border border-indigo-100 dark:border-zinc-850 flex flex-col md:flex-row items-center justify-between gap-6">
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <div className="h-7 w-7 rounded-lg bg-indigo-100 dark:bg-zinc-800 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
-                  <Activity className="h-4 w-4" />
-                </div>
-                <h3 className="font-extrabold text-slate-800 dark:text-zinc-200">Indeks Kepatuhan Mutaba'ah Ruhiyah Guru</h3>
-              </div>
-              <p className="text-xs text-slate-500 dark:text-zinc-400 max-w-xl font-medium">
-                Indeks persentase keterlaksanaan amalan sunnah harian pendidik (shalat berjamaah, dhuha, tilawah, muraja'ah, dll) yang terekam pada periode ini.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-4 bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-indigo-100/50 dark:border-zinc-800 shadow-md">
-              <div className="relative h-16 w-16 flex items-center justify-center bg-indigo-50 dark:bg-zinc-800 rounded-full text-lg font-black text-indigo-700 dark:text-indigo-400">
-                {mutabaahStats.complianceRate}%
-              </div>
-              <div>
-                <div className="text-xs font-black uppercase text-slate-400">Amalan Terlaksana</div>
-                <div className="text-lg font-extrabold text-slate-800 dark:text-zinc-200">
-                  {mutabaahStats.totalTerlaksana} <span className="text-xs font-semibold text-slate-400">/ {mutabaahStats.totalItems} amalan</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
         </div>
       )}
 
-      {/* 2. DATA PENGEMBANGAN DIRI TAB */}
+      {/* --- DATA PENGEMBANGAN DIRI TAB --- */}
       {activeTab === "data" && (
         <div className="bg-white dark:bg-zinc-900 p-6 rounded-3xl border border-slate-200 dark:border-zinc-850 shadow-xs space-y-4">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-150 dark:border-zinc-800 pb-3">
             <div>
               <h3 className="text-sm font-bold text-slate-800 dark:text-zinc-200">Daftar Log Aktivitas Pengembangan Diri</h3>
-              <p className="text-xs text-slate-500">Mencatat, menyunting, dan menyetujui seluruh aktivitas peningkatan kompetensi.</p>
+              <p className="text-xs text-slate-500">Mencatat, menyunting, dan menyetujui seluruh aktivitas peningkatan kompetensi profesional pendidik.</p>
             </div>
-            
-            {isGuruOrStaff && (
-              <button
-                onClick={() => {
-                  setEditingActivity(null);
-                  setShowAddEditModal(true);
-                }}
-                className="flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
-              >
-                <Plus className="h-4 w-4" />
-                Tambah Kegiatan
-              </button>
-            )}
           </div>
 
           <div className="overflow-x-auto">
@@ -1012,7 +770,6 @@ export default function GtkDevelopment() {
                       </td>
                       <td className="p-3">
                         <div className="flex justify-center items-center gap-1">
-                          {/* Validate (Only for Kepsek or Admin) */}
                           {(isKepsek || isAdmin) && (
                             <button
                               onClick={() => {
@@ -1027,7 +784,6 @@ export default function GtkDevelopment() {
                             </button>
                           )}
 
-                          {/* Edit / Delete: Admin, or Guru if same account and not validated */}
                           {(isAdmin || (isGuruOrStaff && act.gtkId === currentUser?.uid && !act.isValidated)) && (
                             <>
                               <button
@@ -1064,99 +820,42 @@ export default function GtkDevelopment() {
         </div>
       )}
 
-      {/* 3. REKAP BULANAN TAB */}
+      {/* --- REKAP BULANAN TAB --- */}
       {activeTab === "monthly" && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          
-          {/* Monthly Recap statistics & Indicators status */}
-          <div className="lg:col-span-2 bg-white dark:bg-zinc-900 p-6 rounded-3xl border border-slate-200 dark:border-zinc-850 shadow-xs space-y-6">
-            <div className="border-b border-slate-150 dark:border-zinc-800 pb-3">
-              <h3 className="text-sm font-bold text-slate-800 dark:text-zinc-200">Rekapitulasi Amalan Mutaba'ah Ruhiyah Bulanan</h3>
-              <p className="text-xs text-slate-500">Persentase keberhasilan pelaksanaan indikator spiritualitas guru bulan berjalan.</p>
-            </div>
-
-            {/* Compliance Stats Bar */}
-            <div className="flex items-center gap-4 bg-slate-50 dark:bg-zinc-950/40 p-4 rounded-2xl border border-slate-200 dark:border-zinc-850">
-              <div className="text-3xl font-black text-indigo-600 dark:text-indigo-400">{mutabaahStats.complianceRate}%</div>
-              <div className="flex-1 space-y-1">
-                <div className="h-2.5 w-full bg-slate-200 dark:bg-zinc-800 rounded-full overflow-hidden">
-                  <div className="h-full bg-indigo-600 dark:bg-indigo-400 transition-all duration-500" style={{ width: `${mutabaahStats.complianceRate}%` }}></div>
-                </div>
-                <div className="flex justify-between text-[10px] font-bold text-slate-400 uppercase">
-                  <span>Persentase Keberhasilan</span>
-                  <span>{mutabaahStats.totalTerlaksana} Terlaksana dari {mutabaahStats.totalItems} target amalan harian</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Displaying detailed compliance rate per indicator */}
-            <div className="space-y-4">
-              <h4 className="text-xs font-black uppercase text-slate-400">Analisis Keterlaksanaan per Amalan</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {indicators.filter(ind => ind.isActive).map(ind => {
-                  const logsWithThisInd = filteredLogs.filter(log => log.indicators?.[ind.id]);
-                  const terlaksanaCount = logsWithThisInd.filter(log => log.indicators[ind.id] === 'Terlaksana').length;
-                  const validCount = logsWithThisInd.filter(log => log.indicators[ind.id] !== 'Tidak Berlaku').length;
-                  const pct = validCount > 0 ? Math.round((terlaksanaCount / validCount) * 100) : 0;
-
-                  return (
-                    <div key={ind.id} className="bg-slate-50/50 dark:bg-zinc-950/10 p-3 rounded-xl border border-slate-150 dark:border-zinc-850 flex items-center justify-between">
-                      <div className="space-y-1">
-                        <div className="text-xs font-extrabold text-slate-800 dark:text-zinc-200">{ind.name}</div>
-                        <div className="text-[10px] text-slate-400 font-semibold">{terlaksanaCount} Hari Terlaksana</div>
-                      </div>
-                      <div className={`px-2 py-1 rounded-lg text-xs font-black ${pct >= 75 ? 'bg-emerald-50 text-emerald-700' : pct >= 50 ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700'}`}>
-                        {pct}%
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+        <div className="bg-white dark:bg-zinc-900 p-6 rounded-3xl border border-slate-200 dark:border-zinc-850 shadow-xs space-y-6">
+          <div className="border-b border-slate-150 dark:border-zinc-800 pb-3">
+            <h3 className="text-sm font-bold text-slate-800 dark:text-zinc-200">Akumulasi Pelatihan Bulanan Guru</h3>
+            <p className="text-xs text-slate-500">Menganalisis pencapaian jam pelatihan asatidzah setiap bulan sepanjang tahun pelajaran.</p>
           </div>
 
-          {/* Quick Stats sidebar for monthly activities */}
-          <div className="bg-white dark:bg-zinc-900 p-6 rounded-3xl border border-slate-200 dark:border-zinc-850 shadow-xs space-y-6">
-            <div className="border-b border-slate-150 dark:border-zinc-800 pb-3">
-              <h3 className="text-sm font-bold text-slate-800 dark:text-zinc-200">Aktivitas Bulan Ini</h3>
-              <p className="text-xs text-slate-500">Rekap cepat bulan berjalan.</p>
+          <div className="space-y-4 divide-y divide-slate-100 dark:divide-zinc-800">
+            <div className="flex justify-between items-center py-2.5">
+              <span className="text-xs font-bold text-slate-500 dark:text-zinc-400">Total Kegiatan Bulan Ini</span>
+              <span className="text-base font-black text-slate-800 dark:text-white">{stats.thisMonthCount} Kegiatan</span>
             </div>
-
-            <div className="space-y-4 divide-y divide-slate-100 dark:divide-zinc-800">
-              <div className="flex justify-between items-center py-2.5">
-                <span className="text-xs font-bold text-slate-500 dark:text-zinc-400">Total Kegiatan</span>
-                <span className="text-base font-black text-slate-800 dark:text-white">{stats.thisMonthCount}</span>
-              </div>
-              <div className="flex justify-between items-center py-2.5">
-                <span className="text-xs font-bold text-slate-500 dark:text-zinc-400">Total Jam Pelatihan (JP)</span>
-                <span className="text-base font-black text-slate-800 dark:text-white">{stats.totalJp} JP</span>
-              </div>
-              <div className="flex justify-between items-center py-2.5">
-                <span className="text-xs font-bold text-slate-500 dark:text-zinc-400">Sertifikat Diperoleh</span>
-                <span className="text-base font-black text-slate-800 dark:text-white">{stats.totalCertificates}</span>
-              </div>
+            <div className="flex justify-between items-center py-2.5">
+              <span className="text-xs font-bold text-slate-500 dark:text-zinc-400">Total Jam Pelatihan (JP) Kumulatif</span>
+              <span className="text-base font-black text-slate-800 dark:text-white">{stats.totalJp} JP</span>
             </div>
-
-            {/* Quick Motivator Info */}
-            <div className="bg-blue-50/50 dark:bg-blue-950/10 p-4 rounded-2xl border border-blue-100 dark:border-blue-900/40 text-xs text-blue-800 dark:text-blue-300 font-medium">
-              Aktivitas pengembangan diri terdokumentasi akan ditarik ke dalam Rapor Kinerja SDM pada akhir semester. Pastikan seluruh berkas pendukung divalidasi oleh Kepala Sekolah.
+            <div className="flex justify-between items-center py-2.5">
+              <span className="text-xs font-bold text-slate-500 dark:text-zinc-400">Sertifikat Resmi Terunggah</span>
+              <span className="text-base font-black text-slate-800 dark:text-white">{stats.totalCertificates} Sertifikat</span>
             </div>
           </div>
         </div>
       )}
 
-      {/* 4. REKAP SEMESTER TAB */}
+      {/* --- REKAP SEMESTER TAB --- */}
       {activeTab === "semester" && (
         <div className="space-y-6">
           <div className="bg-white dark:bg-zinc-900 p-6 rounded-3xl border border-slate-200 dark:border-zinc-850 shadow-xs space-y-4">
             <div className="border-b border-slate-150 dark:border-zinc-800 pb-3">
-              <h3 className="text-sm font-bold text-slate-800 dark:text-zinc-200">Kinerja Pengembangan Diri Semester Aktif</h3>
-              <p className="text-xs text-slate-500">Evaluasi kumulatif keterlibatan GTK pada Semester {activeSemester?.name}.</p>
+              <h3 className="text-sm font-bold text-slate-800 dark:text-zinc-200">Rapor Kinerja Pengembangan Diri Semester Aktif</h3>
+              <p className="text-xs text-slate-500">Evaluasi kumulatif keterlibatan asatidzah pada Semester {activeSemester?.name}.</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               
-              {/* Semester Stats Summary */}
               <div className="space-y-4">
                 <h4 className="text-xs font-black uppercase text-slate-400">Rangkuman Indikator</h4>
                 <div className="bg-slate-50 dark:bg-zinc-950/40 p-4 rounded-2xl border border-slate-200 dark:border-zinc-850 space-y-4">
@@ -1172,14 +871,9 @@ export default function GtkDevelopment() {
                     <span className="text-xs font-bold text-slate-600 dark:text-zinc-400">Sertifikat Terkumpul</span>
                     <span className="text-base font-black text-slate-900 dark:text-white">{stats.totalCertificates}</span>
                   </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs font-bold text-slate-600 dark:text-zinc-400">Kepatuhan Ruhiyah</span>
-                    <span className="text-base font-black text-indigo-600 dark:text-indigo-400">{mutabaahStats.complianceRate}%</span>
-                  </div>
                 </div>
               </div>
 
-              {/* Chart: Category distribution Recharts */}
               <div className="md:col-span-2 space-y-4">
                 <h4 className="text-xs font-black uppercase text-slate-400">Kontribusi Kategori Pelatihan</h4>
                 <div className="h-44">
@@ -1206,16 +900,16 @@ export default function GtkDevelopment() {
         </div>
       )}
 
-      {/* 5. REKAP TAHUNAN TAB */}
+      {/* --- REKAP TAHUNAN TAB --- */}
       {activeTab === "yearly" && (
         <div className="space-y-6">
           <div className="bg-white dark:bg-zinc-900 p-6 rounded-3xl border border-slate-200 dark:border-zinc-850 shadow-xs space-y-4">
             <div className="border-b border-slate-150 dark:border-zinc-800 pb-3">
-              <h3 className="text-sm font-bold text-slate-800 dark:text-zinc-200">Laporan Tahunan Pengembangan Diri GTK</h3>
-              <p className="text-xs text-slate-500">Grafik akumulasi dan analisis keaktifan tahunan guru di SMP Alkarim Rasyid.</p>
+              <h3 className="text-sm font-bold text-slate-800 dark:text-zinc-200">Laporan Tahunan Kinerja Profesional GTK</h3>
+              <p className="text-xs text-slate-500">Grafik akumulasi dan analisis keaktifan tahunan guru di Pondok Pesantren.</p>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="bg-slate-50 dark:bg-zinc-950/40 p-5 rounded-2xl border border-slate-200 dark:border-zinc-850 text-center">
                 <div className="text-xs font-bold text-slate-400 uppercase">Total Kegiatan Setahun</div>
                 <div className="text-3xl font-black text-slate-900 dark:text-white mt-1">{stats.thisYearCount}</div>
@@ -1227,50 +921,12 @@ export default function GtkDevelopment() {
                 <div className="text-3xl font-black text-slate-900 dark:text-white mt-1">{stats.totalJp} JP</div>
                 <div className="text-[10px] text-slate-400 mt-1 font-semibold">Akumulasi Jam</div>
               </div>
-
-              <div className="bg-slate-50 dark:bg-zinc-950/40 p-5 rounded-2xl border border-slate-200 dark:border-zinc-850 text-center">
-                <div className="text-xs font-bold text-slate-400 uppercase">Indeks Mutaba'ah Rata-Rata</div>
-                <div className="text-3xl font-black text-indigo-600 dark:text-indigo-400 mt-1">{mutabaahStats.complianceRate}%</div>
-                <div className="text-[10px] text-slate-400 mt-1 font-semibold">Keterlaksanaan Spiritual</div>
-              </div>
             </div>
-
-            {/* Comparison Semester-on-Semester */}
-            <div className="bg-slate-50/50 dark:bg-zinc-950/10 p-5 rounded-3xl border border-slate-150 dark:border-zinc-850 space-y-4">
-              <h4 className="text-xs font-black uppercase text-slate-400">Perbandingan Antar Semester</h4>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-slate-200 dark:border-zinc-800 space-y-2">
-                  <div className="text-xs font-extrabold text-slate-800 dark:text-zinc-200">Semester Ganjil (S1)</div>
-                  <div className="flex justify-between text-xs text-slate-500 font-medium">
-                    <span>Jumlah Kegiatan:</span>
-                    <span className="font-bold text-slate-900 dark:text-white">
-                      {activities.filter(a => semesters.find(s => s.id === a.semesterId)?.code === "S1").length}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-slate-200 dark:border-zinc-800 space-y-2">
-                  <div className="text-xs font-extrabold text-slate-800 dark:text-zinc-200">Semester Genap (S2)</div>
-                  <div className="flex justify-between text-xs text-slate-500 font-medium">
-                    <span>Jumlah Kegiatan:</span>
-                    <span className="font-bold text-slate-900 dark:text-white">
-                      {activities.filter(a => semesters.find(s => s.id === a.semesterId)?.code === "S2").length}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
           </div>
         </div>
       )}
 
-      {/* =========================================================================
-          MODALS SECTION
-          ========================================================================= */}
-
-      {/* 1. ADD / EDIT ACTIVITY MODAL */}
+      {/* --- ADD / EDIT ACTIVITY DIALOG MODAL --- */}
       {showAddEditModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
           <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-3xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto space-y-4 shadow-2xl">
@@ -1295,7 +951,7 @@ export default function GtkDevelopment() {
                     name="date"
                     required
                     defaultValue={editingActivity ? editingActivity.date : new Date().toISOString().split("T")[0]}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl focus:outline-hidden focus:border-indigo-500"
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl"
                   />
                 </div>
 
@@ -1306,7 +962,7 @@ export default function GtkDevelopment() {
                     name="status"
                     required
                     defaultValue={editingActivity ? editingActivity.status : "Selesai"}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl focus:outline-hidden focus:border-indigo-500"
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl"
                   >
                     <option value="Direncanakan">Direncanakan</option>
                     <option value="Sedang Berlangsung">Sedang Berlangsung</option>
@@ -1321,7 +977,7 @@ export default function GtkDevelopment() {
                     name="type"
                     required
                     defaultValue={editingActivity ? editingActivity.type : "Workshop"}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl focus:outline-hidden focus:border-indigo-500"
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl"
                   >
                     {[
                       "Workshop", "Seminar", "Webinar", "Diklat", "Pelatihan", "In House Training (IHT)", 
@@ -1346,7 +1002,7 @@ export default function GtkDevelopment() {
                     required
                     placeholder="Contoh: Implementasi Deep Learning dalam Pembelajaran"
                     defaultValue={editingActivity ? editingActivity.title : ""}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl focus:outline-hidden focus:border-indigo-500"
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl"
                   />
                 </div>
 
@@ -1359,7 +1015,7 @@ export default function GtkDevelopment() {
                     required
                     placeholder="Contoh: Dinas Pendidikan"
                     defaultValue={editingActivity ? editingActivity.organizer : ""}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl focus:outline-hidden focus:border-indigo-500"
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl"
                   />
                 </div>
 
@@ -1370,7 +1026,7 @@ export default function GtkDevelopment() {
                     name="category"
                     required
                     defaultValue={editingActivity ? editingActivity.category : "Internal Sekolah"}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl focus:outline-hidden focus:border-indigo-500"
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl"
                   >
                     {["Internal Sekolah", "Dinas Pendidikan", "Kementerian Agama", "MGMP", "Organisasi Profesi", "Perguruan Tinggi", "Lembaga Swasta", "Mandiri", "Lainnya"].map(c => (
                       <option key={c} value={c}>{c}</option>
@@ -1386,7 +1042,7 @@ export default function GtkDevelopment() {
                     name="location"
                     placeholder="Contoh: Aula Sekolah / Online via Zoom"
                     defaultValue={editingActivity ? editingActivity.location : ""}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl focus:outline-hidden focus:border-indigo-500"
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl"
                   />
                 </div>
 
@@ -1398,7 +1054,7 @@ export default function GtkDevelopment() {
                     name="hours"
                     placeholder="Contoh: 32"
                     defaultValue={editingActivity ? editingActivity.hours : ""}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl focus:outline-hidden focus:border-indigo-500"
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl"
                   />
                 </div>
 
@@ -1410,7 +1066,7 @@ export default function GtkDevelopment() {
                     name="certificateNumber"
                     placeholder="Contoh: 120/DIK/2026"
                     defaultValue={editingActivity ? editingActivity.certificateNumber : ""}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl focus:outline-hidden focus:border-indigo-500"
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl"
                   />
                 </div>
 
@@ -1422,7 +1078,7 @@ export default function GtkDevelopment() {
                     name="evidenceLink"
                     placeholder="Google Drive, OneDrive, Photos link"
                     defaultValue={editingActivity ? editingActivity.evidenceLink : ""}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl focus:outline-hidden focus:border-indigo-500"
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl"
                   />
                 </div>
 
@@ -1434,7 +1090,7 @@ export default function GtkDevelopment() {
                     placeholder="Tulis ringkasan singkat hasil kegiatan atau materi yang diperoleh"
                     rows={3}
                     defaultValue={editingActivity ? editingActivity.notes : ""}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl focus:outline-hidden focus:border-indigo-500"
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl"
                   ></textarea>
                 </div>
 
@@ -1451,7 +1107,7 @@ export default function GtkDevelopment() {
                 <button
                   type="submit"
                   disabled={createActivityMutation.isPending || updateActivityMutation.isPending}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold transition-all cursor-pointer shadow-md"
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold transition-all cursor-pointer shadow-md"
                 >
                   {(createActivityMutation.isPending || updateActivityMutation.isPending) ? "Menyimpan..." : "Simpan Log"}
                 </button>
@@ -1461,7 +1117,7 @@ export default function GtkDevelopment() {
         </div>
       )}
 
-      {/* 2. VALIDATION DIALOG MODAL (FOR KEPSEK) */}
+      {/* --- VALIDATION DIALOG MODAL --- */}
       {showValidationModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
           <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-3xl p-6 w-full max-w-md space-y-4 shadow-2xl">
@@ -1486,7 +1142,7 @@ export default function GtkDevelopment() {
                   onChange={e => setValidationNotes(e.target.value)}
                   placeholder="Tulis catatan persetujuan atau catatan perbaikan..."
                   rows={3}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl focus:outline-hidden focus:border-indigo-500 text-slate-800 dark:text-zinc-200"
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-indigo-500 rounded-xl focus:outline-hidden focus:border-indigo-500 text-slate-800 dark:text-zinc-200"
                 ></textarea>
               </div>
             </div>
@@ -1504,157 +1160,6 @@ export default function GtkDevelopment() {
               >
                 Setujui / Validasi
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 3. MUTABA'AH ENTRY MODAL */}
-      {showMutabaahModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
-          <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-3xl p-6 w-full max-w-lg max-h-[85vh] overflow-y-auto space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-zinc-800 pb-2">
-              <div className="flex items-center gap-1.5">
-                <Activity className="h-4.5 w-4.5 text-emerald-600" />
-                <h3 className="font-black text-base text-slate-900 dark:text-white">Isi Log Mutaba'ah Ruhiyah</h3>
-              </div>
-              <button onClick={() => setShowMutabaahModal(false)} className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-zinc-850 cursor-pointer">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="space-y-4 text-xs font-bold text-slate-700 dark:text-zinc-300">
-              {/* Date Input */}
-              <div className="space-y-1">
-                <label className="text-[10px] font-black uppercase text-slate-500">Pilih Tanggal Evaluasi</label>
-                <input
-                  type="date"
-                  value={mutabaahDate}
-                  onChange={e => setMutabaahDate(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl focus:outline-hidden focus:border-indigo-500"
-                />
-              </div>
-
-              {/* Indicator List */}
-              <div className="space-y-3 max-h-[45vh] overflow-y-auto pr-1">
-                {indicators.filter(ind => ind.isActive).map(ind => (
-                  <div key={ind.id} className="p-3 bg-slate-50 dark:bg-zinc-950/40 border border-slate-150 dark:border-zinc-800 rounded-xl space-y-2">
-                    <div className="font-extrabold text-slate-800 dark:text-zinc-200">{ind.name}</div>
-                    
-                    <div className="flex gap-4">
-                      {['Terlaksana', 'Belum Terlaksana', 'Tidak Berlaku'].map(status => (
-                        <label key={status} className="flex items-center gap-1.5 cursor-pointer text-[11px]">
-                          <input
-                            type="radio"
-                            name={`ind_${ind.id}`}
-                            checked={mutabaahValues[ind.id] === status}
-                            onChange={() => setMutabaahValues({ ...mutabaahValues, [ind.id]: status as any })}
-                            className="text-indigo-600 focus:ring-indigo-500 h-3.5 w-3.5"
-                          />
-                          <span>{status}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="flex justify-end gap-2 border-t border-slate-100 dark:border-zinc-800 pt-3">
-                <button
-                  onClick={() => setShowMutabaahModal(false)}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-zinc-800 dark:hover:bg-zinc-750 rounded-xl"
-                >
-                  Batal
-                </button>
-                <button
-                  onClick={handleSaveMutabaah}
-                  disabled={saveMutabaahMutation.isPending}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl shadow-md cursor-pointer"
-                >
-                  {saveMutabaahMutation.isPending ? "Menyimpan..." : "Simpan Evaluasi"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 4. MANAGE MUTABA'AH INDICATORS MODAL (ADMIN ONLY) */}
-      {showIndicatorModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
-          <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-3xl p-6 w-full max-w-lg space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-zinc-800 pb-2">
-              <h3 className="font-black text-base text-slate-900 dark:text-white">Kelola Indikator Mutaba'ah Ruhiyah</h3>
-              <button onClick={() => setShowIndicatorModal(false)} className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-zinc-850 cursor-pointer">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="space-y-4 text-xs font-bold text-slate-700 dark:text-zinc-300">
-              {/* Add New Indicator Form */}
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="Tambahkan amalan harian baru..."
-                  value={newIndicatorName}
-                  onChange={e => setNewIndicatorName(e.target.value)}
-                  className="flex-1 px-3 py-2 bg-slate-50 dark:bg-zinc-950/40 border border-slate-200 dark:border-zinc-800 rounded-xl focus:outline-hidden focus:border-indigo-500 text-slate-800 dark:text-zinc-200"
-                />
-                <button
-                  onClick={() => {
-                    if (newIndicatorName.trim()) {
-                      createIndicatorMutation.mutate(newIndicatorName.trim());
-                    }
-                  }}
-                  className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl shadow-xs cursor-pointer flex items-center justify-center"
-                >
-                  <Plus className="h-4 w-4" />
-                </button>
-              </div>
-
-              {/* Indicator Lists */}
-              <div className="space-y-2 max-h-[40vh] overflow-y-auto pr-1">
-                {isLoadingIndicators ? (
-                  <div className="p-4 text-center text-slate-400">Memuat indikator...</div>
-                ) : (
-                  indicators.map(ind => (
-                    <div key={ind.id} className="flex items-center justify-between p-2.5 bg-slate-50/50 dark:bg-zinc-950/10 border border-slate-150 dark:border-zinc-800 rounded-xl">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={ind.isActive}
-                          onChange={e => updateIndicatorMutation.mutate({ id: ind.id, data: { isActive: e.target.checked } })}
-                          className="text-indigo-600 focus:ring-indigo-500 h-4 w-4 rounded-md cursor-pointer"
-                        />
-                        <span className={`text-xs font-bold ${ind.isActive ? 'text-slate-800 dark:text-zinc-100' : 'text-slate-400 line-through'}`}>
-                          {ind.name}
-                        </span>
-                      </div>
-
-                      <button
-                        onClick={() => {
-                          if (confirm("Hapus indikator ini permanen dari sistem? Logs lama amalan ini akan tetap tersimpan.")) {
-                            deleteIndicatorMutation.mutate(ind.id);
-                          }
-                        }}
-                        className="p-1 text-rose-500 hover:bg-rose-50 rounded-lg cursor-pointer"
-                        title="Hapus Indikator"
-                      >
-                        <Trash className="h-4 w-4" />
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-
-              <div className="flex justify-end border-t border-slate-100 dark:border-zinc-800 pt-3">
-                <button
-                  onClick={() => setShowIndicatorModal(false)}
-                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white dark:bg-white dark:text-zinc-900 rounded-xl shadow-md"
-                >
-                  Selesai
-                </button>
-              </div>
             </div>
           </div>
         </div>

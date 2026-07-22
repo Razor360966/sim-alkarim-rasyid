@@ -87,6 +87,7 @@ export interface UserProfile {
   tanggalLahir?: string;
   sertifikasi?: "Sudah" | "Belum" | "";
   gender?: Gender;
+  haidStatus?: "Normal" | "Haid";
 }
 
 export interface CurriculumMatrix {

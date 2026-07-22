@@ -44,7 +44,8 @@ const AVAILABLE_ROLES = [
   { id: "kepala sekolah", name: "Kepala Sekolah" },
   { id: "wakil kepala sekolah", name: "Wakil Kepala Sekolah" },
   { id: "guru", name: "Guru" },
-  { id: "musrif", name: "Guru Halaqoh" },
+  { id: "guru halaqoh", name: "Guru Halaqoh" },
+  { id: "musrif", name: "Musrif (Asrama)" },
   { id: "tata usaha", name: "Tata Usaha / Tendik" }
 ];
 
@@ -107,7 +108,7 @@ export default function Users() {
 
   const teacherOrMusrifUsers = (users || []).filter(u => {
     const rolesList = u.roles || [u.role];
-    return rolesList.some(r => r === "guru" || r === "musrif");
+    return rolesList.some(r => r === "guru" || r === "musrif" || r === "guru halaqoh" || r === "guru_halaqoh");
   });
 
   const filteredProfileUsers = teacherOrMusrifUsers.filter(u => {
@@ -930,6 +931,9 @@ const confirmDeleteAccount = async () => {
         return "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-900/50";
       case "musrif":
         return "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-900/50";
+      case "guru halaqoh":
+      case "guru_halaqoh":
+        return "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-900/50";
       case "tata usaha":
         return "bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-950/30 dark:text-teal-300 dark:border-teal-900/50";
       case "operator":
@@ -943,7 +947,8 @@ const confirmDeleteAccount = async () => {
 
   const capitalizeRole = (role: string | undefined | null) => {
     if (!role) return "";
-    if (role.toLowerCase() === "musrif") return "Guru Halaqoh";
+    if (role.toLowerCase() === "musrif") return "Musrif (Asrama)";
+    if (role.toLowerCase() === "guru halaqoh" || role.toLowerCase() === "guru_halaqoh") return "Guru Halaqoh";
     return role.split(" ").map(word => word ? word.charAt(0).toUpperCase() + word.slice(1) : "").join(" ");
   };
 
@@ -1493,7 +1498,7 @@ const confirmDeleteAccount = async () => {
             <div>
               <span className="font-bold block text-sm">Prinsip Keamanan Prioritas & Kombinasi Multi-Role</span>
               <p className="mt-1 leading-relaxed">
-                SMP Alkarim Rasyid menerapkan otorisasi fleksibel multi-peran (misalnya Guru yang juga menjabat Musrif atau Wakil Kepala Sekolah). Urutan prioritas peran tertinggi akan secara otomatis menentukan visual dashboard utama, sedangkan semua otorisasi modul dikombinasikan secara kumulatif untuk memudahkan operasional.
+                SMP Alkarim Rasyid menerapkan otorisasi fleksibel multi-peran (misalnya Guru yang juga menjabat Guru Halaqoh atau Wakil Kepala Sekolah). Urutan prioritas peran tertinggi akan secara otomatis menentukan visual dashboard utama, sedangkan semua otorisasi modul dikombinasikan secara kumulatif untuk memudahkan operasional.
               </p>
             </div>
           </div>
@@ -1525,10 +1530,10 @@ const confirmDeleteAccount = async () => {
                 permissions: ["Dashboard Mandiri Guru", "Input Jurnal Mengajar Harian", "Modul Pengembangan Diri GTK", "Pencapaian Kinerja"]
               },
               { 
-                role: "Musrif", 
+                role: "Guru Halaqoh", 
                 priority: 5, 
                 desc: "Mengasuh dan membina kedisiplinan serta ibadah di asrama (Halaqah).",
-                permissions: ["Dashboard Musrif", "Input Jurnal Halaqah", "Data Riwayat Kehadiran", "Profil Mandiri"]
+                permissions: ["Dashboard Guru Halaqoh", "Input Jurnal Halaqah", "Data Riwayat Kehadiran", "Profil Mandiri"]
               },
               { 
                 role: "Tenaga Kependidikan / TU", 

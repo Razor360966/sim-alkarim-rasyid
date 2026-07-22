@@ -427,10 +427,15 @@ export const SemesterProgram: React.FC = () => {
   // - As soon as a filled week's JP is fully removed (back to 0), it stops
   //   counting toward "used" and another empty week becomes selectable again.
   const isWeekEffective = (monthName: string, weekIndex: number, weekKey: string): boolean => {
+    // 1. If we have the master weeks list in weeksAnalysis, use the exact isEffective value of that week!
+    const m = weeksAnalysis?.details?.find((detail: any) => detail.month === monthName || detail.month.startsWith(monthName));
+    if (m && Array.isArray(m.weeks) && m.weeks[weekIndex]) {
+      return m.weeks[weekIndex].isEffective === true;
+    }
+
     const quota = isManualWeeks
       ? customWeeksConfig.find(m => m.month === monthName)?.effectiveWeeks
       : (() => {
-          const m = weeksAnalysis?.details?.find((m: any) => m.month === monthName);
           return m ? (m.effectiveWeeksByGrade?.[gradeLevel] ?? m.effectiveWeeks) : undefined;
         })();
 

@@ -31,12 +31,13 @@ import {
   Shield,
   ClipboardList,
   FileCheck,
-  FileText
+  FileText,
+  Heart
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
 export const MainLayout: React.FC = () => {
-  const { user, logout, switchRole } = useAuth();
+  const { user, logout, switchRole, activeRole } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const { toast } = useToast();
   const location = useLocation();
@@ -45,8 +46,58 @@ export const MainLayout: React.FC = () => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [activeYear, setActiveYear] = useState<AcademicYear | null>(null);
+  const [showRoleSelector, setShowRoleSelector] = useState(false);
 
-  const isTeacherOrMusrif = user && (user.role === "guru" || user.role === "musrif");
+  const userRoles = user?.roles || (user?.role ? [user.role] : []);
+
+  useEffect(() => {
+    if (user && userRoles.length > 1) {
+      const chosen = sessionStorage.getItem(`role_chosen_${user.uid}`);
+      if (!chosen) {
+        setShowRoleSelector(true);
+      }
+    }
+  }, [user, userRoles.length]);
+
+  const handleSelectRole = (selectedRole: string) => {
+    switchRole(selectedRole);
+    sessionStorage.setItem(`role_chosen_${user.uid}`, "true");
+    setShowRoleSelector(false);
+  };
+
+  const getRoleCardInfo = (roleName: string) => {
+    const name = roleName.toLowerCase();
+    if (name === "guru halaqoh" || name === "guru_halaqoh") {
+      return {
+        icon: BookOpen,
+        desc: "Kelola bimbingan Al-Qur'an (Tahsin/Tahfidz) dan bimbingan halaqah santri."
+      };
+    }
+    if (name === "musrif") {
+      return {
+        icon: School,
+        desc: "Fokus pada kepengasuhan asrama, kedisiplinan, adab, akhlak, dan kehidupan asrama santri."
+      };
+    }
+    if (name === "guru") {
+      return {
+        icon: GraduationCap,
+        desc: "Fokus pada proses belajar mengajar akademik, perangkat ajar, dan jurnal kelas."
+      };
+    }
+    if (name === "admin" || name === "operator") {
+      return {
+        icon: Shield,
+        desc: "Akses penuh konfigurasi sistem, data master sekolah, dan manajemen akun pengguna."
+      };
+    }
+    return {
+      icon: Users,
+      desc: `Akses ruang kerja ${roleName} untuk memantau dan mengelola aktivitas sekolah.`
+    };
+  };
+
+  const isTeacherOrMusrif = user && (user.role === "guru" || user.role === "musrif" || user.role === "guru halaqoh");
   const isIncompleteProfile = isTeacherOrMusrif && (
     !user?.nuptk || user.nuptk.trim() === "" ||
     !user?.niy || user.niy.trim() === "" ||
@@ -126,12 +177,21 @@ export const MainLayout: React.FC = () => {
     { name: "Rekap Semester", path: "/gtk-development?tab=semester", icon: Grid, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "tata usaha", "operator", "ketua yayasan"], group: "Pengembangan Diri GTK" },
     { name: "Rekap Tahunan", path: "/gtk-development?tab=yearly", icon: Award, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "tata usaha", "operator", "ketua yayasan"], group: "Pengembangan Diri GTK" },
 
+    // Mutabaah GTK
+    { name: "Dashboard Mutabaah", path: "/mutabaah-harian?tab=dashboard", icon: LayoutDashboard, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "tata usaha", "operator", "ketua yayasan"], group: "Mutabaah GTK" },
+    { name: "Isi Mutabaah Saya", path: "/mutabaah-harian?tab=saya", icon: Heart, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "tata usaha", "operator", "ketua yayasan"], group: "Mutabaah GTK" },
+    { name: "Rekap Harian", path: "/mutabaah-harian?tab=daily", icon: CalendarDays, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "tata usaha", "operator", "ketua yayasan"], group: "Mutabaah GTK" },
+    { name: "Rekap Mingguan", path: "/mutabaah-harian?tab=weekly", icon: ClipboardList, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "tata usaha", "operator", "ketua yayasan"], group: "Mutabaah GTK" },
+    { name: "Rekap Bulanan", path: "/mutabaah-harian?tab=monthly", icon: Calendar, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "tata usaha", "operator", "ketua yayasan"], group: "Mutabaah GTK" },
+    { name: "Rekap Semester", path: "/mutabaah-harian?tab=semester", icon: Grid, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "tata usaha", "operator", "ketua yayasan"], group: "Mutabaah GTK" },
+    { name: "Rekap Tahunan", path: "/mutabaah-harian?tab=yearly", icon: Award, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "tata usaha", "operator", "ketua yayasan"], group: "Mutabaah GTK" },
+    { name: "Pengaturan Indikator", path: "/mutabaah-harian?tab=pengaturan", icon: SettingsIcon, roles: ["admin", "kepala sekolah", "wakil kepala sekolah", "operator"], group: "Mutabaah GTK" },
+
     // Supervisi
     { name: "Supervisi Akademik", path: "/supervision-academic", icon: Shield, roles: ["admin", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan", "guru"], group: "Supervisi" },
     { name: "Supervisi Manajerial", path: "/supervision-managerial", icon: Shield, roles: ["admin", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan"], group: "Supervisi" },
     { name: "Instrumen Supervisi", path: "/supervision-instruments", icon: FileCheck, roles: ["admin", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan"], group: "Supervisi" },
 
-    { name: "Mutabaah Harian", path: "/mutabaah-harian", icon: ClipboardList, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "tata usaha", "operator", "ketua yayasan"], group: "Evaluasi Kinerja" },
     { name: "Rapor Kinerja SDM", path: "/sdm-performance", icon: Award, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Evaluasi Kinerja" },
 
     { name: "Profil Saya", path: "/profile", icon: UserIcon, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Akun Saya" },
@@ -141,10 +201,8 @@ export const MainLayout: React.FC = () => {
   ];
 
   // Filter menu based on the currently selected active role workspace
-  const userRoles = user.roles || [user.role];
-  
-  const getMappedActiveRoles = (activeRole: string): string[] => {
-    const role = (activeRole || "").toLowerCase();
+  const getMappedActiveRoles = (activeRoleVal: string): string[] => {
+    const role = (activeRoleVal || "").toLowerCase();
     if (role === "wakakur" || role === "wakasis" || role === "wakasarpras" || role === "wakil kepala sekolah") {
       return ["wakil kepala sekolah"];
     }
@@ -160,7 +218,7 @@ export const MainLayout: React.FC = () => {
     return [role];
   };
 
-  const activeMappedRoles = getMappedActiveRoles(user.role || "");
+  const activeMappedRoles = getMappedActiveRoles(activeRole || user.role || "");
   let allowedMenuItems = menuItems.filter(item => {
     if (item.path === "/inventaris-santri") {
       const isAdminUser = activeMappedRoles.includes("admin") || activeMappedRoles.includes("operator");
@@ -172,13 +230,24 @@ export const MainLayout: React.FC = () => {
   if (user.role === "musrif") {
     allowedMenuItems = [
       { name: "Dashboard", path: "/", icon: LayoutDashboard, roles: ["musrif"] },
-      { name: "Kelompok Halaqah", path: "/musrif-journals?tab=kelompok", icon: Users, roles: ["musrif"], group: "Halaqah Guru Halaqoh" },
-      { name: "Jurnal Halaqah", path: "/musrif-journals?tab=jurnal", icon: BookOpen, roles: ["musrif"], group: "Halaqah Guru Halaqoh" },
-      { name: "Rekap Perkembangan Santri", path: "/musrif-journals?tab=rekap", icon: Award, roles: ["musrif"], group: "Halaqah Guru Halaqoh" },
-      { name: "Mutabaah Harian Saya", path: "/mutabaah-harian", icon: ClipboardList, roles: ["musrif"], group: "Halaqah Guru Halaqoh" },
-      ...(isAssignedPetugas ? [{ name: "Ceklis Barang Santri", path: "/inventaris-santri", icon: ClipboardList, roles: ["musrif"], group: "Halaqah Guru Halaqoh" }] : []),
+      { name: "Kelompok Asrama", path: "/musrif-journals?tab=kelompok", icon: Users, roles: ["musrif"], group: "Halaqah Musrif (Asrama)" },
+      { name: "Jurnal Asrama", path: "/musrif-journals?tab=jurnal", icon: BookOpen, roles: ["musrif"], group: "Halaqah Musrif (Asrama)" },
+      { name: "Rekap Perkembangan Santri", path: "/musrif-journals?tab=rekap", icon: Award, roles: ["musrif"], group: "Halaqah Musrif (Asrama)" },
+      { name: "Mutabaah Harian Saya", path: "/mutabaah-harian", icon: ClipboardList, roles: ["musrif"], group: "Halaqah Musrif (Asrama)" },
+      ...(isAssignedPetugas ? [{ name: "Ceklis Barang Santri", path: "/inventaris-santri", icon: ClipboardList, roles: ["musrif"], group: "Halaqah Musrif (Asrama)" }] : []),
       { name: "Profil Saya", path: "/profile", icon: UserIcon, roles: ["musrif"], group: "Akun Saya" },
       { name: "Pengaturan Akun", path: "/change-password", icon: SettingsIcon, roles: ["musrif"], group: "Akun Saya" }
+    ];
+  } else if (user.role === "guru halaqoh") {
+    allowedMenuItems = [
+      { name: "Dashboard", path: "/", icon: LayoutDashboard, roles: ["guru halaqoh"] },
+      { name: "Kelompok Halaqah", path: "/musrif-journals?tab=kelompok", icon: Users, roles: ["guru halaqoh"], group: "Halaqah Al-Qur'an (Tahfidz)" },
+      { name: "Jurnal Halaqah", path: "/musrif-journals?tab=jurnal", icon: BookOpen, roles: ["guru halaqoh"], group: "Halaqah Al-Qur'an (Tahfidz)" },
+      { name: "Rekap Halaqah", path: "/musrif-journals?tab=rekap", icon: Award, roles: ["guru halaqoh"], group: "Halaqah Al-Qur'an (Tahfidz)" },
+      { name: "Mutabaah Harian Saya", path: "/mutabaah-harian", icon: ClipboardList, roles: ["guru halaqoh"], group: "Halaqah Al-Qur'an (Tahfidz)" },
+      ...(isAssignedPetugas ? [{ name: "Ceklis Barang Santri", path: "/inventaris-santri", icon: ClipboardList, roles: ["guru halaqoh"], group: "Halaqah Al-Qur'an (Tahfidz)" }] : []),
+      { name: "Profil Saya", path: "/profile", icon: UserIcon, roles: ["guru halaqoh"], group: "Akun Saya" },
+      { name: "Pengaturan Akun", path: "/change-password", icon: SettingsIcon, roles: ["guru halaqoh"], group: "Akun Saya" }
     ];
   }
 
@@ -193,7 +262,8 @@ export const MainLayout: React.FC = () => {
 
   const capitalizeRole = (role: string | undefined | null) => {
     if (!role) return "";
-    if (role.toLowerCase() === "musrif") return "Guru Halaqoh";
+    if (role.toLowerCase() === "musrif") return "Musrif";
+    if (role.toLowerCase() === "guru halaqoh" || role.toLowerCase() === "guru_halaqoh") return "Guru Halaqoh";
     return role.split(" ").map(word => word ? word.charAt(0).toUpperCase() + word.slice(1) : "").join(" ");
   };
 
@@ -453,6 +523,13 @@ export const MainLayout: React.FC = () => {
                     </button>
                   );
                 })}
+                <button
+                  onClick={() => setShowRoleSelector(true)}
+                  className="p-1 text-slate-500 hover:text-slate-800 dark:text-zinc-400 dark:hover:text-zinc-200 rounded-lg hover:bg-slate-200/50 dark:hover:bg-zinc-800 cursor-pointer"
+                  title="Pilih Mode Kerja"
+                >
+                  <Grid className="h-4 w-4" />
+                </button>
               </div>
             )}
 
@@ -507,6 +584,77 @@ export const MainLayout: React.FC = () => {
           <div className="text-[10px] text-slate-400 dark:text-zinc-500 italic font-medium hidden sm:block">Sistem dibangun dengan Clean Architecture & TypeScript</div>
         </footer>
       </div>
+
+      {/* Role Selection Modal (Pilih Mode Kerja) */}
+      <AnimatePresence>
+        {showRoleSelector && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 rounded-3xl p-6 sm:p-8 max-w-2xl w-full shadow-2xl space-y-6 relative max-h-[90vh] overflow-y-auto"
+            >
+              <div className="text-center space-y-2">
+                <div className="h-12 w-12 rounded-2xl bg-blue-100 dark:bg-zinc-800 flex items-center justify-center text-blue-600 dark:text-blue-400 mx-auto">
+                  <Grid className="h-6 w-6" />
+                </div>
+                <h3 className="text-lg sm:text-xl font-extrabold text-slate-950 dark:text-white">Pilih Mode Kerja</h3>
+                <p className="text-xs sm:text-sm text-slate-500 dark:text-zinc-400">
+                  Anda terdaftar dengan beberapa peran dalam sistem. Silakan pilih mode kerja Anda untuk sesi ini:
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {userRoles.map((r: string) => {
+                  const info = getRoleCardInfo(r);
+                  const isCurrentActive = user.role === r;
+                  return (
+                    <button
+                      key={r}
+                      onClick={() => handleSelectRole(r)}
+                      className={`p-5 rounded-2xl border text-left transition-all hover:scale-[1.01] flex flex-col justify-between h-40 cursor-pointer ${
+                        isCurrentActive
+                          ? "bg-blue-50/50 border-blue-500/55 dark:bg-blue-950/10 dark:border-blue-500/50"
+                          : "bg-slate-50 border-slate-150 hover:bg-slate-100 dark:bg-zinc-850 dark:border-zinc-800 dark:hover:bg-zinc-800"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between w-full">
+                        <div className={`p-2.5 rounded-xl ${
+                          isCurrentActive
+                            ? "bg-blue-500 text-white"
+                            : "bg-slate-200 text-slate-700 dark:bg-zinc-800 dark:text-zinc-300"
+                        }`}>
+                          <info.icon className="h-5 w-5" />
+                        </div>
+                        {isCurrentActive && (
+                          <span className="text-[10px] font-bold bg-blue-500 text-white px-2 py-0.5 rounded-md uppercase">Aktif</span>
+                        )}
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-sm text-slate-800 dark:text-white capitalize">{capitalizeRole(r)}</h4>
+                        <p className="text-[11px] text-slate-400 dark:text-zinc-500 mt-1 line-clamp-2 leading-relaxed">{info.desc}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Close button if they already have an active role chosen in the session */}
+              {sessionStorage.getItem(`role_chosen_${user.uid}`) === "true" && (
+                <div className="flex justify-end pt-2">
+                  <button
+                    onClick={() => setShowRoleSelector(false)}
+                    className="px-4 py-2 border border-slate-250 hover:bg-slate-100 dark:border-zinc-800 dark:hover:bg-zinc-850 text-xs font-bold text-slate-600 dark:text-zinc-400 rounded-xl cursor-pointer"
+                  >
+                    Tutup
+                  </button>
+                </div>
+              )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
     </div>
   );

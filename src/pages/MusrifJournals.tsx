@@ -12,12 +12,15 @@ import { semesterService } from "../services/semester.service";
 import { studentService } from "../services/studentService";
 import { classService } from "../services/classService";
 import { halaqahGroupService } from "../services/halaqahGroupService";
+import { asramaGroupService } from "../services/asramaGroupService";
 import { musrifJournalService } from "../services/musrifJournalService";
 import { userService } from "../services/user.service";
 import { teacherService } from "../services/teacherService";
 import { 
   HalaqahGroup, 
   HalaqahGroupMember, 
+  AsramaGroup,
+  AsramaGroupMember,
   MusrifJournal, 
   MusrifJournalDetail, 
   Student, 
@@ -43,7 +46,10 @@ import {
   UserPlus,
   HelpCircle,
   Calendar,
-  Layers
+  Layers,
+  Home,
+  Lock,
+  Unlock
 } from "lucide-react";
 
 export const MusrifJournals: React.FC = () => {
@@ -51,12 +57,32 @@ export const MusrifJournals: React.FC = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  // Group Type Selection State
+  const [groupType, setGroupType] = useState<"halaqah" | "asrama">("halaqah");
+
+  // Sync groupType based on the user's main active role
+  useEffect(() => {
+    if (user?.role === "musrif") {
+      setGroupType("asrama");
+    } else if (user?.role === "guru halaqoh" || user?.role === "guru_halaqoh") {
+      setGroupType("halaqah");
+    }
+  }, [user]);
+
   const userRoles = user?.roles || [user?.role || ""];
   const isAdmin = userRoles.includes("admin") || user?.role === "admin";
   const isKepalaSekolah = userRoles.includes("kepala sekolah") || user?.role === "kepala sekolah";
   const isWakilKepalaSekolah = userRoles.includes("wakil kepala sekolah") || user?.role === "wakil kepala sekolah";
   const isKetuaYayasan = userRoles.includes("ketua yayasan") || user?.role === "ketua yayasan";
-  const isMusrif = userRoles.includes("musrif") || user?.role === "musrif" || userRoles.includes("guru") || user?.role === "guru";
+  const isMusrif = userRoles.includes("musrif") || user?.role === "musrif" || userRoles.includes("guru") || user?.role === "guru" || userRoles.includes("guru halaqoh") || user?.role === "guru halaqoh" || userRoles.includes("guru_halaqoh") || user?.role === "guru_halaqoh";
+
+  const activeRole = user?.role || "musrif";
+  const isActiveMusrif = groupType === "asrama";
+  const isActiveGuruHalaqoh = groupType === "halaqah";
+
+  // Section visibility flags
+  const showTahsinTahfizh = isAdmin || isKepalaSekolah || isWakilKepalaSekolah || isKetuaYayasan || isActiveGuruHalaqoh;
+  const showAdabAsrama = isAdmin || isKepalaSekolah || isWakilKepalaSekolah || isKetuaYayasan || isActiveMusrif;
 
   // Confirmation state (to replace window.confirm inside the iframe)
   const [confirmState, setConfirmState] = useState<{
@@ -117,7 +143,7 @@ export const MusrifJournals: React.FC = () => {
   const [selectedRecapStudentId, setSelectedRecapStudentId] = useState<string>("");
   const [recapGroupFilter, setRecapGroupFilter] = useState<string>("Semua");
 
-  // --- TAB 1: KELOMPOK HALAQAH STATE ---
+  // --- TAB 1: KELOMPOK STATE ---
   const [isGroupModalOpen, setIsGroupModalOpen] = useState(false);
   const [isMembersModalOpen, setIsMembersModalOpen] = useState(false);
   const [isAddMemberModalOpen, setIsAddMemberModalOpen] = useState(false);
@@ -135,34 +161,83 @@ export const MusrifJournals: React.FC = () => {
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
   const [showAllStudentsForTransfer, setShowAllStudentsForTransfer] = useState(false);
 
-  // Query groups
-  const { data: halaqahGroups = [], isLoading: isLoadingGroups } = useQuery({
+  // 1. Query Halaqah groups
+  const { data: halaqahGroupsData = [], isLoading: isLoadingHalaqahGroups } = useQuery({
     queryKey: ["halaqahGroups", user?.userId, isAdmin, isKepalaSekolah, isWakilKepalaSekolah, isKetuaYayasan],
     queryFn: () => {
-      // Admin, Kepala Sekolah, Wakil Kepala Sekolah, Ketua Yayasan see all groups
       if (isAdmin || isKepalaSekolah || isWakilKepalaSekolah || isKetuaYayasan) {
         return halaqahGroupService.getGroups();
       }
-      // Musrif gets their own groups
       return halaqahGroupService.getGroups(user?.userId || "");
     }
   });
 
-  // Query all members across all groups (to handle Bagian 4 & 5 filtering)
-  const { data: allGroupMembers = [], refetch: refetchAllMembers } = useQuery({
-    queryKey: ["allGroupMembers"],
+  // 2. Query Asrama groups
+  const { data: asramaGroupsData = [], isLoading: isLoadingAsramaGroups } = useQuery({
+    queryKey: ["asramaGroups", user?.userId, isAdmin, isKepalaSekolah, isWakilKepalaSekolah, isKetuaYayasan],
+    queryFn: () => {
+      if (isAdmin || isKepalaSekolah || isWakilKepalaSekolah || isKetuaYayasan) {
+        return asramaGroupService.getGroups();
+      }
+      return asramaGroupService.getGroups(user?.userId || "");
+    }
+  });
+
+  // 3. Query all Halaqah members
+  const { data: allHalaqahMembers = [], refetch: refetchAllHalaqahMembers } = useQuery({
+    queryKey: ["allHalaqahMembers"],
     queryFn: () => halaqahGroupService.getAllMembers()
   });
 
-  // Query members of currently selected group
-  const { data: groupMembers = [], isLoading: isLoadingMembers, refetch: refetchMembers } = useQuery({
-    queryKey: ["groupMembers", selectedGroup?.id],
+  // 4. Query all Asrama members
+  const { data: allAsramaMembers = [], refetch: refetchAllAsramaMembers } = useQuery({
+    queryKey: ["allAsramaMembers"],
+    queryFn: () => asramaGroupService.getAllMembers()
+  });
+
+  // 5. Query members of currently selected group
+  const { data: halaqahMembers = [], isLoading: isLoadingHalaqahMembers, refetch: refetchHalaqahMembers } = useQuery({
+    queryKey: ["halaqahMembers", selectedGroup?.id],
     queryFn: () => {
       if (!selectedGroup?.id) return [];
       return halaqahGroupService.getMembers(selectedGroup.id);
     },
-    enabled: !!selectedGroup?.id
+    enabled: !!selectedGroup?.id && groupType === "halaqah"
   });
+
+  const { data: asramaMembers = [], isLoading: isLoadingAsramaMembers, refetch: refetchAsramaMembers } = useQuery({
+    queryKey: ["asramaMembers", selectedGroup?.id],
+    queryFn: () => {
+      if (!selectedGroup?.id) return [];
+      return asramaGroupService.getMembers(selectedGroup.id);
+    },
+    enabled: !!selectedGroup?.id && groupType === "asrama"
+  });
+
+  // Dynamic Aliases based on selected groupType
+  const currentGroups = groupType === "halaqah" ? halaqahGroupsData : asramaGroupsData;
+  const isLoadingGroups = groupType === "halaqah" ? isLoadingHalaqahGroups : isLoadingAsramaGroups;
+  const currentAllMembers = groupType === "halaqah" ? allHalaqahMembers : allAsramaMembers;
+  const currentMembers = groupType === "halaqah" ? halaqahMembers : asramaMembers;
+  const isLoadingMembers = groupType === "halaqah" ? isLoadingHalaqahMembers : isLoadingAsramaMembers;
+
+  // Overwrite local references so existing UI can reference them directly with minimal rewrites
+  const halaqahGroups = currentGroups;
+  const allGroupMembers = currentAllMembers;
+  const groupMembers = currentMembers;
+
+  const refetchAllMembers = () => {
+    refetchAllHalaqahMembers();
+    refetchAllAsramaMembers();
+  };
+
+  const refetchMembers = () => {
+    if (groupType === "halaqah") {
+      refetchHalaqahMembers();
+    } else {
+      refetchAsramaMembers();
+    }
+  };
 
   // --- TAB 2: JURNAL HALAQAH STATE ---
   const [isJournalModalOpen, setIsJournalModalOpen] = useState(false);
@@ -184,6 +259,25 @@ export const MusrifJournals: React.FC = () => {
   const [journalGeneralNotes, setJournalGeneralNotes] = useState("");
   const [journalSupportingLink, setJournalSupportingLink] = useState("");
   const [journalStatus, setJournalStatus] = useState<"Draft" | "Selesai">("Draft");
+  const [journalEntryType, setJournalEntryType] = useState<"Harian" | "Mingguan">("Harian");
+
+  // Query all groups across all musrifs/gurus
+  const { data: allHalaqahGroups = [] } = useQuery({
+    queryKey: ["allHalaqahGroups"],
+    queryFn: () => halaqahGroupService.getGroups()
+  });
+
+  const { data: allAsramaGroups = [] } = useQuery({
+    queryKey: ["allAsramaGroups"],
+    queryFn: () => asramaGroupService.getGroups()
+  });
+
+  // Query all journals for lookup/recap purposes
+  const { data: allJournals = [] } = useQuery({
+    queryKey: ["allJournals", activeYear?.id, activeSemester?.id],
+    queryFn: () => musrifJournalService.getAll(activeYear?.id, activeSemester?.id),
+    enabled: !!activeYear?.id && !!activeSemester?.id
+  });
 
   // Student progress details in journal form
   const [studentJournalInputs, setStudentJournalInputs] = useState<Record<string, {
@@ -264,18 +358,18 @@ export const MusrifJournals: React.FC = () => {
     
     // Map with journal metadata (date, musrifName, activityType, etc.) and sort by date DESC
     const mapped = details.map(d => {
-      const journal = musrifJournals.find(j => j.id === d.journalId);
+      const journal = allJournals.find(j => j.id === d.journalId);
       return {
         ...d,
         journalDate: journal ? journal.date : d.createdAt ? d.createdAt.split("T")[0] : "",
         journalActivityType: journal ? journal.activityType : "Lainnya",
-        journalMusrifName: journal ? journal.musrifName : "Musrif",
+        journalMusrifName: journal ? journal.musrifName : "Musrif/Guru",
         journalGroupName: journal ? journal.groupName : ""
       };
     });
     
     return mapped.sort((a, b) => b.journalDate.localeCompare(a.journalDate));
-  }, [selectedRecapStudentId, allJournalDetails, musrifJournals]);
+  }, [selectedRecapStudentId, allJournalDetails, allJournals]);
 
   // Compute stats for selected student
   const studentRecapStats = useMemo(() => {
@@ -299,11 +393,15 @@ export const MusrifJournals: React.FC = () => {
 
   // --- MUTATIONS: TAB 1 ---
   const createGroupMutation = useMutation({
-    mutationFn: (newGroup: Omit<HalaqahGroup, "id" | "createdAt" | "updatedAt">) => 
-      halaqahGroupService.createGroup(newGroup),
+    mutationFn: (newGroup: Omit<HalaqahGroup, "id" | "createdAt" | "updatedAt">) => {
+      const service = groupType === "halaqah" ? halaqahGroupService : asramaGroupService;
+      return service.createGroup(newGroup);
+    },
     onSuccess: () => {
-      toast("Kelompok Halaqah berhasil dibuat!", "success");
+      const label = groupType === "halaqah" ? "Kelompok Halaqah" : "Kelompok Asrama";
+      toast(`${label} berhasil dibuat!`, "success");
       queryClient.invalidateQueries({ queryKey: ["halaqahGroups"] });
+      queryClient.invalidateQueries({ queryKey: ["asramaGroups"] });
       setIsGroupModalOpen(false);
     },
     onError: (err: any) => {
@@ -312,11 +410,15 @@ export const MusrifJournals: React.FC = () => {
   });
 
   const updateGroupMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string, data: Partial<HalaqahGroup> }) => 
-      halaqahGroupService.updateGroup(id, data),
+    mutationFn: ({ id, data }: { id: string, data: Partial<HalaqahGroup> }) => {
+      const service = groupType === "halaqah" ? halaqahGroupService : asramaGroupService;
+      return service.updateGroup(id, data);
+    },
     onSuccess: () => {
-      toast("Kelompok Halaqah berhasil diperbarui!", "success");
+      const label = groupType === "halaqah" ? "Kelompok Halaqah" : "Kelompok Asrama";
+      toast(`${label} berhasil diperbarui!`, "success");
       queryClient.invalidateQueries({ queryKey: ["halaqahGroups"] });
+      queryClient.invalidateQueries({ queryKey: ["asramaGroups"] });
       setIsGroupModalOpen(false);
     },
     onError: (err: any) => {
@@ -325,21 +427,46 @@ export const MusrifJournals: React.FC = () => {
   });
 
   const deleteGroupMutation = useMutation({
-    mutationFn: (id: string) => halaqahGroupService.deleteGroup(id),
+    mutationFn: (id: string) => {
+      const service = groupType === "halaqah" ? halaqahGroupService : asramaGroupService;
+      return service.deleteGroup(id);
+    },
     onSuccess: () => {
-      toast("Kelompok Halaqah berhasil dihapus!", "success");
+      const label = groupType === "halaqah" ? "Kelompok Halaqah" : "Kelompok Asrama";
+      toast(`${label} berhasil dihapus!`, "success");
       queryClient.invalidateQueries({ queryKey: ["halaqahGroups"] });
+      queryClient.invalidateQueries({ queryKey: ["asramaGroups"] });
     },
     onError: (err: any) => {
       toast("Gagal menghapus kelompok: " + err.message, "error");
     }
   });
 
+  const toggleGroupLockMutation = useMutation({
+    mutationFn: async ({ groupId, isLocked }: { groupId: string; isLocked: boolean }) => {
+      const service = groupType === "halaqah" ? halaqahGroupService : asramaGroupService;
+      return service.updateGroup(groupId, { isLocked });
+    },
+    onSuccess: () => {
+      toast("Status penguncian kelompok berhasil diubah!", "success");
+      queryClient.invalidateQueries({ queryKey: ["halaqahGroups"] });
+      queryClient.invalidateQueries({ queryKey: ["asramaGroups"] });
+    },
+    onError: (err: any) => {
+      toast("Gagal mengubah status penguncian: " + err.message, "error");
+    }
+  });
+
   const addMemberMutation = useMutation({
-    mutationFn: (member: Omit<HalaqahGroupMember, "id" | "createdAt" | "updatedAt">) => 
-      halaqahGroupService.addMember(member),
+    mutationFn: (member: Omit<HalaqahGroupMember, "id" | "createdAt" | "updatedAt">) => {
+      const service = groupType === "halaqah" ? halaqahGroupService : asramaGroupService;
+      return service.addMember(member);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["groupMembers"] });
+      queryClient.invalidateQueries({ queryKey: ["asramaMembers"] });
+      queryClient.invalidateQueries({ queryKey: ["allHalaqahMembers"] });
+      queryClient.invalidateQueries({ queryKey: ["allAsramaMembers"] });
     },
     onError: (err: any) => {
       toast("Gagal menambahkan santri: " + err.message, "error");
@@ -347,16 +474,21 @@ export const MusrifJournals: React.FC = () => {
   });
 
   const removeMemberMutation = useMutation({
-    mutationFn: (memberId: string) => halaqahGroupService.removeMember(memberId),
+    mutationFn: (memberId: string) => {
+      const service = groupType === "halaqah" ? halaqahGroupService : asramaGroupService;
+      return service.removeMember(memberId);
+    },
     onSuccess: () => {
       toast("Santri berhasil dikeluarkan dari kelompok!", "success");
       queryClient.invalidateQueries({ queryKey: ["groupMembers"] });
+      queryClient.invalidateQueries({ queryKey: ["asramaMembers"] });
+      queryClient.invalidateQueries({ queryKey: ["allHalaqahMembers"] });
+      queryClient.invalidateQueries({ queryKey: ["allAsramaMembers"] });
     },
     onError: (err: any) => {
       toast("Gagal mengeluarkan santri: " + err.message, "error");
     }
   });
-
   // --- MUTATIONS: TAB 2 ---
   const createJournalMutation = useMutation({
     mutationFn: ({ journal, details }: { 
@@ -441,13 +573,14 @@ export const MusrifJournals: React.FC = () => {
     }
 
     try {
+      const service = groupType === "halaqah" ? halaqahGroupService : asramaGroupService;
       const promises = selectedStudentIds.map(async (studentId) => {
         const student = studentsList.find((s) => s.id === studentId);
         
         // Find if they are in another group, and remove them first to prevent duplicates
         const existingAssignment = allGroupMembers.find((m) => m.studentId === studentId);
         if (existingAssignment) {
-          await halaqahGroupService.removeMember(existingAssignment.id);
+          await service.removeMember(existingAssignment.id);
         }
 
         return addMemberMutation.mutateAsync({
@@ -465,6 +598,10 @@ export const MusrifJournals: React.FC = () => {
       setIsAddMemberModalOpen(false);
       queryClient.invalidateQueries({ queryKey: ["allGroupMembers"] });
       queryClient.invalidateQueries({ queryKey: ["groupMembers"] });
+      queryClient.invalidateQueries({ queryKey: ["allHalaqahMembers"] });
+      queryClient.invalidateQueries({ queryKey: ["allAsramaMembers"] });
+      queryClient.invalidateQueries({ queryKey: ["groupMembers"] });
+      queryClient.invalidateQueries({ queryKey: ["asramaMembers"] });
     } catch (err: any) {
       toast("Gagal memindahkan santri: " + err.message, "error");
     }
@@ -476,7 +613,9 @@ export const MusrifJournals: React.FC = () => {
 
     const fetchAndSetMembersInputs = async () => {
       try {
-        const members = await halaqahGroupService.getMembers(journalGroup);
+        const isAsramaJournal = asramaGroupsData.some(g => g.id === journalGroup);
+        const service = isAsramaJournal ? asramaGroupService : halaqahGroupService;
+        const members = await service.getMembers(journalGroup);
         const inputs: Record<string, any> = {};
         
         // If editing, merge. Else write defaults.
@@ -538,13 +677,13 @@ export const MusrifJournals: React.FC = () => {
   // --- SUBMIT JOURNAL ---
   const handleJournalSubmit = () => {
     if (!journalGroup) {
-      toast("Pilih Kelompok Halaqah terlebih dahulu!", "error");
+      toast(isActiveMusrif ? "Pilih Kelompok Asrama terlebih dahulu!" : "Pilih Kelompok Halaqah terlebih dahulu!", "error");
       return;
     }
 
-    const group = halaqahGroups.find((g) => g.id === journalGroup);
+    const group = currentGroups.find((g) => g.id === journalGroup);
     if (!group) {
-      toast("Kelompok Halaqah tidak valid!", "error");
+      toast(isActiveMusrif ? "Kelompok Asrama tidak valid!" : "Kelompok Halaqah tidak valid!", "error");
       return;
     }
 
@@ -578,7 +717,8 @@ export const MusrifJournals: React.FC = () => {
       dayName,
       startTime: journalStartTime,
       endTime: journalEndTime,
-      activityType: journalActivityType,
+      activityType: isActiveMusrif ? "Pendampingan" : journalActivityType,
+      entryType: isActiveMusrif ? journalEntryType : undefined,
       generalNotes: journalGeneralNotes,
       supportingLink: journalSupportingLink,
       status: journalStatus,
@@ -620,6 +760,7 @@ export const MusrifJournals: React.FC = () => {
     setJournalStartTime(journal.startTime);
     setJournalEndTime(journal.endTime);
     setJournalActivityType(journal.activityType);
+    setJournalEntryType(journal.entryType || "Harian");
     setJournalGeneralNotes(journal.generalNotes);
     setJournalSupportingLink(journal.supportingLink);
     setJournalStatus(journal.status);
@@ -694,8 +835,50 @@ export const MusrifJournals: React.FC = () => {
       {/* Page Title */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 dark:border-zinc-800 pb-5">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">Jurnal Musrif Halaqah</h1>
-          <p className="text-sm text-gray-500 dark:text-zinc-400">Pencatatan kegiatan halaqah Al-Qur'an, tahfidz, tahsin, serta rekap perkembangan harian santri.</p>
+          <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">
+            {isActiveMusrif 
+              ? "Jurnal Musrif (Kepengasuhan Asrama)" 
+              : "Jurnal Guru Halaqah (Bimbingan Qur'an)"}
+          </h1>
+          <p className="text-sm text-gray-500 dark:text-zinc-400">
+            {isActiveMusrif 
+              ? "Pencatatan aktivitas asrama, adab, kedisiplinan, ibadah, kebersihan, serta rekap perkembangan asrama santri." 
+              : "Pencatatan bimbingan Al-Qur'an (Tahsin/Tahfidz), setoran hafalan harian, tajwid & makhraj, serta rekap capaian Al-Qur'an santri."}
+          </p>
+        </div>
+
+        {/* Mode Selector - Segmented Switch */}
+        <div className="flex bg-slate-100 dark:bg-zinc-800/45 p-1 rounded-xl w-fit border border-slate-200 dark:border-zinc-800 self-start md:self-center shrink-0">
+          <button
+            onClick={() => {
+              setGroupType("halaqah");
+              setSelectedGroup(null);
+              setSelectedRecapStudentId("");
+            }}
+            className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+              groupType === "halaqah"
+                ? "bg-white dark:bg-zinc-900 text-blue-600 dark:text-blue-450 shadow-xs"
+                : "text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200"
+            }`}
+          >
+            <BookOpen className="h-4 w-4" />
+            Halaqah Al-Qur'an
+          </button>
+          <button
+            onClick={() => {
+              setGroupType("asrama");
+              setSelectedGroup(null);
+              setSelectedRecapStudentId("");
+            }}
+            className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+              groupType === "asrama"
+                ? "bg-white dark:bg-zinc-900 text-blue-600 dark:text-blue-450 shadow-xs"
+                : "text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200"
+            }`}
+          >
+            <Home className="h-4 w-4" />
+            Asrama (Musrif)
+          </button>
         </div>
       </div>
 
@@ -710,7 +893,7 @@ export const MusrifJournals: React.FC = () => {
           }`}
         >
           <Users className="h-4.5 w-4.5" />
-          Kelompok Halaqah
+          {isActiveMusrif ? "Kelompok Asrama" : "Kelompok Halaqah"}
         </button>
         <button
           onClick={() => handleTabChange("jurnal")}
@@ -721,7 +904,7 @@ export const MusrifJournals: React.FC = () => {
           }`}
         >
           <BookOpen className="h-4.5 w-4.5" />
-          Jurnal Halaqah
+          {isActiveMusrif ? "Jurnal Asrama" : "Jurnal Halaqah"}
         </button>
         <button
           onClick={() => handleTabChange("rekap")}
@@ -732,7 +915,7 @@ export const MusrifJournals: React.FC = () => {
           }`}
         >
           <Award className="h-4.5 w-4.5" />
-          Rekap Perkembangan Santri
+          {isActiveMusrif ? "Rekap Perkembangan Asrama" : "Rekap Halaqah"}
         </button>
       </div>
 
@@ -742,7 +925,7 @@ export const MusrifJournals: React.FC = () => {
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
               <Layers className="h-5 w-5 text-blue-500" />
-              Daftar Kelompok Halaqah Anda ({halaqahGroups.length})
+              {isActiveMusrif ? `Daftar Kelompok Asrama Anda (${halaqahGroups.length})` : `Daftar Kelompok Halaqah Anda (${halaqahGroups.length})`}
             </h3>
             {(isMusrif || isAdmin) && (
               <button
@@ -764,11 +947,18 @@ export const MusrifJournals: React.FC = () => {
               <div key={group.id} className="p-5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl shadow-xs flex flex-col justify-between space-y-4">
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="px-2.5 py-0.5 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 font-bold text-xs rounded-lg">
-                      Kelompok
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="px-2.5 py-0.5 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 font-bold text-xs rounded-lg">
+                        Kelompok
+                      </span>
+                      {group.isLocked && (
+                        <span className="flex items-center gap-0.5 px-2 py-0.5 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300 font-bold text-[10px] rounded-lg border border-amber-100 dark:border-amber-900/30 animate-pulse">
+                          <Lock className="h-3 w-3" /> Terkunci
+                        </span>
+                      )}
+                    </div>
                     <span className="text-[10px] text-slate-400 font-bold uppercase">
-                      Musrif: {group.musrifName}
+                      {isActiveMusrif ? "Musrif" : "Guru Halaqoh"}: {group.musrifName}
                     </span>
                   </div>
                   <h4 className="text-base font-bold text-slate-900 dark:text-white">{group.groupName}</h4>
@@ -795,6 +985,29 @@ export const MusrifJournals: React.FC = () => {
                     {(isAdmin || (isMusrif && group.musrifId === user?.userId)) && (
                       <button
                         onClick={() => {
+                          toggleGroupLockMutation.mutate({
+                            groupId: group.id,
+                            isLocked: !group.isLocked
+                          });
+                        }}
+                        className={`p-1.5 rounded-lg cursor-pointer transition-all ${
+                          group.isLocked
+                            ? "bg-amber-50 hover:bg-amber-100 text-amber-600 dark:bg-amber-950/30 dark:hover:bg-amber-900/40"
+                            : "hover:bg-slate-100 dark:hover:bg-zinc-800 text-slate-400 hover:text-slate-700"
+                        }`}
+                        title={group.isLocked ? "Buka Kunci Kelompok" : "Kunci Kelompok"}
+                      >
+                        {group.isLocked ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
+                      </button>
+                    )}
+
+                    {(isAdmin || (isMusrif && group.musrifId === user?.userId)) && (
+                      <button
+                        onClick={() => {
+                          if (group.isLocked) {
+                            toast("Kelompok sedang dikunci! Buka kunci terlebih dahulu untuk mengedit.", "error");
+                            return;
+                          }
                           setSelectedGroup(group);
                           setGroupForm({
                             groupName: group.groupName,
@@ -804,7 +1017,11 @@ export const MusrifJournals: React.FC = () => {
                           });
                           setIsGroupModalOpen(true);
                         }}
-                        className="p-1.5 hover:bg-slate-100 dark:hover:bg-zinc-800 text-slate-500 hover:text-slate-900 rounded-lg cursor-pointer"
+                        className={`p-1.5 rounded-lg cursor-pointer transition-all ${
+                          group.isLocked
+                            ? "text-slate-300 dark:text-zinc-700 cursor-not-allowed"
+                            : "hover:bg-slate-100 dark:hover:bg-zinc-800 text-slate-500 hover:text-slate-900"
+                        }`}
                         title="Edit Kelompok"
                       >
                         <Edit2 className="h-4 w-4" />
@@ -814,17 +1031,25 @@ export const MusrifJournals: React.FC = () => {
                     {(isAdmin || (isMusrif && group.musrifId === user?.userId)) && (
                       <button
                         onClick={() => {
+                          if (group.isLocked) {
+                            toast("Kelompok sedang dikunci! Buka kunci terlebih dahulu untuk menghapus.", "error");
+                            return;
+                          }
                           setConfirmState({
                             isOpen: true,
-                            title: "Hapus Kelompok Halaqah",
-                            message: `Apakah Anda yakin ingin menghapus kelompok halaqah "${group.groupName}"? Semua data keanggotaan kelompok ini juga akan ikut dibersihkan.`,
+                            title: isActiveMusrif ? "Hapus Kelompok Asrama" : "Hapus Kelompok Halaqah",
+                            message: `Apakah Anda yakin ingin menghapus kelompok ini "${group.groupName}"? Semua data keanggotaan kelompok ini juga akan ikut dibersihkan.`,
                             onConfirm: () => {
                               deleteGroupMutation.mutate(group.id);
                               setConfirmState(null);
                             }
                           });
                         }}
-                        className="p-1.5 hover:bg-rose-50 dark:hover:bg-rose-950/30 text-rose-500 hover:text-rose-700 rounded-lg cursor-pointer"
+                        className={`p-1.5 rounded-lg cursor-pointer transition-all ${
+                          group.isLocked
+                            ? "text-slate-300 dark:text-zinc-700 cursor-not-allowed"
+                            : "hover:bg-rose-50 dark:hover:bg-rose-950/30 text-rose-500 hover:text-rose-700"
+                        }`}
                         title="Hapus Kelompok"
                       >
                         <Trash2 className="h-4 w-4" />
@@ -838,7 +1063,7 @@ export const MusrifJournals: React.FC = () => {
             {halaqahGroups.length === 0 && (
               <div className="col-span-full py-12 text-center bg-slate-50 dark:bg-zinc-900/30 border border-dashed border-slate-200 dark:border-zinc-800 rounded-2xl">
                 <Users className="h-12 w-12 text-slate-300 mx-auto mb-3" />
-                <h4 className="font-bold text-slate-700 dark:text-zinc-300">Belum Ada Kelompok Halaqah</h4>
+                <h4 className="font-bold text-slate-700 dark:text-zinc-300">{isActiveMusrif ? "Belum Ada Kelompok Asrama" : "Belum Ada Kelompok Halaqah"}</h4>
                 <p className="text-xs text-slate-400 mt-1">Silakan klik tombol "Buat Kelompok Baru" di kanan atas untuk membuat kelompok Anda sendiri.</p>
               </div>
             )}
@@ -874,7 +1099,7 @@ export const MusrifJournals: React.FC = () => {
                   className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl shadow-md cursor-pointer"
                 >
                   <Plus className="h-4.5 w-4.5" />
-                  Buat Jurnal Halaqah
+                  {isActiveMusrif ? "Buat Jurnal Asrama" : "Buat Jurnal Halaqah"}
                 </button>
               )}
             </div>
@@ -886,7 +1111,7 @@ export const MusrifJournals: React.FC = () => {
                 onChange={(e) => setFilterDate(e.target.value)}
               />
               <FormSelect
-                label="Kelompok Halaqah"
+                label={isActiveMusrif ? "Kelompok Asrama" : "Kelompok Halaqah"}
                 value={filterGroup}
                 onChange={(e) => setFilterGroup(e.target.value)}
                 options={[
@@ -909,12 +1134,14 @@ export const MusrifJournals: React.FC = () => {
 
           {/* Jurnal Table */}
           <div className="p-6 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl shadow-xs">
-            <h3 className="text-base font-bold text-slate-900 dark:text-white mb-4">Daftar Rekap Jurnal Halaqah</h3>
+            <h3 className="text-base font-bold text-slate-900 dark:text-white mb-4">
+              {isActiveMusrif ? "Daftar Rekap Jurnal Asrama" : "Daftar Rekap Jurnal Halaqah"}
+            </h3>
             <DataTable
               data={filteredJournals}
               rowKey={(j) => j.id}
               searchKeys={["groupName", "musrifName", "activityType"]}
-              searchPlaceholder="Cari berdasarkan kelompok, musrif, atau kegiatan..."
+              searchPlaceholder={isActiveMusrif ? "Cari berdasarkan kelompok, musrif, atau catatan..." : "Cari berdasarkan kelompok, guru halaqoh, atau kegiatan..."}
               columns={[
                 {
                   header: "Tanggal / Hari",
@@ -930,12 +1157,12 @@ export const MusrifJournals: React.FC = () => {
                   sortKey: "date" as keyof MusrifJournal
                 },
                 ...(!isMusrif || isAdmin ? [{
-                  header: "Musrif",
+                  header: isActiveMusrif ? "Musrif" : "Guru Halaqoh",
                   accessor: (j: MusrifJournal) => j.musrifName,
                   sortable: true
                 }] : []),
                 {
-                  header: "Kelompok",
+                  header: isActiveMusrif ? "Kelompok Asrama" : "Kelompok Halaqah",
                   accessor: (j: MusrifJournal) => j.groupName,
                   sortable: true
                 },
@@ -944,8 +1171,15 @@ export const MusrifJournals: React.FC = () => {
                   accessor: (j: MusrifJournal) => `${j.startTime} - ${j.endTime}`,
                 },
                 {
-                  header: "Aktivitas",
+                  header: isActiveMusrif ? "Sistem Entry" : "Aktivitas",
                   accessor: (j: MusrifJournal) => {
+                    if (j.entryType) {
+                      return (
+                        <span className="px-2.5 py-1 text-xs font-bold rounded-xl bg-purple-100 text-purple-800 dark:bg-purple-950/40 dark:text-purple-300">
+                          {j.entryType}
+                        </span>
+                      );
+                    }
                     const activityStyles = {
                       Tahsin: "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300",
                       Tahfidz: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300",
@@ -1033,7 +1267,7 @@ export const MusrifJournals: React.FC = () => {
             </span>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormSelect
-                label="Kelompok Halaqah"
+                label={isActiveMusrif ? "Kelompok Asrama" : "Kelompok Halaqah"}
                 value={recapGroupFilter}
                 onChange={(e) => {
                   setRecapGroupFilter(e.target.value);
@@ -1085,13 +1319,30 @@ export const MusrifJournals: React.FC = () => {
                       Kelas: {recapStudents.find(s => s.id === selectedRecapStudentId)?.className || "Tanpa Kelas"}
                     </p>
                     <div className="mt-4 pt-4 border-t border-slate-100 dark:border-zinc-800/80">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Kelompok Halaqah</span>
-                      <span className="text-sm font-bold text-slate-700 dark:text-zinc-300 block mt-0.5">
-                        {allGroupMembers.find(m => m.studentId === selectedRecapStudentId)
-                          ? halaqahGroups.find(g => g.id === allGroupMembers.find(m => m.studentId === selectedRecapStudentId)?.groupId)?.groupName || "-"
-                          : "-"
-                        }
-                      </span>
+                      {(() => {
+                        const halaqahMembership = allHalaqahMembers.find(m => m.studentId === selectedRecapStudentId);
+                        const halaqahGroup = halaqahMembership ? allHalaqahGroups.find(g => g.id === halaqahMembership.groupId) : null;
+
+                        const asramaMembership = allAsramaMembers.find(m => m.studentId === selectedRecapStudentId);
+                        const asramaGroup = asramaMembership ? asramaGroupsData.find(g => g.id === asramaMembership.groupId) : null;
+                        
+                        return (
+                          <div className="space-y-3">
+                            <div>
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Kelompok Asrama (Dormitory)</span>
+                              <span className="text-sm font-bold text-slate-700 dark:text-zinc-300 block mt-0.5">
+                                {asramaGroup ? `${asramaGroup.groupName} (Musrif: ${asramaGroup.musrifName})` : "-"}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Kelompok Halaqah (Al-Qur'an)</span>
+                              <span className="text-sm font-bold text-slate-700 dark:text-zinc-300 block mt-0.5">
+                                {halaqahGroup ? `${halaqahGroup.groupName} (Guru: ${halaqahGroup.musrifName})` : "-"}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                   <div className="mt-6 text-[11px] text-slate-400 dark:text-zinc-500 italic">
@@ -1152,7 +1403,9 @@ export const MusrifJournals: React.FC = () => {
                 </div>
               ) : (
                 <div className="space-y-6">
-                  {/* Category 1: TAHFIZH PROGRESS */}
+                  {showTahsinTahfizh && (
+                    <>
+                      {/* Category 1: TAHFIZH PROGRESS */}
                   <div className="p-6 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl shadow-xs">
                     <h3 className="text-sm font-extrabold text-emerald-700 dark:text-emerald-400 flex items-center gap-2 uppercase tracking-wider mb-4 pb-2 border-b border-slate-100 dark:border-zinc-800/80">
                       <BookOpen className="h-4.5 w-4.5" />
@@ -1172,7 +1425,7 @@ export const MusrifJournals: React.FC = () => {
                                   {d.journalActivityType}
                                 </span>
                               </div>
-                              <span className="text-[10px] text-slate-400 font-medium">Musrif: {d.journalMusrifName}</span>
+                              <span className="text-[10px] text-slate-400 font-medium">Guru Halaqoh: {d.journalMusrifName}</span>
                             </div>
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 dark:bg-zinc-800/30 p-3 rounded-xl border border-slate-100 dark:border-zinc-800/50">
                               <div>
@@ -1215,7 +1468,7 @@ export const MusrifJournals: React.FC = () => {
                               <span className="text-xs font-bold text-slate-800 dark:text-zinc-200">
                                 {new Date(d.journalDate).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}
                               </span>
-                              <span className="text-[10px] text-slate-400 font-medium">Musrif: {d.journalMusrifName}</span>
+                              <span className="text-[10px] text-slate-400 font-medium">Guru Halaqoh: {d.journalMusrifName}</span>
                             </div>
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 dark:bg-zinc-800/30 p-3 rounded-xl border border-slate-100 dark:border-zinc-800/50">
                               <div>
@@ -1239,8 +1492,12 @@ export const MusrifJournals: React.FC = () => {
                       )}
                     </div>
                   </div>
+                    </>
+                  )}
 
-                  {/* Category 3: ADAB & CHARACTER */}
+                  {showAdabAsrama && (
+                    <>
+                      {/* Category 3: ADAB & CHARACTER */}
                   <div className="p-6 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl shadow-xs">
                     <h3 className="text-sm font-extrabold text-purple-700 dark:text-purple-400 flex items-center gap-2 uppercase tracking-wider mb-4 pb-2 border-b border-slate-100 dark:border-zinc-800/80">
                       <Award className="h-4.5 w-4.5" />
@@ -1255,7 +1512,7 @@ export const MusrifJournals: React.FC = () => {
                               <span className="text-xs font-bold text-slate-800 dark:text-zinc-200">
                                 {new Date(d.journalDate).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}
                               </span>
-                              <span className="text-[10px] text-slate-400 font-medium">Musrif: {d.journalMusrifName}</span>
+                              <span className="text-[10px] text-slate-400 font-medium">Guru Halaqoh: {d.journalMusrifName}</span>
                             </div>
                             <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 bg-purple-50/10 dark:bg-purple-950/5 p-3 rounded-xl border border-purple-100/30 dark:border-purple-900/10">
                               <div className="text-center p-1.5 border border-slate-100 dark:border-zinc-800/40 rounded bg-white dark:bg-zinc-900">
@@ -1307,7 +1564,7 @@ export const MusrifJournals: React.FC = () => {
                               <span className="text-xs font-bold text-slate-800 dark:text-zinc-200">
                                 {new Date(d.journalDate).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}
                               </span>
-                              <span className="text-[10px] text-slate-400 font-medium">Musrif: {d.journalMusrifName}</span>
+                              <span className="text-[10px] text-slate-400 font-medium">Guru Halaqoh: {d.journalMusrifName}</span>
                             </div>
                             <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 bg-amber-50/10 dark:bg-amber-950/5 p-3 rounded-xl border border-amber-100/30 dark:border-amber-900/10">
                               <div className="text-center p-1.5 border border-slate-100 dark:border-zinc-800/40 rounded bg-white dark:bg-zinc-900">
@@ -1339,6 +1596,8 @@ export const MusrifJournals: React.FC = () => {
                       )}
                     </div>
                   </div>
+                    </>
+                  )}
 
                   {/* Category 5: SPECIAL ISSUES */}
                   <div className="p-6 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl shadow-xs">
@@ -1355,7 +1614,7 @@ export const MusrifJournals: React.FC = () => {
                               <span className="text-xs font-bold text-slate-800 dark:text-zinc-200">
                                 {new Date(d.journalDate).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}
                               </span>
-                              <span className="text-[10px] text-slate-400 font-medium">Musrif: {d.journalMusrifName}</span>
+                              <span className="text-[10px] text-slate-400 font-medium">Guru Halaqoh: {d.journalMusrifName}</span>
                             </div>
                             <div className="bg-rose-50/30 dark:bg-rose-950/20 p-3.5 rounded-xl border border-rose-100 dark:border-rose-900/30">
                               <p className="text-xs font-bold text-rose-900 dark:text-rose-300 whitespace-pre-wrap leading-relaxed">
@@ -1407,11 +1666,11 @@ export const MusrifJournals: React.FC = () => {
           />
           {isAdmin && (
             <FormSelect
-              label="Pilih Pembina / Musrif"
+              label="Pilih Pembina / Guru Halaqoh"
               value={groupForm.musrifId}
               onChange={(e) => setGroupForm(prev => ({ ...prev, musrifId: e.target.value }))}
               options={[
-                { value: "", label: "-- Pilih Musrif / Guru --" },
+                { value: "", label: "-- Pilih Guru Halaqoh / Guru --" },
                 ...systemUsers
                   .filter((u) => u.role === "musrif" || u.role === "guru" || u.role === "admin")
                   .map((u) => ({ value: u.id, label: u.name || u.email }))
@@ -1480,9 +1739,16 @@ export const MusrifJournals: React.FC = () => {
         size="lg"
       >
         <div className="space-y-4">
+          {selectedGroup?.isLocked && (
+            <div className="p-3 bg-amber-50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-400 border border-amber-100 dark:border-amber-900/30 rounded-xl flex items-center gap-2 text-xs font-semibold">
+              <Lock className="h-4 w-4 shrink-0 text-amber-600" />
+              <span>Kelompok ini sedang dikunci. Buka kunci kelompok terlebih dahulu untuk menambah atau mengeluarkan santri.</span>
+            </div>
+          )}
+
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-slate-500 uppercase">Anggota Kelompok Saat Ini ({groupMembers.length} Santri)</span>
-            {(isAdmin || (isMusrif && selectedGroup?.musrifId === user?.userId)) && (
+            {(isAdmin || (isMusrif && selectedGroup?.musrifId === user?.userId)) && !selectedGroup?.isLocked && (
               <button
                 onClick={() => {
                   setSelectedStudentIds([]);
@@ -1506,7 +1772,7 @@ export const MusrifJournals: React.FC = () => {
                   <span className="font-bold text-slate-800 dark:text-zinc-200 text-sm">{member.studentName}</span>
                   <span className="text-xs text-slate-400 font-semibold mt-0.5">Kelas: {member.className || "Tanpa Kelas"}</span>
                 </div>
-                {(isAdmin || (isMusrif && selectedGroup?.musrifId === user?.userId)) && (
+                {(isAdmin || (isMusrif && selectedGroup?.musrifId === user?.userId)) && !selectedGroup?.isLocked && (
                   <button
                     onClick={() => {
                       setConfirmState({
@@ -1531,7 +1797,7 @@ export const MusrifJournals: React.FC = () => {
             {groupMembers.length === 0 && (
               <div className="p-8 text-center text-slate-400">
                 <Users className="h-10 w-10 text-slate-300 mx-auto mb-2" />
-                <span className="text-xs font-semibold">Belum ada santri di kelompok ini. Klik "Tambah Anggota" di atas.</span>
+                <span className="text-xs font-semibold">Belum ada santri di kelompok ini. {selectedGroup?.isLocked ? "Hubungi pembimbing untuk membuka kunci kelompok." : "Klik 'Tambah Anggota' di atas."}</span>
               </div>
             )}
           </div>
@@ -1668,7 +1934,7 @@ export const MusrifJournals: React.FC = () => {
       <Dialog
         isOpen={isJournalModalOpen}
         onClose={() => setIsJournalModalOpen(false)}
-        title={selectedJournal ? "Edit Jurnal Halaqah" : "Tulis Jurnal Halaqah Baru"}
+        title={selectedJournal ? (isActiveMusrif ? "Edit Jurnal Asrama" : "Edit Jurnal Halaqah") : (isActiveMusrif ? "Tulis Jurnal Asrama Baru" : "Tulis Jurnal Halaqah Baru")}
         size="2xl"
       >
         <div className="space-y-6">
@@ -1681,7 +1947,7 @@ export const MusrifJournals: React.FC = () => {
               required
             />
             <FormSelect
-              label="Kelompok Halaqah"
+              label={isActiveMusrif ? "Kelompok Asrama" : "Kelompok Halaqah"}
               value={journalGroup}
               onChange={(e) => setJournalGroup(e.target.value)}
               required
@@ -1710,22 +1976,35 @@ export const MusrifJournals: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <FormSelect
-              label="Jenis Kegiatan Halaqah"
-              value={journalActivityType}
-              onChange={(e) => setJournalActivityType(e.target.value as any)}
-              required
-              options={[
-                { value: "Tahsin", label: "Tahsin" },
-                { value: "Tahfidz", label: "Tahfidz" },
-                { value: "Muraja'ah", label: "Muraja'ah" },
-                { value: "Setoran Hafalan", label: "Setoran Hafalan" },
-                { value: "Tasmi", label: "Tasmi'" },
-                { value: "Pembinaan Akhlak", label: "Pembinaan Akhlak" },
-                { value: "Pendampingan", label: "Pendampingan" },
-                { value: "Lainnya", label: "Lainnya" }
-              ]}
-            />
+            {isActiveMusrif ? (
+              <FormSelect
+                label="Sistem Penginputan Jurnal Asrama"
+                value={journalEntryType}
+                onChange={(e) => setJournalEntryType(e.target.value as "Harian" | "Mingguan")}
+                required
+                options={[
+                  { value: "Harian", label: "Harian (Daily Entry)" },
+                  { value: "Mingguan", label: "Mingguan (Weekly Entry)" }
+                ]}
+              />
+            ) : (
+              <FormSelect
+                label="Jenis Kegiatan Halaqah"
+                value={journalActivityType}
+                onChange={(e) => setJournalActivityType(e.target.value as any)}
+                required
+                options={[
+                  { value: "Tahsin", label: "Tahsin" },
+                  { value: "Tahfidz", label: "Tahfidz" },
+                  { value: "Muraja'ah", label: "Muraja'ah" },
+                  { value: "Setoran Hafalan", label: "Setoran Hafalan" },
+                  { value: "Tasmi", label: "Tasmi'" },
+                  { value: "Pembinaan Akhlak", label: "Pembinaan Akhlak" },
+                  { value: "Pendampingan", label: "Pendampingan" },
+                  { value: "Lainnya", label: "Lainnya" }
+                ]}
+              />
+            )}
             <FormInput
               type="text"
               label="Bukti Dukung Pembelajaran (Tautan Google Drive/OneDrive/Canva)"
@@ -1754,30 +2033,34 @@ export const MusrifJournals: React.FC = () => {
                           <span className="font-extrabold text-sm text-slate-800 dark:text-zinc-200">{student?.name || "Santri"}</span>
                           <span className="text-[10px] text-slate-400 font-semibold mt-0.5">NIS: {student?.nis || "-"} • Kelas: {student?.className || "Tanpa Kelas"}</span>
                         </div>
-                        <div className="w-28">
-                          <FormSelect
-                            label=""
-                            value={inputs.attendance}
-                            onChange={(e) => setStudentJournalInputs(prev => ({
-                              ...prev,
-                              [studentId]: {
-                                ...prev[studentId],
-                                attendance: e.target.value as any
-                              }
-                            }))}
-                            options={[
-                              { value: "Hadir", label: "Hadir" },
-                              { value: "Sakit", label: "Sakit" },
-                              { value: "Izin", label: "Izin" },
-                              { value: "Alpha", label: "Alpha" }
-                            ]}
-                          />
-                        </div>
+                        {!isActiveMusrif && (
+                          <div className="w-28">
+                            <FormSelect
+                              label=""
+                              value={inputs.attendance}
+                              onChange={(e) => setStudentJournalInputs(prev => ({
+                                ...prev,
+                                [studentId]: {
+                                  ...prev[studentId],
+                                  attendance: e.target.value as any
+                                }
+                              }))}
+                              options={[
+                                { value: "Hadir", label: "Hadir" },
+                                { value: "Sakit", label: "Sakit" },
+                                { value: "Izin", label: "Izin" },
+                                { value: "Alpha", label: "Alpha" }
+                              ]}
+                            />
+                          </div>
+                        )}
                       </div>
 
                       {inputs.attendance === "Hadir" && (
                         <div className="space-y-4 pt-2">
-                          {/* 1. TAHSIN */}
+                          {showTahsinTahfizh && (
+                            <>
+                              {/* 1. TAHSIN */}
                           <div className="bg-blue-50/20 dark:bg-blue-950/10 p-3.5 rounded-xl border border-blue-100 dark:border-blue-900/30 space-y-3">
                             <span className="text-xs font-bold text-blue-700 dark:text-blue-400 flex items-center gap-1.5 uppercase">
                               <BookOpen className="h-4 w-4 text-blue-500" />
@@ -1908,156 +2191,216 @@ export const MusrifJournals: React.FC = () => {
                               placeholder="Keterangan perkembangan hafalan..."
                             />
                           </div>
+                            </>
+                          )}
 
-                          {/* 3. ADAB */}
-                          <div className="bg-purple-50/20 dark:bg-purple-950/10 p-3.5 rounded-xl border border-purple-100 dark:border-purple-900/30 space-y-3">
-                            <span className="text-xs font-bold text-purple-700 dark:text-purple-400 flex items-center gap-1.5 uppercase">
-                              <Clock className="h-4 w-4 text-purple-500" />
-                              3. Adab dan Akhlak Santri
-                            </span>
-                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                              <FormInput
-                                type="text"
-                                label="Kedisiplinan"
-                                value={inputs.adabDiscipline || ""}
-                                onChange={(e) => setStudentJournalInputs(prev => ({
-                                  ...prev,
-                                  [studentId]: { ...prev[studentId], adabDiscipline: e.target.value }
-                                }))}
-                                placeholder="Kedisiplinan..."
-                              />
-                              <FormInput
-                                type="text"
-                                label="Kerapian"
-                                value={inputs.adabNeatness || ""}
-                                onChange={(e) => setStudentJournalInputs(prev => ({
-                                  ...prev,
-                                  [studentId]: { ...prev[studentId], adabNeatness: e.target.value }
-                                }))}
-                                placeholder="Kerapian pakaian/kamar..."
-                              />
-                              <FormInput
-                                type="text"
-                                label="Kesopanan"
-                                value={inputs.adabPoliteness || ""}
-                                onChange={(e) => setStudentJournalInputs(prev => ({
-                                  ...prev,
-                                  [studentId]: { ...prev[studentId], adabPoliteness: e.target.value }
-                                }))}
-                                placeholder="Kesopanan kepada asatidz..."
-                              />
-                              <FormInput
-                                type="text"
-                                label="Kejujuran"
-                                value={inputs.adabHonesty || ""}
-                                onChange={(e) => setStudentJournalInputs(prev => ({
-                                  ...prev,
-                                  [studentId]: { ...prev[studentId], adabHonesty: e.target.value }
-                                }))}
-                                placeholder="Sikap jujur..."
-                              />
-                              <FormInput
-                                type="text"
-                                label="Tanggung Jawab"
-                                value={inputs.adabResponsibility || ""}
-                                onChange={(e) => setStudentJournalInputs(prev => ({
-                                  ...prev,
-                                  [studentId]: { ...prev[studentId], adabResponsibility: e.target.value }
-                                }))}
-                                placeholder="Tanggung jawab tugas..."
-                              />
-                              <FormInput
-                                type="text"
-                                label="Kerjasama"
-                                value={inputs.adabCooperation || ""}
-                                onChange={(e) => setStudentJournalInputs(prev => ({
-                                  ...prev,
-                                  [studentId]: { ...prev[studentId], adabCooperation: e.target.value }
-                                }))}
-                                placeholder="Kerjasama tim..."
-                              />
-                            </div>
-                            <FormInput
-                              type="text"
-                              label="Catatan Adab & Akhlak"
-                              value={inputs.adabNotes || ""}
-                              onChange={(e) => setStudentJournalInputs(prev => ({
-                                ...prev,
-                                [studentId]: { ...prev[studentId], adabNotes: e.target.value }
-                              }))}
-                              placeholder="Deskripsi perkembangan perilaku..."
-                            />
-                          </div>
+                          {showAdabAsrama && (
+                            <>
+                              {isActiveMusrif ? (
+                                <>
+                                  {/* 3. ADAB & AKHLAK - TERBUKA */}
+                                  <div className="bg-purple-50/20 dark:bg-purple-950/10 p-3.5 rounded-xl border border-purple-100 dark:border-purple-900/30 space-y-3">
+                                    <span className="text-xs font-bold text-purple-700 dark:text-purple-400 flex items-center gap-1.5 uppercase">
+                                      <Book className="h-4 w-4 text-purple-500" />
+                                      3. Adab dan Akhlak Santri (Terbuka)
+                                    </span>
+                                    <FormTextarea
+                                      label="Catatan Perkembangan Perilaku, Kedisiplinan, Kesopanan, dan Tanggung Jawab"
+                                      value={inputs.adabNotes || ""}
+                                      onChange={(e) => setStudentJournalInputs(prev => ({
+                                        ...prev,
+                                        [studentId]: { ...prev[studentId], adabNotes: e.target.value }
+                                      }))}
+                                      placeholder="Tuliskan catatan terbuka mengenai adab dan akhlak santri..."
+                                      rows={2}
+                                    />
+                                  </div>
 
-                          {/* 4. KEHIDUPAN ASRAMA */}
-                          <div className="bg-amber-50/20 dark:bg-amber-950/10 p-3.5 rounded-xl border border-amber-100 dark:border-amber-900/30 space-y-3">
-                            <span className="text-xs font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5 uppercase">
-                              <Layers className="h-4 w-4 text-amber-500" />
-                              4. Kehidupan & Mutaba'ah Asrama
-                            </span>
-                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                              <FormInput
-                                type="text"
-                                label="Kebersihan"
-                                value={inputs.asramaCleanliness || ""}
-                                onChange={(e) => setStudentJournalInputs(prev => ({
-                                  ...prev,
-                                  [studentId]: { ...prev[studentId], asramaCleanliness: e.target.value }
-                                }))}
-                                placeholder="Misal: Piket kamar rajin..."
-                              />
-                              <FormInput
-                                type="text"
-                                label="Ibadah Harian"
-                                value={inputs.asramaWorship || ""}
-                                onChange={(e) => setStudentJournalInputs(prev => ({
-                                  ...prev,
-                                  [studentId]: { ...prev[studentId], asramaWorship: e.target.value }
-                                }))}
-                                placeholder="Misal: Salat berjamaah tepat waktu..."
-                              />
-                              <FormInput
-                                type="text"
-                                label="Kehadiran"
-                                value={inputs.asramaAttendance || ""}
-                                onChange={(e) => setStudentJournalInputs(prev => ({
-                                  ...prev,
-                                  [studentId]: { ...prev[studentId], asramaAttendance: e.target.value }
-                                }))}
-                                placeholder="Kehadiran kajian, makan..."
-                              />
-                              <FormInput
-                                type="text"
-                                label="Kedisiplinan Asrama"
-                                value={inputs.asramaDiscipline || ""}
-                                onChange={(e) => setStudentJournalInputs(prev => ({
-                                  ...prev,
-                                  [studentId]: { ...prev[studentId], asramaDiscipline: e.target.value }
-                                }))}
-                                placeholder="Jam tidur, jam belajar..."
-                              />
-                              <FormInput
-                                type="text"
-                                label="Interaksi Sosial"
-                                value={inputs.asramaSocialInteraction || ""}
-                                onChange={(e) => setStudentJournalInputs(prev => ({
-                                  ...prev,
-                                  [studentId]: { ...prev[studentId], asramaSocialInteraction: e.target.value }
-                                }))}
-                                placeholder="Sosialisasi sesama santri..."
-                              />
-                            </div>
-                            <FormInput
-                              type="text"
-                              label="Catatan Pengasuhan"
-                              value={inputs.asramaNotes || ""}
-                              onChange={(e) => setStudentJournalInputs(prev => ({
-                                ...prev,
-                                [studentId]: { ...prev[studentId], asramaNotes: e.target.value }
-                              }))}
-                              placeholder="Catatan pengasuhan asrama..."
-                            />
-                          </div>
+                                  {/* 4. IBADAH & INTERAKSI SOSIAL - TERBUKA */}
+                                  <div className="bg-amber-50/20 dark:bg-amber-950/10 p-3.5 rounded-xl border border-amber-100 dark:border-amber-900/30 space-y-3">
+                                    <span className="text-xs font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5 uppercase">
+                                      <Layers className="h-4 w-4 text-amber-500" />
+                                      4. Kehidupan & Mutaba'ah Asrama (Terbuka)
+                                    </span>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                      <FormTextarea
+                                        label="Amalan Ibadah (Salat Berjamaah, Tilawah, dll)"
+                                        value={inputs.asramaWorship || ""}
+                                        onChange={(e) => setStudentJournalInputs(prev => ({
+                                          ...prev,
+                                          [studentId]: { ...prev[studentId], asramaWorship: e.target.value }
+                                        }))}
+                                        placeholder="Tuliskan catatan mengenai pelaksanaan ibadah santri..."
+                                        rows={2}
+                                      />
+                                      <FormTextarea
+                                        label="Interaksi Sosial (Sikap Sosial & Gotong Royong)"
+                                        value={inputs.asramaSocialInteraction || ""}
+                                        onChange={(e) => setStudentJournalInputs(prev => ({
+                                          ...prev,
+                                          [studentId]: { ...prev[studentId], asramaSocialInteraction: e.target.value }
+                                        }))}
+                                        placeholder="Tuliskan catatan mengenai interaksi sosial santri di asrama..."
+                                        rows={2}
+                                      />
+                                    </div>
+                                  </div>
+                                </>
+                              ) : (
+                                <>
+                                  {/* 3. ADAB */}
+                                  <div className="bg-purple-50/20 dark:bg-purple-950/10 p-3.5 rounded-xl border border-purple-100 dark:border-purple-900/30 space-y-3">
+                                    <span className="text-xs font-bold text-purple-700 dark:text-purple-400 flex items-center gap-1.5 uppercase">
+                                      <Clock className="h-4 w-4 text-purple-500" />
+                                      3. Adab dan Akhlak Santri
+                                    </span>
+                                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                                      <FormInput
+                                        type="text"
+                                        label="Kedisiplinan"
+                                        value={inputs.adabDiscipline || ""}
+                                        onChange={(e) => setStudentJournalInputs(prev => ({
+                                          ...prev,
+                                          [studentId]: { ...prev[studentId], adabDiscipline: e.target.value }
+                                        }))}
+                                        placeholder="Kedisiplinan..."
+                                      />
+                                      <FormInput
+                                        type="text"
+                                        label="Kerapian"
+                                        value={inputs.adabNeatness || ""}
+                                        onChange={(e) => setStudentJournalInputs(prev => ({
+                                          ...prev,
+                                          [studentId]: { ...prev[studentId], adabNeatness: e.target.value }
+                                        }))}
+                                        placeholder="Kerapian pakaian/kamar..."
+                                      />
+                                      <FormInput
+                                        type="text"
+                                        label="Kesopanan"
+                                        value={inputs.adabPoliteness || ""}
+                                        onChange={(e) => setStudentJournalInputs(prev => ({
+                                          ...prev,
+                                          [studentId]: { ...prev[studentId], adabPoliteness: e.target.value }
+                                        }))}
+                                        placeholder="Kesopanan kepada asatidz..."
+                                      />
+                                      <FormInput
+                                        type="text"
+                                        label="Kejujuran"
+                                        value={inputs.adabHonesty || ""}
+                                        onChange={(e) => setStudentJournalInputs(prev => ({
+                                          ...prev,
+                                          [studentId]: { ...prev[studentId], adabHonesty: e.target.value }
+                                        }))}
+                                        placeholder="Sikap jujur..."
+                                      />
+                                      <FormInput
+                                        type="text"
+                                        label="Tanggung Jawab"
+                                        value={inputs.adabResponsibility || ""}
+                                        onChange={(e) => setStudentJournalInputs(prev => ({
+                                          ...prev,
+                                          [studentId]: { ...prev[studentId], adabResponsibility: e.target.value }
+                                        }))}
+                                        placeholder="Tanggung jawab tugas..."
+                                      />
+                                      <FormInput
+                                        type="text"
+                                        label="Kerjasama"
+                                        value={inputs.adabCooperation || ""}
+                                        onChange={(e) => setStudentJournalInputs(prev => ({
+                                          ...prev,
+                                          [studentId]: { ...prev[studentId], adabCooperation: e.target.value }
+                                        }))}
+                                        placeholder="Kerjasama tim..."
+                                      />
+                                    </div>
+                                    <FormInput
+                                      type="text"
+                                      label="Catatan Adab & Akhlak"
+                                      value={inputs.adabNotes || ""}
+                                      onChange={(e) => setStudentJournalInputs(prev => ({
+                                        ...prev,
+                                        [studentId]: { ...prev[studentId], adabNotes: e.target.value }
+                                      }))}
+                                      placeholder="Deskripsi perkembangan perilaku..."
+                                    />
+                                  </div>
+
+                                  {/* 4. KEHIDUPAN ASRAMA */}
+                                  <div className="bg-amber-50/20 dark:bg-amber-950/10 p-3.5 rounded-xl border border-amber-100 dark:border-amber-900/30 space-y-3">
+                                    <span className="text-xs font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5 uppercase">
+                                      <Layers className="h-4 w-4 text-amber-500" />
+                                      4. Kehidupan & Mutaba'ah Asrama
+                                    </span>
+                                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                                      <FormInput
+                                        type="text"
+                                        label="Kebersihan"
+                                        value={inputs.asramaCleanliness || ""}
+                                        onChange={(e) => setStudentJournalInputs(prev => ({
+                                          ...prev,
+                                          [studentId]: { ...prev[studentId], asramaCleanliness: e.target.value }
+                                        }))}
+                                        placeholder="Misal: Piket kamar rajin..."
+                                      />
+                                      <FormInput
+                                        type="text"
+                                        label="Ibadah Harian"
+                                        value={inputs.asramaWorship || ""}
+                                        onChange={(e) => setStudentJournalInputs(prev => ({
+                                          ...prev,
+                                          [studentId]: { ...prev[studentId], asramaWorship: e.target.value }
+                                        }))}
+                                        placeholder="Misal: Salat berjamaah tepat waktu..."
+                                      />
+                                      <FormInput
+                                        type="text"
+                                        label="Kehadiran"
+                                        value={inputs.asramaAttendance || ""}
+                                        onChange={(e) => setStudentJournalInputs(prev => ({
+                                          ...prev,
+                                          [studentId]: { ...prev[studentId], asramaAttendance: e.target.value }
+                                        }))}
+                                        placeholder="Kehadiran kajian, makan..."
+                                      />
+                                      <FormInput
+                                        type="text"
+                                        label="Kedisiplinan Asrama"
+                                        value={inputs.asramaDiscipline || ""}
+                                        onChange={(e) => setStudentJournalInputs(prev => ({
+                                          ...prev,
+                                          [studentId]: { ...prev[studentId], asramaDiscipline: e.target.value }
+                                        }))}
+                                        placeholder="Jam tidur, jam belajar..."
+                                      />
+                                      <FormInput
+                                        type="text"
+                                        label="Interaksi Sosial"
+                                        value={inputs.asramaSocialInteraction || ""}
+                                        onChange={(e) => setStudentJournalInputs(prev => ({
+                                          ...prev,
+                                          [studentId]: { ...prev[studentId], asramaSocialInteraction: e.target.value }
+                                        }))}
+                                        placeholder="Sosialisasi sesama santri..."
+                                      />
+                                    </div>
+                                    <FormInput
+                                      type="text"
+                                      label="Catatan Pengasuhan"
+                                      value={inputs.asramaNotes || ""}
+                                      onChange={(e) => setStudentJournalInputs(prev => ({
+                                        ...prev,
+                                        [studentId]: { ...prev[studentId], asramaNotes: e.target.value }
+                                      }))}
+                                      placeholder="Catatan pengasuhan asrama..."
+                                    />
+                                  </div>
+                                </>
+                              )}
+                            </>
+                          )}
 
                           {/* 5. PERMASALAHAN KHUSUS */}
                           <div className="bg-rose-50/20 dark:bg-rose-950/10 p-3.5 rounded-xl border border-rose-100 dark:border-rose-900/30 space-y-3">
@@ -2087,7 +2430,7 @@ export const MusrifJournals: React.FC = () => {
           {/* General Notes & Status selection */}
           <div className="space-y-4">
             <FormTextarea
-              label="Catatan Umum Halaqah (Kendala, Capaian Kelas, Rencana Berikutnya)"
+              label={isActiveMusrif ? "Catatan Umum Asrama (Kendala, Rencana Pembinaan Berikutnya)" : "Catatan Umum Halaqah (Kendala, Capaian Kelas, Rencana Berikutnya)"}
               value={journalGeneralNotes}
               onChange={(e) => setJournalGeneralNotes(e.target.value)}
               placeholder="Contoh: Alhamdulillah KBM berjalan hikmat, 3 santri berhasil mencapai target munaqosyah..."
@@ -2141,128 +2484,166 @@ export const MusrifJournals: React.FC = () => {
       <Dialog
         isOpen={isJournalDetailOpen}
         onClose={() => setIsJournalDetailOpen(false)}
-        title="Detail Kegiatan Halaqah & Perkembangan Santri"
+        title={selectedJournal && (!!selectedJournal.entryType || selectedJournal.activityType === "Pendampingan") ? "Detail Jurnal Asrama & Perkembangan Santri" : "Detail Jurnal Halaqah & Perkembangan Santri"}
         size="2xl"
       >
-        {selectedJournal && (
-          <div className="space-y-6">
-            <div className="p-4 bg-slate-50 dark:bg-zinc-800/40 border border-slate-200 dark:border-zinc-800 rounded-xl grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
-              <div>
-                <span className="font-semibold text-slate-500 uppercase">Musrif Halaqah</span>
-                <span className="font-bold text-slate-800 dark:text-zinc-200 text-sm block mt-0.5">{selectedJournal.musrifName}</span>
+        {selectedJournal && (() => {
+          const isViewedJournalAsrama = !!selectedJournal.entryType || selectedJournal.activityType === "Pendampingan";
+          return (
+            <div className="space-y-6">
+              <div className="p-4 bg-slate-50 dark:bg-zinc-800/40 border border-slate-200 dark:border-zinc-800 rounded-xl grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
+                <div>
+                  <span className="font-semibold text-slate-500 uppercase">{isViewedJournalAsrama ? "Musrif Asrama" : "Guru Halaqoh"}</span>
+                  <span className="font-bold text-slate-800 dark:text-zinc-200 text-sm block mt-0.5">{selectedJournal.musrifName}</span>
+                </div>
+                <div>
+                  <span className="font-semibold text-slate-500 uppercase">{isViewedJournalAsrama ? "Kelompok Asrama" : "Kelompok Halaqah"}</span>
+                  <span className="font-bold text-slate-800 dark:text-zinc-200 text-sm block mt-0.5">{selectedJournal.groupName}</span>
+                </div>
+                <div>
+                  <span className="font-semibold text-slate-500 uppercase">Tanggal / Hari</span>
+                  <span className="font-bold text-slate-800 dark:text-zinc-200 text-sm block mt-0.5">
+                    {new Date(selectedJournal.date).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })} ({selectedJournal.dayName})
+                  </span>
+                </div>
+                <div>
+                  <span className="font-semibold text-slate-500 uppercase">Waktu / {isViewedJournalAsrama ? "Sistem" : "Aktivitas"}</span>
+                  <span className="font-bold text-slate-800 dark:text-zinc-200 text-sm block mt-0.5">
+                    {selectedJournal.startTime} - {selectedJournal.endTime} ({selectedJournal.entryType ? `${selectedJournal.entryType} Entry` : selectedJournal.activityType})
+                  </span>
+                </div>
               </div>
-              <div>
-                <span className="font-semibold text-slate-500 uppercase">Kelompok</span>
-                <span className="font-bold text-slate-800 dark:text-zinc-200 text-sm block mt-0.5">{selectedJournal.groupName}</span>
-              </div>
-              <div>
-                <span className="font-semibold text-slate-500 uppercase">Tanggal / Hari</span>
-                <span className="font-bold text-slate-800 dark:text-zinc-200 text-sm block mt-0.5">
-                  {new Date(selectedJournal.date).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })} ({selectedJournal.dayName})
-                </span>
-              </div>
-              <div>
-                <span className="font-semibold text-slate-500 uppercase">Waktu / Aktivitas</span>
-                <span className="font-bold text-slate-800 dark:text-zinc-200 text-sm block mt-0.5">
-                  {selectedJournal.startTime} - {selectedJournal.endTime} ({selectedJournal.activityType})
-                </span>
-              </div>
-            </div>
 
-            {/* List of Student entries readonly cards */}
-            <div className="space-y-4">
-              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Hasil Perkembangan Santri ({selectedJournalDetails.length})</span>
-              
-              <div className="space-y-4 max-h-96 overflow-y-auto">
-                {selectedJournalDetails.map((detail) => (
-                  <div key={detail.id} className="p-4 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl space-y-3">
-                    <div className="flex items-center justify-between border-b border-slate-100 dark:border-zinc-800 pb-1.5">
-                      <span className="font-bold text-slate-800 dark:text-zinc-200 text-sm">{detail.studentName}</span>
-                      <span className={`px-2 py-0.5 text-[10px] font-bold rounded-lg ${
-                        detail.attendance === "Hadir"
-                          ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
-                          : "bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300"
-                      }`}>
-                        {detail.attendance}
-                      </span>
-                    </div>
-
-                    {detail.attendance === "Hadir" ? (
-                      <div className="space-y-3 text-xs text-slate-600 dark:text-zinc-300">
-                        {/* 1. TAHSIN */}
-                        <div className="bg-blue-50/20 dark:bg-blue-950/10 p-2.5 rounded-lg border border-blue-100 dark:border-blue-900/30">
-                          <span className="font-bold text-blue-700 dark:text-blue-400 block mb-1">1. Evaluasi Tahsin (Membaca)</span>
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] mt-1">
-                            <div><strong>Makhraj:</strong> {detail.tahsinMakhraj || "-"}</div>
-                            <div><strong>Tajwid:</strong> {detail.tahsinTajwid || "-"}</div>
-                            <div><strong>Kelancaran:</strong> {detail.tahsinFluency || "-"}</div>
-                          </div>
-                          {detail.tahsinNotes && <p className="text-[11px] mt-1.5 text-slate-500 dark:text-zinc-400 italic"><strong>Catatan:</strong> "{detail.tahsinNotes}"</p>}
-                        </div>
-
-                        {/* 2. TAHFIZH */}
-                        <div className="bg-emerald-50/20 dark:bg-emerald-950/10 p-2.5 rounded-lg border border-emerald-100 dark:border-emerald-900/30">
-                          <span className="font-bold text-emerald-700 dark:text-emerald-400 block mb-1">2. Progres Tahfizh (Hafalan)</span>
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] mt-1">
-                            <div><strong>Surat/Ayat/Halaman:</strong> {detail.tahfizhSurah || "-"} / {detail.tahfizhAyat || "-"} / {detail.tahfizhHalaman || "-"}</div>
-                            <div><strong>Hafalan Baru:</strong> {detail.tahfizhNewMemorization || "-"}</div>
-                            <div><strong>Muraja'ah:</strong> {detail.tahfizhMurajaah || "-"}</div>
-                          </div>
-                          <div className="text-[11px] mt-1"><strong>Kelancaran Hafalan:</strong> {detail.tahfizhFluency || "-"}</div>
-                          {detail.tahfizhNotes && <p className="text-[11px] mt-1.5 text-slate-500 dark:text-zinc-400 italic"><strong>Catatan:</strong> "{detail.tahfizhNotes}"</p>}
-                        </div>
-
-                        {/* 3. ADAB */}
-                        <div className="bg-purple-50/20 dark:bg-purple-950/10 p-2.5 rounded-lg border border-purple-100 dark:border-purple-900/30">
-                          <span className="font-bold text-purple-700 dark:text-purple-400 block mb-1">3. Adab dan Akhlak Santri</span>
-                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px] mt-1">
-                            <div><strong>Disiplin:</strong> {detail.adabDiscipline || "-"}</div>
-                            <div><strong>Kerapian:</strong> {detail.adabNeatness || "-"}</div>
-                            <div><strong>Sopan:</strong> {detail.adabPoliteness || "-"}</div>
-                            <div><strong>Jujur:</strong> {detail.adabHonesty || "-"}</div>
-                            <div><strong>Tanggung Jawab:</strong> {detail.adabResponsibility || "-"}</div>
-                            <div><strong>Kerjasama:</strong> {detail.adabCooperation || "-"}</div>
-                          </div>
-                          {detail.adabNotes && <p className="text-[11px] mt-1.5 text-slate-500 dark:text-zinc-400 italic"><strong>Catatan:</strong> "{detail.adabNotes}"</p>}
-                        </div>
-
-                        {/* 4. ASRAMA */}
-                        <div className="bg-amber-50/20 dark:bg-amber-950/10 p-2.5 rounded-lg border border-amber-100 dark:border-amber-900/30">
-                          <span className="font-bold text-amber-700 dark:text-amber-400 block mb-1">4. Kehidupan & Mutaba'ah Asrama</span>
-                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px] mt-1">
-                            <div><strong>Kebersihan:</strong> {detail.asramaCleanliness || "-"}</div>
-                            <div><strong>Ibadah:</strong> {detail.asramaWorship || "-"}</div>
-                            <div><strong>Kehadiran:</strong> {detail.asramaAttendance || "-"}</div>
-                            <div><strong>Disiplin:</strong> {detail.asramaDiscipline || "-"}</div>
-                            <div><strong>Interaksi:</strong> {detail.asramaSocialInteraction || "-"}</div>
-                          </div>
-                          {detail.asramaNotes && <p className="text-[11px] mt-1.5 text-slate-500 dark:text-zinc-400 italic"><strong>Catatan:</strong> "{detail.asramaNotes}"</p>}
-                        </div>
-
-                        {/* 5. PERMASALAHAN KHUSUS */}
-                        {detail.specialIssues && (
-                          <div className="bg-rose-50/20 dark:bg-rose-950/10 p-2.5 rounded-lg border border-rose-100 dark:border-rose-900/30">
-                            <span className="font-bold text-rose-700 dark:text-rose-400 block mb-1">5. Permasalahan Khusus</span>
-                            <p className="text-[11px] text-rose-950 dark:text-rose-300 font-medium whitespace-pre-wrap mt-1">"{detail.specialIssues}"</p>
-                          </div>
+              {/* List of Student entries readonly cards */}
+              <div className="space-y-4">
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Hasil Perkembangan Santri ({selectedJournalDetails.length})</span>
+                
+                <div className="space-y-4 max-h-96 overflow-y-auto">
+                  {selectedJournalDetails.map((detail) => (
+                    <div key={detail.id} className="p-4 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl space-y-3">
+                      <div className="flex items-center justify-between border-b border-slate-100 dark:border-zinc-800 pb-1.5">
+                        <span className="font-bold text-slate-800 dark:text-zinc-200 text-sm">{detail.studentName}</span>
+                        {!isViewedJournalAsrama && (
+                          <span className={`px-2 py-0.5 text-[10px] font-bold rounded-lg ${
+                            detail.attendance === "Hadir"
+                              ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+                              : "bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300"
+                          }`}>
+                            {detail.attendance}
+                          </span>
                         )}
                       </div>
-                    ) : (
-                      <span className="text-xs text-slate-400 font-semibold italic">Santri tidak hadir, data perkembangan hafalan ditiadakan.</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
 
-            {/* General notes & Supporting links read only */}
-            <div className="space-y-4 border-t border-slate-100 dark:border-zinc-800 pt-4">
-              {selectedJournal.generalNotes && (
-                <div>
-                  <span className="text-xs font-bold text-slate-500 uppercase block">Catatan Umum / Kendala Halaqah</span>
-                  <p className="text-sm text-slate-700 dark:text-zinc-300 mt-1 bg-slate-50 dark:bg-zinc-800/40 p-3 rounded-xl border border-slate-200 dark:border-zinc-800 whitespace-pre-wrap">{selectedJournal.generalNotes}</p>
+                      {detail.attendance === "Hadir" || isViewedJournalAsrama ? (
+                        <div className="space-y-3 text-xs text-slate-600 dark:text-zinc-300">
+                          {!isViewedJournalAsrama && (
+                            <>
+                              {/* 1. TAHSIN */}
+                              <div className="bg-blue-50/20 dark:bg-blue-950/10 p-2.5 rounded-lg border border-blue-100 dark:border-blue-900/30">
+                                <span className="font-bold text-blue-700 dark:text-blue-400 block mb-1">1. Evaluasi Tahsin (Membaca)</span>
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] mt-1">
+                                  <div><strong>Makhraj:</strong> {detail.tahsinMakhraj || "-"}</div>
+                                  <div><strong>Tajwid:</strong> {detail.tahsinTajwid || "-"}</div>
+                                  <div><strong>Kelancaran:</strong> {detail.tahsinFluency || "-"}</div>
+                                </div>
+                                {detail.tahsinNotes && <p className="text-[11px] mt-1.5 text-slate-500 dark:text-zinc-400 italic"><strong>Catatan:</strong> "{detail.tahsinNotes}"</p>}
+                              </div>
+
+                              {/* 2. TAHFIZH */}
+                              <div className="bg-emerald-50/20 dark:bg-emerald-950/10 p-2.5 rounded-lg border border-emerald-100 dark:border-emerald-900/30">
+                                <span className="font-bold text-emerald-700 dark:text-emerald-400 block mb-1">2. Progres Tahfizh (Hafalan)</span>
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] mt-1">
+                                  <div><strong>Surat/Ayat/Halaman:</strong> {detail.tahfizhSurah || "-"} / {detail.tahfizhAyat || "-"} / {detail.tahfizhHalaman || "-"}</div>
+                                  <div><strong>Hafalan Baru:</strong> {detail.tahfizhNewMemorization || "-"}</div>
+                                  <div><strong>Muraja'ah:</strong> {detail.tahfizhMurajaah || "-"}</div>
+                                </div>
+                                <div className="text-[11px] mt-1"><strong>Kelancaran Hafalan:</strong> {detail.tahfizhFluency || "-"}</div>
+                                {detail.tahfizhNotes && <p className="text-[11px] mt-1.5 text-slate-500 dark:text-zinc-400 italic"><strong>Catatan:</strong> "{detail.tahfizhNotes}"</p>}
+                              </div>
+                            </>
+                          )}
+
+                          {isViewedJournalAsrama ? (
+                            <>
+                              {/* 3. ADAB - TERBUKA */}
+                              <div className="bg-purple-50/20 dark:bg-purple-950/10 p-2.5 rounded-lg border border-purple-100 dark:border-purple-900/30">
+                                <span className="font-bold text-purple-700 dark:text-purple-400 block mb-1">3. Adab dan Akhlak Santri (Terbuka)</span>
+                                <p className="text-[11px] text-slate-700 dark:text-zinc-300 whitespace-pre-wrap mt-1">{detail.adabNotes || "-"}</p>
+                              </div>
+
+                              {/* 4. ASRAMA - TERBUKA */}
+                              <div className="bg-amber-50/20 dark:bg-amber-950/10 p-2.5 rounded-lg border border-amber-100 dark:border-amber-900/30 space-y-2">
+                                <div>
+                                  <span className="font-bold text-amber-700 dark:text-amber-400 block mb-0.5 text-[11px]">4a. Amalan Ibadah</span>
+                                  <p className="text-[11px] text-slate-700 dark:text-zinc-300 whitespace-pre-wrap mt-1">{detail.asramaWorship || "-"}</p>
+                                </div>
+                                <div>
+                                  <span className="font-bold text-amber-700 dark:text-amber-400 block mb-0.5 text-[11px]">4b. Interaksi Sosial</span>
+                                  <p className="text-[11px] text-slate-700 dark:text-zinc-300 whitespace-pre-wrap mt-1">{detail.asramaSocialInteraction || "-"}</p>
+                                </div>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              {showAdabAsrama && (
+                                <>
+                                  {/* 3. ADAB */}
+                                  <div className="bg-purple-50/20 dark:bg-purple-950/10 p-2.5 rounded-lg border border-purple-100 dark:border-purple-900/30">
+                                    <span className="font-bold text-purple-700 dark:text-purple-400 block mb-1">3. Adab dan Akhlak Santri</span>
+                                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px] mt-1">
+                                      <div><strong>Disiplin:</strong> {detail.adabDiscipline || "-"}</div>
+                                      <div><strong>Kerapian:</strong> {detail.adabNeatness || "-"}</div>
+                                      <div><strong>Sopan:</strong> {detail.adabPoliteness || "-"}</div>
+                                      <div><strong>Jujur:</strong> {detail.adabHonesty || "-"}</div>
+                                      <div><strong>Tanggung Jawab:</strong> {detail.adabResponsibility || "-"}</div>
+                                      <div><strong>Kerjasama:</strong> {detail.adabCooperation || "-"}</div>
+                                    </div>
+                                    {detail.adabNotes && <p className="text-[11px] mt-1.5 text-slate-500 dark:text-zinc-400 italic"><strong>Catatan:</strong> "{detail.adabNotes}"</p>}
+                                  </div>
+
+                                  {/* 4. ASRAMA */}
+                                  <div className="bg-amber-50/20 dark:bg-amber-950/10 p-2.5 rounded-lg border border-amber-100 dark:border-amber-900/30">
+                                    <span className="font-bold text-amber-700 dark:text-amber-400 block mb-1">4. Kehidupan & Mutaba'ah Asrama</span>
+                                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px] mt-1">
+                                      <div><strong>Kebersihan:</strong> {detail.asramaCleanliness || "-"}</div>
+                                      <div><strong>Ibadah:</strong> {detail.asramaWorship || "-"}</div>
+                                      <div><strong>Kehadiran:</strong> {detail.asramaAttendance || "-"}</div>
+                                      <div><strong>Disiplin:</strong> {detail.asramaDiscipline || "-"}</div>
+                                      <div><strong>Interaksi:</strong> {detail.asramaSocialInteraction || "-"}</div>
+                                    </div>
+                                    {detail.asramaNotes && <p className="text-[11px] mt-1.5 text-slate-500 dark:text-zinc-400 italic"><strong>Catatan:</strong> "{detail.asramaNotes}"</p>}
+                                  </div>
+                                </>
+                              )}
+                            </>
+                          )}
+
+                          {/* 5. PERMASALAHAN KHUSUS */}
+                          {detail.specialIssues && (
+                            <div className="bg-rose-50/20 dark:bg-rose-950/10 p-2.5 rounded-lg border border-rose-100 dark:border-rose-900/30">
+                              <span className="font-bold text-rose-700 dark:text-rose-400 block mb-1">5. Permasalahan Khusus</span>
+                              <p className="text-[11px] text-rose-950 dark:text-rose-300 font-medium whitespace-pre-wrap mt-1">"{detail.specialIssues}"</p>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-slate-400 font-semibold italic">Santri tidak hadir, data perkembangan ditiadakan.</span>
+                      )}
+                    </div>
+                  ))}
                 </div>
-              )}
+              </div>
+
+              {/* General notes & Supporting links read only */}
+              <div className="space-y-4 border-t border-slate-100 dark:border-zinc-800 pt-4">
+                {selectedJournal.generalNotes && (
+                  <div>
+                    <span className="text-xs font-bold text-slate-500 uppercase block">
+                      {isViewedJournalAsrama ? "Catatan Umum / Kendala Asrama" : "Catatan Umum / Kendala Halaqah"}
+                    </span>
+                    <p className="text-sm text-slate-700 dark:text-zinc-300 mt-1 bg-slate-50 dark:bg-zinc-800/40 p-3 rounded-xl border border-slate-200 dark:border-zinc-800 whitespace-pre-wrap">{selectedJournal.generalNotes}</p>
+                  </div>
+                )}
 
               {selectedJournal.supportingLink && (
                 <div className="p-4 bg-blue-50 border border-blue-100 dark:bg-blue-950/20 dark:border-blue-900/30 rounded-xl flex items-center justify-between text-xs">
@@ -2292,7 +2673,8 @@ export const MusrifJournals: React.FC = () => {
               </button>
             </div>
           </div>
-        )}
+          );
+        })()}
       </Dialog>
 
       {/* Custom Confirmation Dialog for destructive operations */}

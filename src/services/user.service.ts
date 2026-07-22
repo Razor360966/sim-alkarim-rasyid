@@ -442,6 +442,33 @@ export const userService = {
     }
   },
 
+  // Update female user haid status (Normal / Haid)
+  async updateUserHaidStatus(
+    targetUserId: string,
+    haidStatus: "Normal" | "Haid",
+    operatorId: string,
+    operatorName: string
+  ): Promise<void> {
+    try {
+      const docRef = doc(db, COLLECTION_NAME, targetUserId);
+      await updateDoc(docRef, {
+        haidStatus,
+        updatedAt: serverTimestamp(),
+        updatedBy: operatorId
+      });
+
+      await logActivity(
+        operatorId,
+        operatorName,
+        "UPDATE_HAID_STATUS",
+        targetUserId,
+        `Mengubah status haid menjadi "${haidStatus}".`
+      );
+    } catch (error) {
+      return handleFirestoreError(error, OperationType.WRITE, `${COLLECTION_NAME}/${targetUserId}`);
+    }
+  },
+
   // Create account with a temporary password (Admin Action) using a Secondary Auth App
   async createNewAccount(
     email: string,

@@ -570,6 +570,13 @@ export const academicPlanningService = {
         if (detail) {
           // Calculate week index
           const weekIdx = this.getWeekIndexInMonth(dateObj);
+          if (Array.isArray(detail.weeks) && detail.weeks[weekIdx]) {
+            const isEffective = detail.weeks[weekIdx].isEffective === true;
+            return { 
+              isEffective, 
+              notes: isEffective ? "Hari Efektif KBM" : (detail.weeks[weekIdx].notes || detail.notes || "Minggu Tidak Efektif") 
+            };
+          }
           const isEffective = weekIdx < Number(detail.effectiveWeeks);
           return { isEffective, notes: isEffective ? "Hari Efektif KBM" : (detail.notes || "Minggu Tidak Efektif") };
         }
@@ -589,6 +596,13 @@ export const academicPlanningService = {
       }
       
       const weekIdx = this.getWeekIndexInMonth(dateObj);
+      if (Array.isArray(detail.weeks) && detail.weeks[weekIdx]) {
+        const isEffective = detail.weeks[weekIdx].isEffective === true;
+        return { 
+          isEffective, 
+          notes: isEffective ? "Hari Efektif KBM" : (detail.weeks[weekIdx].notes || detail.notes || "Minggu Tidak Efektif") 
+        };
+      }
       const isEffective = weekIdx < detail.effectiveWeeks;
       return { isEffective, notes: isEffective ? "Hari Efektif KBM" : (detail.notes || "Minggu Tidak Efektif") };
     } catch (error) {
@@ -613,7 +627,7 @@ export const academicPlanningService = {
     daysInMonth.forEach((d) => {
       currentWeek.push(d);
       const dayName = indonesianDays[d.getDay()];
-      if (dayName === "Minggu" || d.getDate() === daysInMonth.length) {
+      if (dayName === "Jumat" || d.getDate() === daysInMonth.length) {
         weeks.push(currentWeek);
         currentWeek = [];
       }
@@ -801,45 +815,12 @@ export const academicPlanningService = {
     startDate: string,
     endDate: string,
     academicYearId: string,
-    semesterId: string
+    semesterId: string,
+    bypassManual: boolean = false
   ): Promise<EffectiveWeeksAnalysis> {
-    try {
-      if (semesterId) {
-        const semRef = doc(db, "semesters", semesterId);
-        const semSnap = await getDoc(semRef);
-        if (semSnap.exists()) {
-          const semData = semSnap.data();
-          if (semData.manualWeeksConfigured) {
-            const totalWeeks = Number(semData.totalWeeks) || 0;
-            const effectiveWeeks = Number(semData.effectiveWeeks) || 0;
-            const ineffectiveWeeks = Number(semData.ineffectiveWeeks) || 0;
-            return {
-              academicYearId,
-              semesterId,
-              totalWeeks,
-              effectiveWeeks,
-              ineffectiveWeeks,
-              details: semData.details || [],
-              manualWeeksConfigured: true,
-              assessmentWeeks: Number(semData.assessmentWeeks) || 0,
-              pasPatWeeks: Number(semData.pasPatWeeks) || 0,
-              projectWeeks: Number(semData.projectWeeks) || 0,
-              otherWeeks: Number(semData.otherWeeks) || 0
-            };
-          }
-        }
-      }
-    } catch (err) {
-      console.error("Error checking manual weeks config:", err);
-    }
-
     const daysAnalysis = await this.analyzeEffectiveDays(startDate, endDate, academicYearId, semesterId);
     
-    // Group days by calendar weeks (a week starts on Monday or standard grouping)
-    // We can group by standard ISO week number or by chunking into groups of 7 starting from startDate
-    // Standard school week analysis: weeks are categorized under months.
-    // Let's group details by month, and for each month we calculate how many calendar weeks it has,
-    // and how many of those are effective.
+    // Group days by calendar weeks
     const monthNames = [
       "Januari", "Februari", "Maret", "April", "Mei", "Juni", 
       "Juli", "Agustus", "September", "Oktober", "November", "Desember"
@@ -865,15 +846,14 @@ export const academicPlanningService = {
     const details: EffectiveWeeksAnalysis["details"] = [];
 
     monthsMap.forEach((data, monthKey) => {
-      // Chunk days in this month into weeks (e.g. groups of 7 days, or group by standard Monday-Sunday weeks)
-      // Let's group by standard week boundaries (Monday to Sunday)
+      // Chunk days in this month into weeks (Saturday to Friday boundaries)
       const weeks: (typeof daysAnalysis.details)[] = [];
       let currentWeek: typeof daysAnalysis.details = [];
 
       data.days.forEach((day, index) => {
         currentWeek.push(day);
-        // If Sunday or end of month, push week
-        if (day.dayName === "Minggu" || index === data.days.length - 1) {
+        // If Friday (Jumat) or end of month, push week
+        if (day.dayName === "Jumat" || index === data.days.length - 1) {
           weeks.push(currentWeek);
           currentWeek = [];
         }
@@ -883,22 +863,37 @@ export const academicPlanningService = {
       let ineffectiveInMonth = 0;
       const holidayNotes: string[] = [];
 
-      weeks.forEach((week) => {
+      const mappedWeeks = weeks.map((weekDays, wIdx) => {
         // A week is effective if there are at least 3 effective days in it
-        const effectiveDaysInWeek = week.filter(d => d.isEffective).length;
-        if (effectiveDaysInWeek >= 3) {
+        const effectiveDaysInWeek = weekDays.filter(d => d.isEffective).length;
+        const isEffective = effectiveDaysInWeek >= 3;
+        
+        if (isEffective) {
           effectiveInMonth++;
         } else {
           ineffectiveInMonth++;
-          // Gather notes on why it is ineffective
-          week.forEach(d => {
-            if (d.events.length > 0) {
-              d.events.forEach(e => {
-                if (!holidayNotes.includes(e)) holidayNotes.push(e);
-              });
-            }
-          });
         }
+
+        const weekHolidayNotes: string[] = [];
+        weekDays.forEach(d => {
+          if (d.events.length > 0) {
+            d.events.forEach(e => {
+              if (!weekHolidayNotes.includes(e)) weekHolidayNotes.push(e);
+            });
+          }
+        });
+
+        const notes = weekHolidayNotes.length > 0 ? weekHolidayNotes.join(", ") : "";
+        if (notes && !isEffective) {
+          if (!holidayNotes.includes(notes)) holidayNotes.push(notes);
+        }
+
+        return {
+          weekNum: wIdx + 1,
+          isEffective,
+          notes: notes || (isEffective ? "" : "Minggu Tidak Efektif"),
+          dates: weekDays.map(d => d.date)
+        };
       });
 
       const totalInMonth = weeks.length;
@@ -916,9 +911,93 @@ export const academicPlanningService = {
           "IX": effectiveInMonth
         },
         ineffectiveWeeks: ineffectiveInMonth,
-        notes: holidayNotes.length > 0 ? holidayNotes.join(", ") : "Hari efektif belajar penuh"
-      });
+        notes: holidayNotes.length > 0 ? holidayNotes.join(", ") : "Hari efektif belajar penuh",
+        weeks: mappedWeeks
+      } as any);
     });
+
+    let manualWeeksConfigured = false;
+    let assessmentWeeks = 0;
+    let pasPatWeeks = 0;
+    let projectWeeks = 0;
+    let otherWeeks = 0;
+
+    try {
+      if (semesterId && !bypassManual) {
+        const semRef = doc(db, "semesters", semesterId);
+        const semSnap = await getDoc(semRef);
+        if (semSnap.exists()) {
+          const semData = semSnap.data();
+          if (semData.manualWeeksConfigured) {
+            manualWeeksConfigured = true;
+            assessmentWeeks = Number(semData.assessmentWeeks) || 0;
+            pasPatWeeks = Number(semData.pasPatWeeks) || 0;
+            projectWeeks = Number(semData.projectWeeks) || 0;
+            otherWeeks = Number(semData.otherWeeks) || 0;
+
+            const storedDetails = semData.details || [];
+            
+            if (storedDetails.length > 0) {
+              // Ensure every month in storedDetails has a valid weeks array
+              storedDetails.forEach((storedMonth: any) => {
+                if (!Array.isArray(storedMonth.weeks)) {
+                  storedMonth.weeks = [];
+                }
+                
+                // If weeks list is empty but totalWeeks > 0, reconstruct it
+                if (storedMonth.weeks.length === 0 && storedMonth.totalWeeks > 0) {
+                  const storedEffCount = Number(storedMonth.effectiveWeeks) || 0;
+                  storedMonth.weeks = Array.from({ length: storedMonth.totalWeeks }, (_, idx) => {
+                    const isEff = idx < storedEffCount;
+                    return {
+                      weekNum: idx + 1,
+                      isEffective: isEff,
+                      notes: isEff ? "" : (storedMonth.notes || "Minggu Tidak Efektif"),
+                      dates: []
+                    };
+                  });
+                }
+                
+                // Recalculate monthly totals for consistency
+                const mTotal = storedMonth.weeks.length;
+                const mEff = storedMonth.weeks.filter((w: any) => w.isEffective).length;
+                const mIneff = mTotal - mEff;
+                const mNotesList = storedMonth.weeks.filter((w: any) => !w.isEffective).map((w: any) => w.notes).filter(Boolean);
+
+                storedMonth.totalWeeks = mTotal;
+                storedMonth.effectiveWeeks = mEff;
+                storedMonth.ineffectiveWeeks = mIneff;
+                storedMonth.effectiveWeeksByGrade = {
+                  "VII": mEff,
+                  "VIII": mEff,
+                  "IX": mEff
+                };
+                storedMonth.notes = mNotesList.length > 0 ? mNotesList.join(", ") : "Hari efektif belajar penuh";
+              });
+
+              // Merge any dynamically computed months that are not in storedDetails
+              details.forEach((computedMonth: any) => {
+                const exists = storedDetails.some((sm: any) => sm.month === computedMonth.month || sm.month.startsWith(computedMonth.month));
+                if (!exists) {
+                  storedDetails.push(computedMonth);
+                }
+              });
+
+              // Replace details with storedDetails
+              details.length = 0;
+              details.push(...storedDetails);
+            }
+
+            // Recalculate the overall semester summaries
+            totalWeeksSum = details.reduce((sum, m) => sum + m.totalWeeks, 0);
+            effectiveWeeksSum = details.reduce((sum, m) => sum + m.effectiveWeeks, 0);
+            ineffectiveWeeksSum = totalWeeksSum - effectiveWeeksSum;
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Error checking manual weeks config:", err);
+    }
 
     return {
       academicYearId,
@@ -926,7 +1005,12 @@ export const academicPlanningService = {
       totalWeeks: totalWeeksSum,
       effectiveWeeks: effectiveWeeksSum,
       ineffectiveWeeks: ineffectiveWeeksSum,
-      details
+      details,
+      manualWeeksConfigured,
+      assessmentWeeks,
+      pasPatWeeks,
+      projectWeeks,
+      otherWeeks
     };
   },
 

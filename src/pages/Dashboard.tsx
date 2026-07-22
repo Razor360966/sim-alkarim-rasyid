@@ -1016,17 +1016,16 @@ export const Dashboard: React.FC = () => {
           </Link>
 
           {/* Mutaba'ah */}
-          <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-150 dark:border-zinc-800 p-5 flex items-center gap-4 hover:shadow-md transition-all shadow-xs">
+          <Link to="/mutabaah-harian?tab=saya" className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-150 dark:border-zinc-800 p-5 flex items-center gap-4 hover:shadow-md hover:border-rose-500/30 transition-all shadow-xs">
             <div className="h-11 w-11 rounded-xl bg-rose-50 dark:bg-rose-950/20 flex items-center justify-center text-rose-600 dark:text-rose-400">
               <Heart className="h-5.5 w-5.5" />
             </div>
             <div>
               <p className="text-[10px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">Mutaba'ah</p>
-              {/* No mutaba'ah-yaumiyah tracking service is wired up yet — show real 0% instead of a fabricated sample value */}
-              <h3 className="text-lg font-extrabold text-slate-800 dark:text-white mt-0.5">0% Target</h3>
-              <span className="text-[9px] text-rose-600 font-bold bg-rose-50 dark:bg-rose-950/40 px-1.5 py-0.5 rounded mt-1 inline-block">Belum ada data</span>
+              <h3 className="text-lg font-extrabold text-slate-800 dark:text-white mt-0.5">Ruhiyah GTK</h3>
+              <span className="text-[9px] text-rose-600 font-bold bg-rose-50 dark:bg-rose-950/40 px-1.5 py-0.5 rounded mt-1 inline-block">Evaluasi Spiritual Saya</span>
             </div>
-          </div>
+          </Link>
         </div>
 
         {/* Guru Planning Progress Indicator Panel */}
@@ -1205,12 +1204,13 @@ export const Dashboard: React.FC = () => {
           <div className="space-y-6">
             <div className="bg-white dark:bg-zinc-900 border border-slate-150 dark:border-zinc-800 rounded-3xl p-6 shadow-xs">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="font-bold text-slate-800 dark:text-white text-sm">Poin Mutaba'ah Yaumiyah</h3>
+                <h3 className="font-bold text-slate-800 dark:text-white text-sm">Amalan Mutaba'ah Ruhiyah</h3>
               </div>
-              {/* No mutaba'ah-yaumiyah tracking service is wired up yet — show an honest empty state
-                  instead of a fabricated sample checklist with fake percentages. */}
-              <div className="p-6 bg-slate-50 dark:bg-zinc-950/35 border border-slate-100 dark:border-zinc-850 rounded-2xl text-center text-xs text-slate-400 font-medium">
-                Belum ada data Mutaba'ah Yaumiyah.
+              <div className="p-4 bg-slate-50 dark:bg-zinc-950/35 border border-slate-100 dark:border-zinc-850 rounded-2xl text-center text-xs space-y-3">
+                <p className="text-slate-500 font-medium">Pantau dan isi evaluasi amalan harian spiritualitas secara rutin untuk membina ruhiyah diri.</p>
+                <Link to="/mutabaah-harian" className="inline-block px-4 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer">
+                  Isi Mutaba'ah Saya
+                </Link>
               </div>
             </div>
 
@@ -1299,6 +1299,343 @@ export const Dashboard: React.FC = () => {
                 </p>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ==========================================
+  // 2B. GURU HALAQOH DASHBOARD VIEW
+  // ==========================================
+  if (viewingRole === "guru halaqoh" || viewingRole === "guru_halaqoh") {
+    const totalMyGroups = musrifStats?.totalGroups || 0;
+    const totalMyStudents = musrifStats?.totalStudents || 0;
+    const countFilledToday = musrifStats?.countFilledToday || 0;
+    const unfilledStudents = musrifStats?.unfilledStudents || [];
+    const todayEvents = events.filter(e => {
+      const start = e.startDate || e.date || "";
+      const end = e.endDate || e.date || "";
+      return todayStr >= start && todayStr <= end;
+    });
+
+    const fillPercentage = totalMyStudents > 0 ? Math.round((countFilledToday / totalMyStudents) * 100) : 0;
+
+    return wrapWithSwitcher(
+      <div className="space-y-8 animate-fade-in">
+        {/* Welcome Banner */}
+        <div className="relative overflow-hidden bg-gradient-to-r from-emerald-700 via-teal-700 to-cyan-900 text-white rounded-3xl p-8 shadow-lg border border-teal-500/10">
+          <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
+            <BookOpen className="h-44 w-44" />
+          </div>
+          <div className="max-w-2xl space-y-3 relative z-10">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-white/10 backdrop-blur-md rounded-full text-xs font-semibold tracking-wide">
+              <Sparkles className="h-3.5 w-3.5 text-amber-300 animate-pulse" />
+              <span>Pusat Aktivitas Guru Halaqoh & Pengajar Al-Qur'an</span>
+            </div>
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
+              Ahlan Wa Sahlan, {getGreetingTitle()} {user?.displayName}!
+            </h1>
+            <p className="text-sm text-teal-50 leading-relaxed font-light">
+              Selamat datang di Dashboard Halaqah Qur'an Anda. Kelola mutabaah harian halaqah, setoran Tahfidz, evaluasi Tahsin tajwid & makhraj, serta pantau progres hafalan santri secara terpusat.
+            </p>
+          </div>
+        </div>
+
+        {/* Stats Bento Grid for Guru Halaqoh */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Kelompok Halaqah */}
+          <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-150 dark:border-zinc-800 p-5 flex items-center gap-4 hover:shadow-md transition-all shadow-xs">
+            <div className="h-12 w-12 rounded-xl bg-teal-50 dark:bg-teal-950/20 flex items-center justify-center text-teal-600 dark:text-teal-400 shrink-0">
+              <School className="h-6 w-6" />
+            </div>
+            <div>
+              <p className="text-[10px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">Kelompok Halaqah</p>
+              <h3 className="text-lg font-black text-slate-800 dark:text-white mt-1">
+                {totalMyGroups} {totalMyGroups > 0 ? "Kelompok" : "Belum Ditugaskan"}
+              </h3>
+              <p className="text-[10px] text-slate-500 dark:text-zinc-400 mt-1 truncate max-w-[180px]">
+                {myGroups.map(g => g.groupName).join(", ") || "Belum ada kelompok binaan"}
+              </p>
+            </div>
+          </div>
+
+          {/* Santri Binaan */}
+          <Link to="/musrif-journals?tab=kelompok" className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-150 dark:border-zinc-800 p-5 flex items-center gap-4 hover:shadow-md hover:border-teal-500/30 transition-all shadow-xs">
+            <div className="h-12 w-12 rounded-xl bg-cyan-50 dark:bg-cyan-950/20 flex items-center justify-center text-cyan-600 dark:text-cyan-400 shrink-0">
+              <Users className="h-6 w-6" />
+            </div>
+            <div>
+              <p className="text-[10px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">Santri Halaqah</p>
+              <h3 className="text-lg font-black text-slate-800 dark:text-white mt-1">{totalMyStudents} Santri</h3>
+              <p className="text-[10px] text-cyan-600 dark:text-cyan-400 font-bold mt-1 hover:underline">Kelola Kelompok &rarr;</p>
+            </div>
+          </Link>
+
+          {/* Jurnal Halaqah Hari Ini */}
+          <Link to="/musrif-journals?tab=jurnal" className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-150 dark:border-zinc-800 p-5 flex items-center gap-4 hover:shadow-md hover:border-emerald-500/30 transition-all shadow-xs">
+            <div className="h-12 w-12 rounded-xl bg-emerald-50 dark:bg-emerald-950/20 flex items-center justify-center text-emerald-600 dark:text-emerald-400 shrink-0">
+              <BookOpenCheck className="h-6 w-6" />
+            </div>
+            <div>
+              <p className="text-[10px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">Jurnal Halaqah Hari Ini</p>
+              <h3 className="text-lg font-black text-slate-800 dark:text-white mt-1">{countFilledToday} / {totalMyStudents}</h3>
+              <div className="flex items-center gap-1.5 mt-1">
+                <div className="h-1.5 w-16 bg-slate-100 dark:bg-zinc-800 rounded-full overflow-hidden shrink-0">
+                  <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${fillPercentage}%` }} />
+                </div>
+                <span className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400">{fillPercentage}%</span>
+              </div>
+            </div>
+          </Link>
+
+          {/* Capaian Tahfizh Card */}
+          <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-150 dark:border-zinc-800 p-5 flex items-center gap-4 hover:shadow-md transition-all shadow-xs">
+            <div className="h-12 w-12 rounded-xl bg-amber-50 dark:bg-amber-950/20 flex items-center justify-center text-amber-600 dark:text-amber-400 shrink-0">
+              <Award className="h-6 w-6" />
+            </div>
+            <div>
+              <p className="text-[10px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">Setoran Hafalan</p>
+              <h3 className="text-lg font-black text-slate-800 dark:text-white mt-1">
+                {musrifStats?.totalTahfizhSetoran || 0} Setoran
+              </h3>
+              <p className="text-[9px] text-slate-500 font-medium mt-1">
+                Total tercatat di halaqah semester ini
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Content Section */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* LEFT COLUMN: Operational Status, Agenda & Unfilled Students */}
+          <div className="lg:col-span-2 space-y-6">
+            
+            {/* Jurnal Halaqah & Mutaba'ah Tracker */}
+            <div className="bg-white dark:bg-zinc-900 border border-slate-150 dark:border-zinc-800 rounded-3xl p-6 shadow-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 pb-4 border-b border-slate-100 dark:border-zinc-800">
+                <div>
+                  <h3 className="font-bold text-slate-800 dark:text-white text-sm">Jurnal Halaqah & Mutaba'ah Qur'an</h3>
+                  <p className="text-xs text-slate-400 dark:text-zinc-500 mt-0.5">Daftar santri halaqah yang belum memperoleh input tahsin/tahfidz hari ini</p>
+                </div>
+                <Link
+                  to="/musrif-journals?tab=jurnal"
+                  className="px-3.5 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs shrink-0 cursor-pointer text-center"
+                >
+                  Buka Halaqah & Input Jurnal
+                </Link>
+              </div>
+
+              {unfilledStudents.length === 0 ? (
+                <div className="p-8 bg-emerald-50/50 dark:bg-emerald-950/10 border border-emerald-100/30 dark:border-emerald-900/30 rounded-2xl text-center flex flex-col items-center justify-center space-y-2">
+                  <CheckCircle className="h-8 w-8 text-emerald-600 dark:text-emerald-400 animate-bounce" />
+                  <h4 className="text-xs font-black text-emerald-800 dark:text-emerald-400">Alhamdulillah, Tugas Selesai!</h4>
+                  <p className="text-[11px] text-slate-500 dark:text-zinc-400 leading-relaxed max-w-sm">
+                    Seluruh {totalMyStudents} santri halaqah Anda sudah diisi perkembangan Qur'annya hari ini ({new Date().toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long" })}).
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-rose-600 dark:text-rose-400 uppercase bg-rose-50 dark:bg-rose-950/20 px-2.5 py-1 rounded-full border border-rose-100 dark:border-rose-900/30">
+                      Perlu Diisi ({unfilledStudents.length} Santri)
+                    </span>
+                    <span className="text-[10px] text-slate-400">Tanggal Halaqah: {todayStr}</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {unfilledStudents.slice(0, 12).map((member, idx) => (
+                      <div key={idx} className="p-3 bg-slate-50 dark:bg-zinc-800/40 border border-slate-100 dark:border-zinc-850 rounded-2xl flex flex-col justify-between hover:shadow-xs transition-shadow">
+                        <span className="text-xs font-bold text-slate-800 dark:text-zinc-200 truncate">{member.studentName}</span>
+                        <div className="flex items-center justify-between mt-2 pt-1 border-t border-slate-200/40 dark:border-zinc-800/40 text-[9px] text-slate-400">
+                          <span>{member.className || "Tanpa Kelas"}</span>
+                          <Link to="/musrif-journals?tab=jurnal" className="text-teal-600 dark:text-teal-400 font-bold hover:underline">Isi &rarr;</Link>
+                        </div>
+                      </div>
+                    ))}
+                    {unfilledStudents.length > 12 && (
+                      <Link to="/musrif-journals?tab=jurnal" className="p-3 bg-slate-50 hover:bg-slate-100 dark:bg-zinc-800/30 dark:hover:bg-zinc-800/50 border border-slate-100 dark:border-zinc-850 rounded-2xl flex items-center justify-center font-bold text-xs text-teal-600 dark:text-teal-400 cursor-pointer">
+                        + {unfilledStudents.length - 12} Santri Lainnya
+                      </Link>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Ringkasan Perkembangan Al-Qur'an */}
+            <div className="bg-white dark:bg-zinc-900 border border-slate-150 dark:border-zinc-800 rounded-3xl p-6 shadow-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 pb-4 border-b border-slate-100 dark:border-zinc-800">
+                <div>
+                  <h3 className="font-bold text-slate-800 dark:text-white text-sm">Rangkuman Capaian Halaqah Qur'an</h3>
+                  <p className="text-xs text-slate-400 dark:text-zinc-500 mt-0.5">Analitik kompetensi Al-Qur'an kumulatif santri binaan</p>
+                </div>
+                <Link
+                  to="/musrif-journals?tab=rekap"
+                  className="text-xs font-bold text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-0.5 cursor-pointer"
+                >
+                  Detail Rekap Halaqah &rarr;
+                </Link>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                {/* Tahfizh Widget */}
+                <div className="p-4 bg-emerald-50/20 dark:bg-emerald-950/5 border border-slate-100 dark:border-zinc-850 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-emerald-800 dark:text-emerald-400">I. Capaian Tahfizh</span>
+                    <TrendingUp className="h-4 w-4 text-emerald-600" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <h3 className="text-3xl font-black text-slate-800 dark:text-white">{musrifStats?.totalTahfizhSetoran || 0}</h3>
+                    <p className="text-[10px] text-slate-500 dark:text-zinc-400 font-medium">Total setoran hafalan Qur'an terekam selama semester ini</p>
+                  </div>
+                </div>
+
+                {/* Tahsin Widget */}
+                <div className="p-4 bg-teal-50/20 dark:bg-teal-950/5 border border-slate-100 dark:border-zinc-850 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-teal-800 dark:text-teal-400">II. Kompetensi Tahsin</span>
+                    <Activity className="h-4 w-4 text-teal-600" />
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="text-3xl font-black text-slate-800 dark:text-white">
+                      {musrifStats && musrifStats.totalTahsinRatings > 0 ? `${musrifStats.tahsinOkPct}%` : "-"}
+                    </h3>
+                    <p className="text-[10px] text-slate-500 dark:text-zinc-400 font-medium">
+                      {musrifStats && musrifStats.totalTahsinRatings > 0 ? "Santri berpredikat tajwid & makhraj Baik/Sangat Baik" : "Belum ada inputan tahsin"}
+                    </p>
+                    {musrifStats && musrifStats.totalTahsinRatings > 0 && (
+                      <div className="h-1.5 w-full bg-slate-100 dark:bg-zinc-800 rounded-full overflow-hidden">
+                        <div className="h-full bg-teal-500 rounded-full" style={{ width: `${musrifStats.tahsinOkPct}%` }} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          {/* RIGHT COLUMN: My Halaqah Groups & Academic Supervision */}
+          <div className="space-y-6">
+            
+            {/* Kelompok Halaqah List */}
+            <div className="bg-white dark:bg-zinc-900 border border-slate-150 dark:border-zinc-800 rounded-3xl p-6 shadow-xs">
+              <h3 className="font-bold text-slate-800 dark:text-white text-sm mb-4">Daftar Kelompok Halaqah Saya</h3>
+              
+              {myGroups.length === 0 ? (
+                <div className="p-6 bg-slate-50 dark:bg-zinc-950/35 border border-slate-100 dark:border-zinc-850 rounded-2xl text-center text-xs text-slate-400">
+                  Belum ada kelompok halaqah yang ditugaskan kepada Anda.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {myGroups.map((grp) => {
+                    const groupStudents = allMembers.filter(m => m.groupId === grp.id);
+                    return (
+                      <div key={grp.id} className="p-4 bg-slate-50 dark:bg-zinc-800/40 border border-slate-100 dark:border-zinc-850 rounded-2xl space-y-1">
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-bold text-slate-800 dark:text-zinc-200 text-xs">{grp.groupName}</h4>
+                          <span className="text-[10px] font-mono font-bold text-teal-600 bg-teal-50 dark:bg-teal-950/30 px-2 py-0.5 rounded-md">
+                            {groupStudents.length} Santri
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          Lokasi: {grp.location || "-"} | Deskripsi: {grp.description || "-"}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Agenda Pesantren Pekan Ini */}
+            <div className="bg-white dark:bg-zinc-900 border border-slate-150 dark:border-zinc-800 rounded-3xl p-6 shadow-xs">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-bold text-slate-800 dark:text-white text-sm">Agenda Sekolah Hari Ini</h3>
+                <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-0.5 rounded-full border border-emerald-100 dark:border-emerald-900/30 shrink-0">
+                  Kalender Akademik
+                </span>
+              </div>
+
+              {todayEvents.length === 0 ? (
+                <div className="p-6 bg-slate-50 dark:bg-zinc-950/35 border border-slate-100 dark:border-zinc-850 rounded-2xl text-center text-xs text-slate-400">
+                  Tidak ada agenda kegiatan khusus hari ini.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {todayEvents.map((evt, idx) => {
+                    const styles = getCategoryStyles(evt.categoryName || evt.categoryId);
+                    return (
+                      <div key={idx} className="flex gap-3 p-3.5 bg-slate-50 dark:bg-zinc-800/45 border border-slate-100 dark:border-zinc-850 rounded-2xl">
+                        <div className="w-1.5 rounded-full shrink-0" style={{ backgroundColor: styles.color }} />
+                        <div className="flex-1 min-w-0">
+                          <span className={`px-2 py-0.5 rounded text-[8px] font-extrabold uppercase border ${styles.bg} ${styles.text} ${styles.border}`}>
+                            {evt.categoryName || "Pesantren"}
+                          </span>
+                          <h4 className="text-xs font-bold text-slate-800 dark:text-white mt-1.5 truncate">{evt.title}</h4>
+                          {evt.description && (
+                            <p className="text-[10px] text-slate-400 dark:text-zinc-500 mt-0.5 line-clamp-1">{evt.description}</p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Supervisi Akademik */}
+            <div className="bg-white dark:bg-zinc-900 border border-slate-150 dark:border-zinc-800 rounded-3xl p-6 shadow-xs">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-bold text-slate-800 dark:text-white text-sm">Supervisi Akademik Saya</h3>
+                <span className="text-[10px] font-bold text-teal-600 dark:text-teal-400 uppercase bg-teal-50/70 dark:bg-teal-950/20 px-2 py-0.5 rounded-md">
+                  HALAQAH
+                </span>
+              </div>
+
+              {nextAcademicSupervision ? (
+                <div className="p-4 bg-teal-50/40 dark:bg-teal-950/10 border border-teal-100 dark:border-teal-900/30 rounded-2xl space-y-2">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-teal-800 dark:text-teal-400">
+                    <Clock className="h-4 w-4 text-teal-600" />
+                    <span>Jadwal Supervisi Terdekat</span>
+                  </div>
+                  <div className="text-xs space-y-1 text-slate-600 dark:text-zinc-350">
+                    <div><span className="text-slate-400 font-medium">Tanggal:</span> <strong>{new Date(nextAcademicSupervision.date).toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</strong></div>
+                    <div><span className="text-slate-400 font-medium">Supervisor:</span> <strong>{nextAcademicSupervision.supervisorName}</strong></div>
+                    <div><span className="text-slate-400 font-medium">Aspek:</span> <strong>{nextAcademicSupervision.instrumentName}</strong></div>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-4 bg-slate-50 dark:bg-zinc-950/30 border border-slate-100 dark:border-zinc-850 rounded-2xl text-center text-xs text-slate-400">
+                  Belum ada jadwal supervisi akademik terdekat.
+                </div>
+              )}
+
+              {latestCompletedAcademic ? (
+                <div className="mt-4 p-4 bg-emerald-50/45 dark:bg-emerald-950/10 border border-emerald-100 dark:border-emerald-900/30 rounded-2xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-800 dark:text-emerald-400">
+                      <CheckCircle className="h-4 w-4 text-emerald-600" />
+                      <span>Evaluasi Terakhir</span>
+                    </div>
+                    <span className="text-xs font-black text-emerald-700 bg-emerald-100 dark:bg-emerald-950/40 px-2 py-0.5 rounded">
+                      {latestCompletedAcademic.score}
+                    </span>
+                  </div>
+                  
+                  {latestCompletedAcademic.rtlText && (
+                    <div className="text-xs space-y-1.5 border-t border-slate-200/50 dark:border-zinc-800/50 pt-2">
+                      <div className="text-[10px] uppercase font-bold text-slate-400">Tindak Lanjut Halaqah:</div>
+                      <p className="italic text-slate-600 dark:text-zinc-300 font-medium bg-white dark:bg-zinc-900 p-2 rounded-lg border border-slate-100 dark:border-zinc-800">
+                        "{latestCompletedAcademic.rtlText}"
+                      </p>
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+
           </div>
         </div>
       </div>

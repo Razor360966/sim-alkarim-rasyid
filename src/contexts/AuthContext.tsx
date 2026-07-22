@@ -107,7 +107,8 @@ const buildProfile = async (dbUser: any): Promise<UserProfile> => {
     tempatLahir: dbUser.tempatLahir || "",
     tanggalLahir: dbUser.tanggalLahir || "",
     sertifikasi: dbUser.sertifikasi || "",
-    gender: gender
+    gender: gender,
+    haidStatus: dbUser.haidStatus || "Normal"
   };
 };
 
@@ -158,6 +159,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           // Create standard UserProfile object
           const mappedProfile = await buildProfile(profile);
+          const storedActiveRole = localStorage.getItem(`active_role_${mappedProfile.uid}`);
+          if (storedActiveRole && mappedProfile.roles?.includes(storedActiveRole)) {
+            mappedProfile.role = storedActiveRole;
+          }
           setUser(mappedProfile);
         } else {
           setUser(null);
@@ -209,6 +214,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         
         const mappedProfile = await buildProfile(dbUser);
+        const storedActiveRole = localStorage.getItem(`active_role_${mappedProfile.uid}`);
+        if (storedActiveRole && mappedProfile.roles?.includes(storedActiveRole)) {
+          mappedProfile.role = storedActiveRole;
+        }
         setUser(mappedProfile);
         return mappedProfile;
       }
@@ -260,8 +269,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const switchRole = (newRole: string) => {
     if (user && user.roles?.includes(newRole)) {
       setUser(prev => prev ? { ...prev, role: newRole } : null);
-      toast(`Berhasil beralih ke peran: ${newRole.toUpperCase()}`, "success");
+      localStorage.setItem(`active_role_${user.uid}`, newRole);
+      toast(`Berhasil beralih ke peran: ${capitalizeRoleDisplay(newRole)}`, "success");
     }
+  };
+
+  const capitalizeRoleDisplay = (roleName: string) => {
+    if (!roleName) return "";
+    if (roleName === "musrif") return "Musrif";
+    if (roleName === "guru halaqoh") return "Guru Halaqoh";
+    return roleName.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
   };
 
   if (loading) {

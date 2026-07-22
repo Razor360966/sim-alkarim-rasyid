@@ -12,6 +12,15 @@ export interface SdmMutabaahIndicator {
   createdAt: string;
   updatedAt: string;
   updatedBy: string;
+
+  // Smart Mutabaah Fields
+  frequency: "waktu" | "harian" | "mingguan" | "bulanan";
+  applicableDays?: string[]; // ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
+  startTime?: string; // "HH:MM" e.g., "04:30"
+  endTime?: string; // "HH:MM" e.g., "06:00"
+  appliesToMale?: boolean;
+  appliesToFemale?: boolean;
+  excludeDuringHaid?: boolean;
 }
 
 export interface SdmMutabaahTemplate {
@@ -24,6 +33,13 @@ export interface SdmMutabaahTemplate {
   updatedBy: string;
 }
 
+export interface SdmMutabaahEntryChange {
+  timestamp: string;
+  updatedBy: string;
+  oldValues: Record<string, any>;
+  newValues: Record<string, any>;
+}
+
 export interface SdmMutabaahEntry {
   id: string; // format: `${userId}_${date}`
   userId: string;
@@ -33,6 +49,9 @@ export interface SdmMutabaahEntry {
   values: Record<string, any>; // mapping indicatorId -> value
   attachmentUrls?: Record<string, string>; // mapping indicatorId -> simulated file URL/description
   compliancePercentage: number;
+  userHaidStatus?: "Normal" | "Haid";
+  gender?: "L" | "P";
+  history?: SdmMutabaahEntryChange[];
   createdAt: string;
   updatedAt: string;
 }

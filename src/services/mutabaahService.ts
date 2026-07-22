@@ -11,7 +11,7 @@ import {
   orderBy
 } from "firebase/firestore";
 import { db, handleFirestoreError, OperationType } from "../firebase/config";
-import { SdmMutabaahIndicator, SdmMutabaahTemplate, SdmMutabaahEntry, SdmMutabaahChangeLog } from "../types";
+import { SdmMutabaahIndicator, SdmMutabaahTemplate, SdmMutabaahEntry, SdmMutabaahChangeLog, SdmMutabaahEntryChange } from "../types";
 
 const INDICATORS_COLLECTION = "mutabaah_indicators";
 const TEMPLATES_COLLECTION = "mutabaah_templates";
@@ -19,341 +19,284 @@ const ENTRIES_COLLECTION = "mutabaah_entries";
 const LOGS_COLLECTION = "mutabaah_logs";
 
 const DEFAULT_INDICATORS: Omit<SdmMutabaahIndicator, "createdAt" | "updatedAt" | "updatedBy">[] = [
+  // --- IBADAH WAJIB ---
   {
-    id: "m_shalat_jamaah",
+    id: "m_shalat_berjamaah",
     name: "Shalat Berjamaah",
-    category: "Ibadah",
-    inputType: "choice",
-    target: 5,
-    unit: "waktu per hari",
-    applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah"],
-    weight: 10,
-    isActive: true,
-    isArchived: false,
-  },
-  {
-    id: "m_shalat_tahajud",
-    name: "Shalat Tahajud",
-    category: "Ibadah",
+    category: "Ibadah Wajib",
     inputType: "boolean",
     target: 1,
-    unit: "kali per hari",
-    applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah"],
-    weight: 5,
-    isActive: true,
-    isArchived: false,
-  },
-  {
-    id: "m_shalat_dhuha",
-    name: "Shalat Dhuha",
-    category: "Ibadah",
-    inputType: "boolean",
-    target: 1,
-    unit: "kali per hari",
-    applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah"],
-    weight: 5,
-    isActive: true,
-    isArchived: false,
-  },
-  {
-    id: "m_tilawah",
-    name: "Tilawah Quran",
-    category: "Literasi",
-    inputType: "number",
-    target: 2,
-    unit: "halaman per hari",
-    applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah"],
+    unit: "waktu",
+    applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah", "tata usaha"],
     weight: 15,
     isActive: true,
     isArchived: false,
+    frequency: "harian",
+    applicableDays: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"],
+    appliesToMale: true,
+    appliesToFemale: true,
+    excludeDuringHaid: true
   },
   {
-    id: "m_murajaah",
-    name: "Murajaah Hafalan",
-    category: "Tahfizh",
-    inputType: "number",
-    target: 2,
-    unit: "halaman per hari",
-    applicableRoles: ["musrif"],
-    weight: 10,
-    isActive: true,
-    isArchived: false,
-  },
-  {
-    id: "m_ziyadah",
-    name: "Ziyadah Hafalan",
-    category: "Tahfizh",
-    inputType: "number",
-    target: 5,
-    unit: "ayat per hari",
-    applicableRoles: ["musrif"],
-    weight: 10,
-    isActive: true,
-    isArchived: false,
-  },
-  {
-    id: "m_target_hafalan",
-    name: "Target Penambahan Hafalan",
-    category: "Tahfizh",
-    inputType: "percentage",
-    target: 100,
-    unit: "persen per semester",
-    applicableRoles: ["musrif"],
-    weight: 10,
-    isActive: true,
-    isArchived: false,
-  },
-  {
-    id: "m_puasa_sunnah",
-    name: "Puasa Sunnah",
-    category: "Ibadah",
+    id: "m_shalat_tepat_waktu",
+    name: "Ketepatan Waktu Shalat",
+    category: "Ibadah Wajib",
     inputType: "boolean",
-    target: 8,
-    unit: "kali per bulan",
-    applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah"],
-    weight: 5,
+    target: 1,
+    unit: "waktu",
+    applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah", "tata usaha"],
+    weight: 15,
     isActive: true,
     isArchived: false,
+    frequency: "harian",
+    applicableDays: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"],
+    appliesToMale: true,
+    appliesToFemale: true,
+    excludeDuringHaid: true
+  },
+  {
+    id: "m_tilawah",
+    name: "Tilawah Al-Qur'an",
+    category: "Ibadah Wajib",
+    inputType: "boolean",
+    target: 1,
+    unit: "lembar",
+    applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah", "tata usaha"],
+    weight: 15,
+    isActive: true,
+    isArchived: false,
+    frequency: "harian",
+    applicableDays: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"],
+    appliesToMale: true,
+    appliesToFemale: true,
+    excludeDuringHaid: true
   },
   {
     id: "m_dzikir",
     name: "Dzikir Pagi & Petang",
-    category: "Ibadah",
+    category: "Ibadah Wajib",
     inputType: "boolean",
-    target: 2,
-    unit: "kali per hari",
-    applicableRoles: ["musrif"],
-    weight: 5,
-    isActive: true,
-    isArchived: false,
-  },
-  {
-    id: "m_membaca_buku",
-    name: "Membaca Buku",
-    category: "Literasi",
-    inputType: "number",
     target: 1,
-    unit: "buku per bulan",
-    applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah"],
-    weight: 5,
-    isActive: true,
-    isArchived: false,
-  },
-  {
-    id: "m_resume_buku",
-    name: "Resume Buku",
-    category: "Literasi",
-    inputType: "text",
-    target: 1,
-    unit: "resume per bulan",
-    applicableRoles: ["musrif"],
-    weight: 5,
-    isActive: true,
-    isArchived: false,
-  },
-  {
-    id: "m_kehadiran",
-    name: "Kehadiran Tugas",
-    category: "Kedisiplinan",
-    inputType: "choice",
-    target: 100,
-    unit: "persen",
-    applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah"],
+    unit: "kali",
+    applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah", "tata usaha"],
     weight: 10,
     isActive: true,
     isArchived: false,
+    frequency: "harian",
+    applicableDays: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"],
+    appliesToMale: true,
+    appliesToFemale: true,
+    excludeDuringHaid: false
+  },
+
+  // --- IBADAH SUNNAH ---
+  {
+    id: "m_puasa_senin",
+    name: "Puasa Sunnah Senin",
+    category: "Ibadah Sunnah",
+    inputType: "boolean",
+    target: 1,
+    unit: "kali",
+    applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah", "tata usaha"],
+    weight: 10,
+    isActive: true,
+    isArchived: false,
+    frequency: "harian",
+    applicableDays: ["Senin"],
+    appliesToMale: true,
+    appliesToFemale: true,
+    excludeDuringHaid: true
+  },
+  {
+    id: "m_puasa_kamis",
+    name: "Puasa Sunnah Kamis",
+    category: "Ibadah Sunnah",
+    inputType: "boolean",
+    target: 1,
+    unit: "kali",
+    applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah", "tata usaha"],
+    weight: 10,
+    isActive: true,
+    isArchived: false,
+    frequency: "harian",
+    applicableDays: ["Kamis"],
+    appliesToMale: true,
+    appliesToFemale: true,
+    excludeDuringHaid: true
+  },
+  {
+    id: "m_shalat_dhuha",
+    name: "Shalat Dhuha",
+    category: "Ibadah Sunnah",
+    inputType: "boolean",
+    target: 1,
+    unit: "kali",
+    applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah", "tata usaha"],
+    weight: 10,
+    isActive: true,
+    isArchived: false,
+    frequency: "harian",
+    applicableDays: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"],
+    appliesToMale: true,
+    appliesToFemale: true,
+    excludeDuringHaid: true
+  },
+  {
+    id: "m_qiyamul_lail",
+    name: "Qiyamul Lail (Tahajud)",
+    category: "Ibadah Sunnah",
+    inputType: "boolean",
+    target: 1,
+    unit: "kali",
+    applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah", "tata usaha"],
+    weight: 10,
+    isActive: true,
+    isArchived: false,
+    frequency: "harian",
+    applicableDays: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"],
+    appliesToMale: true,
+    appliesToFemale: true,
+    excludeDuringHaid: true
+  },
+
+  // --- RUHIYAH ---
+  {
+    id: "m_kajian",
+    name: "Mengikuti Kajian Keislaman",
+    category: "Ruhiyah",
+    inputType: "boolean",
+    target: 1,
+    unit: "kali",
+    applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah", "tata usaha"],
+    weight: 10,
+    isActive: true,
+    isArchived: false,
+    frequency: "harian",
+    applicableDays: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"],
+    appliesToMale: true,
+    appliesToFemale: true,
+    excludeDuringHaid: false
+  },
+  {
+    id: "m_muhasabah",
+    name: "Muhasabah Diri",
+    category: "Ruhiyah",
+    inputType: "boolean",
+    target: 1,
+    unit: "kali",
+    applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah", "tata usaha"],
+    weight: 10,
+    isActive: true,
+    isArchived: false,
+    frequency: "harian",
+    applicableDays: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"],
+    appliesToMale: true,
+    appliesToFemale: true,
+    excludeDuringHaid: false
+  },
+  {
+    id: "m_sedekah",
+    name: "Sedekah Harian / Infaq",
+    category: "Ruhiyah",
+    inputType: "boolean",
+    target: 1,
+    unit: "kali",
+    applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah", "tata usaha"],
+    weight: 10,
+    isActive: true,
+    isArchived: false,
+    frequency: "harian",
+    applicableDays: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"],
+    appliesToMale: true,
+    appliesToFemale: true,
+    excludeDuringHaid: false
+  },
+  {
+    id: "m_doa",
+    name: "Membaca Doa Harian & Al-Ma'tsurat",
+    category: "Ruhiyah",
+    inputType: "boolean",
+    target: 1,
+    unit: "kali",
+    applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah", "tata usaha"],
+    weight: 10,
+    isActive: true,
+    isArchived: false,
+    frequency: "harian",
+    applicableDays: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"],
+    appliesToMale: true,
+    appliesToFemale: true,
+    excludeDuringHaid: false
+  },
+
+  // --- AKHLAK ---
+  {
+    id: "m_amanah",
+    name: "Amanah dalam Mengemban Tugas",
+    category: "Akhlak",
+    inputType: "boolean",
+    target: 1,
+    unit: "kali",
+    applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah", "tata usaha"],
+    weight: 10,
+    isActive: true,
+    isArchived: false,
+    frequency: "harian",
+    applicableDays: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"],
+    appliesToMale: true,
+    appliesToFemale: true,
+    excludeDuringHaid: false
+  },
+  {
+    id: "m_disiplin",
+    name: "Disiplin Kehadiran & Waktu Kegiatan",
+    category: "Akhlak",
+    inputType: "boolean",
+    target: 1,
+    unit: "kali",
+    applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah", "tata usaha"],
+    weight: 10,
+    isActive: true,
+    isArchived: false,
+    frequency: "harian",
+    applicableDays: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"],
+    appliesToMale: true,
+    appliesToFemale: true,
+    excludeDuringHaid: false
   },
   {
     id: "m_keteladanan",
-    name: "Keteladanan Sikap",
-    category: "Adab",
-    inputType: "choice",
-    target: 100,
-    unit: "persen",
-    applicableRoles: ["musrif"],
-    weight: 5,
-    isActive: true,
-    isArchived: false,
-  },
-  {
-    id: "m_pembinaan_santri",
-    name: "Pembinaan Santri",
-    category: "Pembinaan",
-    inputType: "choice",
-    target: 100,
-    unit: "persen",
-    applicableRoles: ["musrif"],
+    name: "Menampilkan Keteladanan Sikap & Adab",
+    category: "Akhlak",
+    inputType: "boolean",
+    target: 1,
+    unit: "kali",
+    applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah", "tata usaha"],
     weight: 10,
     isActive: true,
     isArchived: false,
+    frequency: "harian",
+    applicableDays: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"],
+    appliesToMale: true,
+    appliesToFemale: true,
+    excludeDuringHaid: false
   },
   {
-    id: "m_administrasi_halaqah",
-    name: "Administrasi Halaqah",
-    category: "Administrasi",
+    id: "m_menjaga_lisan",
+    name: "Menjaga Lisan & Sikap Hormat",
+    category: "Akhlak",
     inputType: "boolean",
     target: 1,
-    unit: "kali per minggu",
-    applicableRoles: ["musrif"],
-    weight: 20,
-    isActive: true,
-    isArchived: false,
-  },
-  {
-    id: "g_administrasi_pembelajaran",
-    name: "Administrasi Pembelajaran",
-    category: "Administrasi",
-    inputType: "boolean",
-    target: 1,
-    unit: "kali per minggu",
-    applicableRoles: ["guru"],
-    weight: 20,
-    isActive: true,
-    isArchived: false,
-  },
-  {
-    id: "g_modul_ajar",
-    name: "Penyusunan Modul Ajar",
-    category: "Administrasi",
-    inputType: "boolean",
-    target: 1,
-    unit: "modul per bab",
-    applicableRoles: ["guru"],
-    weight: 15,
-    isActive: true,
-    isArchived: false,
-  },
-  {
-    id: "g_pengembangan_diri",
-    name: "Pengembangan Diri",
-    category: "Pengembangan Diri",
-    inputType: "choice",
-    target: 2,
-    unit: "pelatihan per semester",
-    applicableRoles: ["guru", "staff", "wakil kepala sekolah", "kepala sekolah"],
+    unit: "kali",
+    applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah", "tata usaha"],
     weight: 10,
     isActive: true,
     isArchived: false,
-  },
-  {
-    id: "s_ketepatan_pelayanan",
-    name: "Ketepatan Pelayanan",
-    category: "Kedisiplinan",
-    inputType: "choice",
-    target: 100,
-    unit: "persen",
-    applicableRoles: ["staff"],
-    weight: 25,
-    isActive: true,
-    isArchived: false,
-  },
-  {
-    id: "s_administrasi_staff",
-    name: "Administrasi Kantor",
-    category: "Administrasi",
-    inputType: "choice",
-    target: 100,
-    unit: "persen",
-    applicableRoles: ["staff"],
-    weight: 20,
-    isActive: true,
-    isArchived: false,
-  },
-  {
-    id: "ks_supervisi_akademik",
-    name: "Supervisi Akademik",
-    category: "Kepemimpinan",
-    inputType: "number",
-    target: 5,
-    unit: "guru per semester",
-    applicableRoles: ["kepala sekolah"],
-    weight: 15,
-    isActive: true,
-    isArchived: false,
-  },
-  {
-    id: "ks_supervisi_manajerial",
-    name: "Supervisi Manajerial",
-    category: "Kepemimpinan",
-    inputType: "number",
-    target: 2,
-    unit: "kali per semester",
-    applicableRoles: ["kepala sekolah"],
-    weight: 15,
-    isActive: true,
-    isArchived: false,
-  },
-  {
-    id: "ks_monitoring_guru",
-    name: "Monitoring Guru",
-    category: "Kepemimpinan",
-    inputType: "boolean",
-    target: 1,
-    unit: "kali per minggu",
-    applicableRoles: ["kepala sekolah"],
-    weight: 10,
-    isActive: true,
-    isArchived: false,
-  },
-  {
-    id: "ks_monitoring_staff",
-    name: "Monitoring Staff",
-    category: "Kepemimpinan",
-    inputType: "boolean",
-    target: 1,
-    unit: "kali per minggu",
-    applicableRoles: ["kepala sekolah"],
-    weight: 10,
-    isActive: true,
-    isArchived: false,
-  },
-  {
-    id: "ks_monitoring_musrif",
-    name: "Monitoring Musrif",
-    category: "Kepemimpinan",
-    inputType: "boolean",
-    target: 1,
-    unit: "kali per minggu",
-    applicableRoles: ["kepala sekolah"],
-    weight: 10,
-    isActive: true,
-    isArchived: false,
-  },
-  {
-    id: "ks_koordinasi",
-    name: "Rapat Koordinasi",
-    category: "Kepemimpinan",
-    inputType: "boolean",
-    target: 1,
-    unit: "kali per minggu",
-    applicableRoles: ["kepala sekolah", "wakil kepala sekolah"],
-    weight: 10,
-    isActive: true,
-    isArchived: false,
-  },
-  {
-    id: "wk_monitoring_bidang",
-    name: "Monitoring Bidang",
-    category: "Kepemimpinan",
-    inputType: "boolean",
-    target: 1,
-    unit: "kali per minggu",
-    applicableRoles: ["wakil kepala sekolah"],
-    weight: 20,
-    isActive: true,
-    isArchived: false,
-  },
-  {
-    id: "wk_supervisi",
-    name: "Supervisi Bidang Kerja",
-    category: "Kepemimpinan",
-    inputType: "choice",
-    target: 100,
-    unit: "persen",
-    applicableRoles: ["wakil kepala sekolah"],
-    weight: 20,
-    isActive: true,
-    isArchived: false,
+    frequency: "harian",
+    applicableDays: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"],
+    appliesToMale: true,
+    appliesToFemale: true,
+    excludeDuringHaid: false
   }
 ];
 
@@ -373,7 +316,7 @@ export const mutabaahService = {
             createdAt: now,
             updatedAt: now,
             updatedBy: "System Seeder"
-          };
+          } as SdmMutabaahIndicator;
           await setDoc(docRef, fullInd);
         });
         await Promise.all(promises);
@@ -382,14 +325,38 @@ export const mutabaahService = {
         const newSnapshot = await getDocs(colRef);
         const items: SdmMutabaahIndicator[] = [];
         newSnapshot.forEach((docSnap) => {
-          items.push({ id: docSnap.id, ...docSnap.data() } as SdmMutabaahIndicator);
+          const data = docSnap.data();
+          items.push({
+            id: docSnap.id,
+            ...data,
+            category: data.category || "Ibadah Wajib",
+            frequency: data.frequency || "harian",
+            applicableDays: data.applicableDays || ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"],
+            startTime: data.startTime || "",
+            endTime: data.endTime || "",
+            appliesToMale: data.appliesToMale !== undefined ? data.appliesToMale : true,
+            appliesToFemale: data.appliesToFemale !== undefined ? data.appliesToFemale : true,
+            excludeDuringHaid: data.excludeDuringHaid !== undefined ? data.excludeDuringHaid : false,
+          } as SdmMutabaahIndicator);
         });
         return items;
       }
 
       const items: SdmMutabaahIndicator[] = [];
       snapshot.forEach((docSnap) => {
-        items.push({ id: docSnap.id, ...docSnap.data() } as SdmMutabaahIndicator);
+        const data = docSnap.data();
+        items.push({
+          id: docSnap.id,
+          ...data,
+          category: data.category || "Ibadah Wajib",
+          frequency: data.frequency || "harian",
+          applicableDays: data.applicableDays || ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"],
+          startTime: data.startTime || "",
+          endTime: data.endTime || "",
+          appliesToMale: data.appliesToMale !== undefined ? data.appliesToMale : true,
+          appliesToFemale: data.appliesToFemale !== undefined ? data.appliesToFemale : true,
+          excludeDuringHaid: data.excludeDuringHaid !== undefined ? data.excludeDuringHaid : false,
+        } as SdmMutabaahIndicator);
       });
       return items;
     } catch (error) {
@@ -405,22 +372,30 @@ export const mutabaahService = {
       const existingSnap = await getDoc(docRef);
       const isNew = !existingSnap.exists();
       
-      const payload = {
+      const rawPayload = {
         ...indicator,
+        category: indicator.category || "Ibadah Wajib",
         updatedAt: now,
         updatedBy: operatorName
       };
 
+      const payload: Record<string, any> = {};
+      Object.entries(rawPayload).forEach(([k, v]) => {
+        if (v !== undefined) {
+          payload[k] = v;
+        }
+      });
+
       if (isNew) {
-        (payload as any).createdAt = now;
-        (payload as any).isActive = true;
-        (payload as any).isArchived = false;
+        payload.createdAt = now;
+        payload.isActive = payload.isActive !== undefined ? payload.isActive : true;
+        payload.isArchived = payload.isArchived !== undefined ? payload.isArchived : false;
         await setDoc(docRef, payload);
         await this.logChange({
           operatorId,
           operatorName,
           action: "Tambah Indikator",
-          details: `Menambah indikator: "${indicator.name}"`
+          details: `Menambah indikator: "${indicator.name || ''}"`
         });
       } else {
         await updateDoc(docRef, payload);
@@ -428,7 +403,7 @@ export const mutabaahService = {
           operatorId,
           operatorName,
           action: "Ubah Indikator",
-          details: `Mengubah indikator: "${indicator.name || existingSnap.data()?.name}"`
+          details: `Mengubah indikator: "${indicator.name || existingSnap.data()?.name || ''}"`
         });
       }
     } catch (error) {
@@ -501,10 +476,21 @@ export const mutabaahService = {
     try {
       const existingSnap = await getDoc(docRef);
       if (existingSnap.exists()) {
+        const existingData = existingSnap.data();
+        const existingHistory = existingData.history || [];
+        const change: SdmMutabaahEntryChange = {
+          timestamp: now,
+          updatedBy: entry.userName,
+          oldValues: existingData.values || {},
+          newValues: entry.values
+        };
         await updateDoc(docRef, {
           values: entry.values,
           attachmentUrls: entry.attachmentUrls || {},
           compliancePercentage: entry.compliancePercentage,
+          userHaidStatus: entry.userHaidStatus || "Normal",
+          gender: entry.gender || "L",
+          history: [...existingHistory, change],
           updatedAt: now
         });
       } else {

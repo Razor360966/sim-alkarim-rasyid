@@ -9,9 +9,35 @@ export interface HalaqahGroup {
   updatedAt: string;
   createdBy: string;
   updatedBy: string;
+  isLocked?: boolean;
 }
 
 export interface HalaqahGroupMember {
+  id: string;
+  groupId: string;
+  studentId: string;
+  studentName: string;
+  classId: string;
+  className: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AsramaGroup {
+  id: string;
+  musrifId: string;
+  musrifName: string;
+  groupName: string;
+  location: string;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+  updatedBy: string;
+  isLocked?: boolean;
+}
+
+export interface AsramaGroupMember {
   id: string;
   groupId: string;
   studentId: string;
@@ -37,6 +63,7 @@ export interface MusrifJournal {
   startTime: string;
   endTime: string;
   activityType: "Tahsin" | "Tahfidz" | "Muraja'ah" | "Setoran Hafalan" | "Tasmi" | "Pembinaan Akhlak" | "Pendampingan" | "Lainnya";
+  entryType?: "Harian" | "Mingguan";
   generalNotes: string;
   supportingLink: string;
   status: "Draft" | "Selesai";
