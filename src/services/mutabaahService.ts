@@ -337,6 +337,7 @@ export const mutabaahService = {
             appliesToMale: data.appliesToMale !== undefined ? data.appliesToMale : true,
             appliesToFemale: data.appliesToFemale !== undefined ? data.appliesToFemale : true,
             excludeDuringHaid: data.excludeDuringHaid !== undefined ? data.excludeDuringHaid : false,
+            isAutoWeight: data.isAutoWeight !== undefined ? data.isAutoWeight : true,
           } as SdmMutabaahIndicator);
         });
         return items;
@@ -356,6 +357,7 @@ export const mutabaahService = {
           appliesToMale: data.appliesToMale !== undefined ? data.appliesToMale : true,
           appliesToFemale: data.appliesToFemale !== undefined ? data.appliesToFemale : true,
           excludeDuringHaid: data.excludeDuringHaid !== undefined ? data.excludeDuringHaid : false,
+          isAutoWeight: data.isAutoWeight !== undefined ? data.isAutoWeight : true,
         } as SdmMutabaahIndicator);
       });
       return items;
@@ -450,6 +452,64 @@ export const mutabaahService = {
       });
     } catch (error) {
       return handleFirestoreError(error, OperationType.WRITE, `${INDICATORS_COLLECTION}/${id}`);
+    }
+  },
+
+  // Set all active indicators to Auto Weighting
+  async setAllAutoWeight(operatorName: string, operatorId: string): Promise<void> {
+    try {
+      const indicators = await this.getIndicators();
+      const activeIndicators = indicators.filter((ind) => ind.isActive && !ind.isArchived);
+      const now = new Date().toISOString();
+      const promises = activeIndicators.map((ind) => {
+        const docRef = doc(db, INDICATORS_COLLECTION, ind.id);
+        return updateDoc(docRef, {
+          isAutoWeight: true,
+          updatedAt: now,
+          updatedBy: operatorName
+        });
+      });
+      await Promise.all(promises);
+      await this.logChange({
+        operatorId,
+        operatorName,
+        action: "Set Bobot Otomatis",
+        details: `Mengatur seluruh ${activeIndicators.length} indikator aktif ke mode Pembobotan Otomatis`
+      });
+    } catch (error) {
+      return handleFirestoreError(error, OperationType.WRITE, INDICATORS_COLLECTION);
+    }
+  },
+
+  // Equalize manual weights equally (100% / N)
+  async equalizeManualWeights(operatorName: string, operatorId: string): Promise<void> {
+    try {
+      const indicators = await this.getIndicators();
+      const activeIndicators = indicators.filter((ind) => ind.isActive && !ind.isArchived);
+      if (activeIndicators.length === 0) return;
+
+      const equalWeight = Number((100 / activeIndicators.length).toFixed(1));
+      const now = new Date().toISOString();
+
+      const promises = activeIndicators.map((ind) => {
+        const docRef = doc(db, INDICATORS_COLLECTION, ind.id);
+        return updateDoc(docRef, {
+          weight: equalWeight,
+          isAutoWeight: false,
+          updatedAt: now,
+          updatedBy: operatorName
+        });
+      });
+      await Promise.all(promises);
+
+      await this.logChange({
+        operatorId,
+        operatorName,
+        action: "Ratakan Bobot Manual",
+        details: `Membagi rata bobot ${equalWeight}% secara manual kepada ${activeIndicators.length} indikator aktif`
+      });
+    } catch (error) {
+      return handleFirestoreError(error, OperationType.WRITE, INDICATORS_COLLECTION);
     }
   },
 

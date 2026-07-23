@@ -33,7 +33,11 @@ import {
   Clock,
   Sliders,
   CalendarDays,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Zap,
+  ShieldAlert,
+  Scale,
+  RefreshCw
 } from "lucide-react";
 import {
   LineChart,
@@ -252,9 +256,7 @@ export const MutabaahHarian: React.FC = () => {
         }
 
         // 3. Check days applicable
-        if (ind.frequency === "harian" || !ind.applicableDays || ind.applicableDays.length === 0) {
-          // Mutabaah Harian (Ruhiyah) tetap berlaku setiap hari, termasuk hari libur dan hari tidak aktif
-        } else if (ind.applicableDays && ind.applicableDays.length > 0) {
+        if (ind.applicableDays && ind.applicableDays.length > 0) {
           const matchDay = ind.applicableDays.some((d) => d.toLowerCase().trim() === selectedDayName.toLowerCase().trim());
           if (!matchDay) return false;
         }
@@ -355,7 +357,7 @@ export const MutabaahHarian: React.FC = () => {
 
   const getIndicatorStatus = (ind: SdmMutabaahIndicator) => {
     const selectedDayName = getIndonesianDayName(selectedDate);
-    const isDayApplicable = ind.frequency === "harian" || !ind.applicableDays || ind.applicableDays.length === 0 || ind.applicableDays.some((d) => d.toLowerCase().trim() === selectedDayName.toLowerCase().trim());
+    const isDayApplicable = !ind.applicableDays || ind.applicableDays.length === 0 || ind.applicableDays.some((d) => d.toLowerCase().trim() === selectedDayName.toLowerCase().trim());
     
     const activeHaidStatus = todayEntry?.userHaidStatus || user?.haidStatus || "Normal";
     const isHaidExempt = user?.gender === "P" && activeHaidStatus === "Haid" && ind.excludeDuringHaid === true;
@@ -419,19 +421,53 @@ export const MutabaahHarian: React.FC = () => {
     }
   };
 
+  // Active indicators for the selected date (excluding exempted & out-of-time indicators)
+  const activeTodayIndicators = useMemo(() => {
+    return myApplicableIndicators.filter((ind) => {
+      const status = getIndicatorStatus(ind);
+      return status !== "Dikecualikan" && status !== "Belum Waktunya";
+    });
+  }, [myApplicableIndicators, selectedDate, formValues, user?.haidStatus]);
+
+  // Dynamic Auto Weighting vs Manual Priority calculation
+  const effectiveWeightsMap = useMemo(() => {
+    if (activeTodayIndicators.length === 0) return {};
+
+    const manualIndicators = activeTodayIndicators.filter(
+      (ind) => ind.isAutoWeight === false && (ind.weight || 0) > 0
+    );
+    const autoIndicators = activeTodayIndicators.filter(
+      (ind) => ind.isAutoWeight !== false || (ind.weight || 0) <= 0
+    );
+
+    const manualWeightSum = manualIndicators.reduce((sum, ind) => sum + (ind.weight || 0), 0);
+    const remainingBudget = Math.max(0, 100 - manualWeightSum);
+
+    const autoWeightEach =
+      autoIndicators.length > 0
+        ? (manualWeightSum < 100 ? remainingBudget / autoIndicators.length : 1)
+        : 0;
+
+    const map: Record<string, { weight: number; isManual: boolean }> = {};
+
+    activeTodayIndicators.forEach((ind) => {
+      const isManual = ind.isAutoWeight === false && (ind.weight || 0) > 0;
+      const weight = isManual ? (ind.weight || 1) : (autoWeightEach > 0 ? autoWeightEach : 1);
+      map[ind.id] = { weight, isManual };
+    });
+
+    return map;
+  }, [activeTodayIndicators]);
+
   const currentCompliancePercent = useMemo(() => {
-    if (myApplicableIndicators.length === 0) return 100;
+    if (activeTodayIndicators.length === 0) return 100;
 
     let totalWeight = 0;
     let earnedWeight = 0;
 
-    myApplicableIndicators.forEach((ind) => {
-      const status = getIndicatorStatus(ind);
-      if (status === "Dikecualikan" || status === "Belum Waktunya") {
-        return;
-      }
-
-      const weight = ind.weight || 1;
+    activeTodayIndicators.forEach((ind) => {
+      const weightObj = effectiveWeightsMap[ind.id];
+      const weight = weightObj ? weightObj.weight : 1;
       totalWeight += weight;
 
       const rawVal = formValues[ind.id];
@@ -463,7 +499,7 @@ export const MutabaahHarian: React.FC = () => {
     });
 
     return totalWeight > 0 ? Math.round((earnedWeight / totalWeight) * 100) : 100;
-  }, [myApplicableIndicators, formValues, selectedDate, user?.haidStatus, todayEntry?.userHaidStatus]);
+  }, [activeTodayIndicators, effectiveWeightsMap, formValues]);
 
   const saveEntryMutation = useMutation({
     mutationFn: async () => {
@@ -504,6 +540,7 @@ export const MutabaahHarian: React.FC = () => {
     unit: "kali",
     applicableRoles: ["guru"],
     weight: 10,
+    isAutoWeight: true,
     isActive: true,
     isArchived: false,
     frequency: "harian",
@@ -526,7 +563,8 @@ export const MutabaahHarian: React.FC = () => {
         target: ind.target,
         unit: ind.unit,
         applicableRoles: ind.applicableRoles || [],
-        weight: ind.weight || 10,
+        weight: ind.weight !== undefined ? ind.weight : 10,
+        isAutoWeight: ind.isAutoWeight !== undefined ? ind.isAutoWeight : true,
         isActive: ind.isActive,
         isArchived: ind.isArchived,
         frequency: ind.frequency || "harian",
@@ -548,6 +586,7 @@ export const MutabaahHarian: React.FC = () => {
         unit: "kali",
         applicableRoles: ["guru", "musrif", "staff"],
         weight: 10,
+        isAutoWeight: true,
         isActive: true,
         isArchived: false,
         frequency: "harian",
@@ -574,6 +613,7 @@ export const MutabaahHarian: React.FC = () => {
           unit: indicatorForm.unit,
           applicableRoles: indicatorForm.applicableRoles,
           weight: indicatorForm.weight,
+          isAutoWeight: indicatorForm.isAutoWeight,
           frequency: indicatorForm.frequency,
           applicableDays: indicatorForm.applicableDays,
           startTime: indicatorForm.startTime,
@@ -593,6 +633,38 @@ export const MutabaahHarian: React.FC = () => {
     },
     onError: (err: any) => {
       toast(`Gagal menyimpan indikator: ${err.message}`, "error");
+    }
+  });
+
+  const setAllAutoWeightMutation = useMutation({
+    mutationFn: async () => {
+      await mutabaahService.setAllAutoWeight(
+        user?.name || user?.displayName || "System",
+        user?.userId || ""
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["mutabaahIndicators"] });
+      toast("Seluruh indikator aktif diatur ke mode Pembobotan Otomatis!", "success");
+    },
+    onError: (err: any) => {
+      toast(`Gagal mengatur bobot otomatis: ${err.message}`, "error");
+    }
+  });
+
+  const equalizeManualWeightsMutation = useMutation({
+    mutationFn: async () => {
+      await mutabaahService.equalizeManualWeights(
+        user?.name || user?.displayName || "System",
+        user?.userId || ""
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["mutabaahIndicators"] });
+      toast("Bobot seluruh indikator aktif telah dibagi rata secara manual!", "success");
+    },
+    onError: (err: any) => {
+      toast(`Gagal membagi rata bobot: ${err.message}`, "error");
     }
   });
 
@@ -1176,6 +1248,16 @@ export const MutabaahHarian: React.FC = () => {
                   </div>
                 ) : (
                   <div className="space-y-6">
+                    {/* Weighting Notice */}
+                    <div className="bg-indigo-50/80 dark:bg-indigo-950/20 border border-indigo-200/80 dark:border-indigo-900/40 p-3.5 rounded-xl flex items-center justify-between gap-3 text-xs">
+                      <div className="flex items-center gap-2 text-indigo-900 dark:text-indigo-200">
+                        <Zap className="h-4 w-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                        <span>
+                          <strong>Sistem Pembobotan Hari Ini ({selectedDate}):</strong> Total <strong>{activeTodayIndicators.length} indikator</strong> aktif. Nilai kepatuhan dihitung secara dinamis.
+                        </span>
+                      </div>
+                    </div>
+
                     {/* Rule Notice */}
                     <div className="bg-rose-50/80 dark:bg-rose-950/20 border border-rose-200/80 dark:border-rose-900/40 p-3.5 rounded-xl flex items-center gap-3">
                       <CheckCircle className="h-4.5 w-4.5 text-rose-600 dark:text-rose-400 shrink-0" />
@@ -1211,6 +1293,10 @@ export const MutabaahHarian: React.FC = () => {
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             {catInds.map((ind) => {
                               const status = getIndicatorStatus(ind);
+                              const effObj = effectiveWeightsMap[ind.id];
+                              const effWeight = effObj ? effObj.weight : (ind.weight || 1);
+                              const isManual = effObj ? effObj.isManual : (ind.isAutoWeight === false);
+
                               return (
                                 <div
                                   key={ind.id}
@@ -1219,9 +1305,18 @@ export const MutabaahHarian: React.FC = () => {
                                   <div className="flex items-start justify-between">
                                     <div>
                                       <h4 className="text-xs font-bold text-slate-800 dark:text-zinc-200">{ind.name}</h4>
-                                      <p className="text-[9px] text-slate-400 mt-0.5 capitalize">
-                                        Frekuensi: {ind.frequency} {ind.startTime ? `(${ind.startTime} - ${ind.endTime})` : ""}
-                                      </p>
+                                      <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                                        <p className="text-[9px] text-slate-400 capitalize">
+                                          Frekuensi: {ind.frequency} {ind.startTime ? `(${ind.startTime} - ${ind.endTime})` : ""}
+                                        </p>
+                                        <span className={`text-[8px] font-bold px-1.5 py-0.2 rounded ${
+                                          isManual 
+                                            ? "bg-amber-100/80 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300" 
+                                            : "bg-indigo-100/80 text-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300"
+                                        }`}>
+                                          Bobot: ~{effWeight.toFixed(1)}% {isManual ? "🎯 Prioritas" : "⚡ Otomatis"}
+                                        </span>
+                                      </div>
                                     </div>
                                     <span
                                       className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-md ${
@@ -1831,7 +1926,7 @@ export const MutabaahHarian: React.FC = () => {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-100 dark:border-zinc-800 pb-4 gap-3">
                 <div>
                   <h2 className="text-sm font-black text-slate-800 dark:text-zinc-200 uppercase tracking-wider">Konfigurasi Indikator Mutabaah</h2>
-                  <p className="text-[10px] text-slate-400">Kelola daftar indikator pencapaian ruhiyah, bobot nilai, serta target harian asatidzah.</p>
+                  <p className="text-[10px] text-slate-400">Kelola daftar indikator pencapaian ruhiyah, pembobotan otomatis/manual, serta target harian asatidzah.</p>
                 </div>
                 {canManageIndicators && (
                   <button
@@ -1845,6 +1940,102 @@ export const MutabaahHarian: React.FC = () => {
                 )}
               </div>
 
+              {/* Dynamic Weighting System Info Card & Batch Controls */}
+              {(() => {
+                const activeInds = indicators.filter((ind) => ind.isActive && !ind.isArchived);
+                const autoInds = activeInds.filter((ind) => ind.isAutoWeight !== false);
+                const manualInds = activeInds.filter((ind) => ind.isAutoWeight === false);
+                const sumManual = manualInds.reduce((acc, curr) => acc + (curr.weight || 0), 0);
+
+                return (
+                  <div className="bg-indigo-50/60 dark:bg-indigo-950/20 border border-indigo-200/80 dark:border-indigo-900/40 p-5 rounded-2xl space-y-4">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-indigo-100 dark:border-indigo-900/30 pb-4">
+                      <div className="flex items-start gap-3">
+                        <div className="p-2.5 bg-indigo-600 text-white rounded-xl shadow-xs shrink-0">
+                          <Zap className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <h3 className="text-xs font-black text-indigo-950 dark:text-indigo-200 uppercase tracking-wider">
+                            Sistem Pembobotan Otomatis & Manual
+                          </h3>
+                          <p className="text-[11px] text-indigo-900/80 dark:text-indigo-300 mt-0.5">
+                            Secara bawaan, bobot nilai dikalkulasikan secara <strong>otomatis (100% ÷ Jumlah Indikator Aktif)</strong> pada hari pengisian. Admin juga dapat menentukan <strong>indikator prioritas berbobot kustom</strong>.
+                          </p>
+                        </div>
+                      </div>
+
+                      {canManageIndicators && (
+                        <div className="flex flex-wrap items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (window.confirm("Yakin ingin mengatur seluruh indikator aktif ke mode Pembobotan Otomatis (Proporsional)?")) {
+                                setAllAutoWeightMutation.mutate();
+                              }
+                            }}
+                            disabled={setAllAutoWeightMutation.isPending}
+                            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-bold shadow-xs flex items-center gap-1.5 cursor-pointer transition-all"
+                          >
+                            <Zap className="h-3.5 w-3.5" />
+                            {setAllAutoWeightMutation.isPending ? "Memproses..." : "Set Semua Pembobotan Otomatis"}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (window.confirm("Yakin ingin membagi rata 100% secara manual ke seluruh indikator aktif?")) {
+                                equalizeManualWeightsMutation.mutate();
+                              }
+                            }}
+                            disabled={equalizeManualWeightsMutation.isPending}
+                            className="px-3 py-1.5 bg-white dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-slate-700 dark:text-zinc-200 hover:bg-slate-50 dark:hover:bg-zinc-750 rounded-xl text-[10px] font-bold shadow-xs flex items-center gap-1.5 cursor-pointer transition-all"
+                          >
+                            <Scale className="h-3.5 w-3.5 text-amber-600" />
+                            {equalizeManualWeightsMutation.isPending ? "Memproses..." : "Ratakan Bobot Manual (100%/N)"}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1 text-xs">
+                      <div className="bg-white/80 dark:bg-zinc-900/80 p-3 rounded-xl border border-indigo-100 dark:border-indigo-900/30 flex items-center gap-3">
+                        <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600">
+                          <CheckCircle className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-bold block uppercase">Total Indikator Aktif</span>
+                          <span className="font-extrabold text-slate-800 dark:text-zinc-200">{activeInds.length} Indikator</span>
+                        </div>
+                      </div>
+
+                      <div className="bg-white/80 dark:bg-zinc-900/80 p-3 rounded-xl border border-indigo-100 dark:border-indigo-900/30 flex items-center gap-3">
+                        <div className="p-2 rounded-lg bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600">
+                          <Zap className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-bold block uppercase">Bobot Otomatis (Proporsional)</span>
+                          <span className="font-extrabold text-indigo-700 dark:text-indigo-300">
+                            {autoInds.length} Indikator (~{autoInds.length > 0 ? (Math.max(0, 100 - sumManual) / autoInds.length).toFixed(1) : 0}% / Indikator)
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="bg-white/80 dark:bg-zinc-900/80 p-3 rounded-xl border border-indigo-100 dark:border-indigo-900/30 flex items-center gap-3">
+                        <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 text-amber-600">
+                          <ShieldAlert className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-bold block uppercase">Prioritas Manual</span>
+                          <span className="font-extrabold text-amber-700 dark:text-amber-300">
+                            {manualInds.length} Indikator (Total: {sumManual}%)
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div className="overflow-x-auto border border-slate-150 dark:border-zinc-850 rounded-2xl">
                 <table className="w-full text-left border-collapse">
                   <thead>
@@ -1852,7 +2043,7 @@ export const MutabaahHarian: React.FC = () => {
                       <th className="p-4 text-[10px] font-black uppercase text-slate-400">Nama Indikator</th>
                       <th className="p-4 text-[10px] font-black uppercase text-slate-400">Kategori</th>
                       <th className="p-4 text-[10px] font-black uppercase text-slate-400">Jenis Input</th>
-                      <th className="p-4 text-[10px] font-black uppercase text-slate-400 text-center">Bobot</th>
+                      <th className="p-4 text-[10px] font-black uppercase text-slate-400 text-center">Mode & Bobot Nilai</th>
                       <th className="p-4 text-[10px] font-black uppercase text-slate-400 text-center">Status</th>
                       {canManageIndicators && <th className="p-4 text-[10px] font-black uppercase text-slate-400 text-right">Aksi</th>}
                     </tr>
@@ -1874,7 +2065,19 @@ export const MutabaahHarian: React.FC = () => {
                           <td className="p-4 capitalize font-semibold text-slate-500">
                             {ind.inputType === "prayers_5" ? "Shalat 5 Waktu" : ind.inputType}
                           </td>
-                          <td className="p-4 text-center font-bold text-slate-700 dark:text-zinc-300">{ind.weight}%</td>
+                          <td className="p-4 text-center">
+                            {ind.isAutoWeight !== false ? (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-extrabold text-indigo-700 bg-indigo-50 dark:bg-indigo-950/30 dark:text-indigo-400 px-2.5 py-1 rounded-lg">
+                                <Zap className="h-3 w-3" />
+                                Otomatis (Proporsional)
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-extrabold text-amber-700 bg-amber-50 dark:bg-amber-950/30 dark:text-amber-400 px-2.5 py-1 rounded-lg">
+                                <ShieldAlert className="h-3 w-3" />
+                                Prioritas Manual ({ind.weight}%)
+                              </span>
+                            )}
+                          </td>
                           <td className="p-4 text-center">
                             <button
                               type="button"
@@ -2052,30 +2255,84 @@ export const MutabaahHarian: React.FC = () => {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <FormInput
-                label="Bobot Nilai (%)"
-                type="number"
-                value={indicatorForm.weight}
-                onChange={(e: any) => {
-                  const val = e && e.target ? e.target.value : e;
-                  setIndicatorForm((p) => ({ ...p, weight: val === "" ? "" : (parseFloat(val) || 0) as any }));
-                }}
-                placeholder="10"
-              />
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Frekuensi Pengisian</label>
-                <select
-                  value={indicatorForm.frequency}
-                  onChange={(e) => setIndicatorForm((p) => ({ ...p, frequency: e.target.value as any }))}
-                  className="w-full text-xs border border-slate-200 dark:border-zinc-750 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-200 rounded-lg p-2 focus:outline-none focus:ring-1 focus:ring-rose-500"
+            {/* Weighting Mode Selection */}
+            <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-zinc-800">
+              <label className="text-xs font-bold text-slate-700 dark:text-zinc-200 block">
+                Mode Pembobotan Nilai Indikator
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIndicatorForm((p) => ({ ...p, isAutoWeight: true }))}
+                  className={`p-3 text-left rounded-xl border transition-all cursor-pointer ${
+                    indicatorForm.isAutoWeight !== false
+                      ? "bg-indigo-50/80 border-indigo-300 text-indigo-950 dark:bg-indigo-950/40 dark:border-indigo-800 dark:text-indigo-200 ring-2 ring-indigo-500/20"
+                      : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50 dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-400"
+                  }`}
                 >
-                  <option value="harian">Setiap Hari Aktif (Harian)</option>
-                  <option value="waktu">Berdasarkan Jam/Waktu Tertentu</option>
-                  <option value="mingguan">Satu Kali Seminggu (Mingguan)</option>
-                  <option value="bulanan">Satu Kali Sebulan (Bulanan)</option>
-                </select>
+                  <div className="flex items-center gap-1.5 font-extrabold text-xs">
+                    <Zap className="h-4 w-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                    ⚡ Otomatis (Proporsional)
+                  </div>
+                  <p className="text-[10px] text-slate-500 dark:text-zinc-400 mt-1 leading-snug">
+                    Sistem membagi rata bobot 100% secara otomatis menyesuaikan jumlah indikator yang aktif pada hari tersebut.
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIndicatorForm((p) => ({ ...p, isAutoWeight: false }))}
+                  className={`p-3 text-left rounded-xl border transition-all cursor-pointer ${
+                    indicatorForm.isAutoWeight === false
+                      ? "bg-amber-50/80 border-amber-300 text-amber-950 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-200 ring-2 ring-amber-500/20"
+                      : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50 dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-400"
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 font-extrabold text-xs">
+                    <ShieldAlert className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                    🎯 Prioritas Manual
+                  </div>
+                  <p className="text-[10px] text-slate-500 dark:text-zinc-400 mt-1 leading-snug">
+                    Tentukan bobot kustom (%) jika indikator ini merupakan prioritas khusus sekolah.
+                  </p>
+                </button>
               </div>
+
+              {indicatorForm.isAutoWeight === false ? (
+                <div className="pt-2 space-y-1">
+                  <FormInput
+                    label="Bobot Nilai Prioritas Manual (%)"
+                    type="number"
+                    value={indicatorForm.weight}
+                    onChange={(e: any) => {
+                      const val = e && e.target ? e.target.value : e;
+                      setIndicatorForm((p) => ({ ...p, weight: val === "" ? "" : (parseFloat(val) || 0) as any }));
+                    }}
+                    placeholder="25"
+                  />
+                  <p className="text-[10px] text-amber-700 dark:text-amber-400">
+                    Indikator ini akan mengambil nilai {indicatorForm.weight || 0}% secara tetap. Sisa persentase ({Math.max(0, 100 - (indicatorForm.weight || 0))}%) akan dibagikan ke indikator Otomatis.
+                  </p>
+                </div>
+              ) : (
+                <p className="text-[10px] text-indigo-700 dark:text-indigo-300 bg-indigo-50/50 dark:bg-indigo-950/20 p-2 rounded-lg border border-indigo-100 dark:border-indigo-900/30">
+                  <strong>Catatan Pembobotan Otomatis:</strong> Nilai persentase indikator ini disesuaikan secara dinamis setiap hari berdasarkan total indikator aktif pada tanggal pengisian mutabaah.
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-slate-500">Frekuensi Pengisian</label>
+              <select
+                value={indicatorForm.frequency}
+                onChange={(e) => setIndicatorForm((p) => ({ ...p, frequency: e.target.value as any }))}
+                className="w-full text-xs border border-slate-200 dark:border-zinc-750 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-200 rounded-lg p-2 focus:outline-none focus:ring-1 focus:ring-rose-500"
+              >
+                <option value="harian">Setiap Hari Aktif (Harian)</option>
+                <option value="waktu">Berdasarkan Jam/Waktu Tertentu</option>
+                <option value="mingguan">Satu Kali Seminggu (Mingguan)</option>
+                <option value="bulanan">Satu Kali Sebulan (Bulanan)</option>
+              </select>
             </div>
 
             {/* Time windows for specific frequencies */}

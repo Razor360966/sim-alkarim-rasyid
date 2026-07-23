@@ -7,6 +7,7 @@ export interface SdmMutabaahIndicator {
   unit: string; // e.g., "halaman", "kali", "ayat", "buku"
   applicableRoles: string[]; // ["guru", "musrif", "staff", "wakil kepala sekolah", "kepala sekolah"]
   weight: number; // percentage, e.g., 10 for 10%
+  isAutoWeight?: boolean; // true if auto-calculated based on active indicators count, false if manual/priority
   isActive: boolean;
   isArchived: boolean;
   createdAt: string;
