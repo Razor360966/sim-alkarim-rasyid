@@ -251,7 +251,13 @@ export const MusrifJournals: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState("Semua");
 
   // Journal form fields
-  const [journalDate, setJournalDate] = useState(new Date().toISOString().split("T")[0]);
+  const getLocalDateStr = (d = new Date()) => {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+  const [journalDate, setJournalDate] = useState(getLocalDateStr());
   const [journalGroup, setJournalGroup] = useState("");
   const [journalStartTime, setJournalStartTime] = useState("16:00");
   const [journalEndTime, setJournalEndTime] = useState("17:30");

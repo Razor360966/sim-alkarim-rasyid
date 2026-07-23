@@ -140,8 +140,16 @@ export const TeachingJournals: React.FC = () => {
   const [filterSubject, setFilterSubject] = useState<string>("Semua");
   const [filterStatus, setFilterStatus] = useState<string>("Semua");
 
+  // Helper for local YYYY-MM-DD
+  const getLocalDateStr = (d = new Date()) => {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
   // Form State
-  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split("T")[0]);
+  const [selectedDate, setSelectedDate] = useState<string>(getLocalDateStr());
   const [schedulesForDate, setSchedulesForDate] = useState<Schedule[]>([]);
   const [selectedScheduleId, setSelectedScheduleId] = useState<string>("");
   const [selectedSchedule, setSelectedSchedule] = useState<Schedule | null>(null);

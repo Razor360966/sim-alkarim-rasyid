@@ -211,8 +211,15 @@ export const Dashboard: React.FC = () => {
     };
   };
 
-  const todayStr = new Date().toISOString().split("T")[0];
-  const next7DaysStr = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+  const getLocalDateStr = (d = new Date()) => {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  const todayStr = getLocalDateStr();
+  const next7DaysStr = getLocalDateStr(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
   
   const weeklyEvents = events.filter(e => {
     const start = e.startDate || e.date || "";
@@ -502,7 +509,7 @@ export const Dashboard: React.FC = () => {
     if (!teacherId) return [];
 
     const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes();
-    const todayStr = new Date().toISOString().split("T")[0];
+    const todayStr = getLocalDateStr();
 
     return allSchedules
       .filter((s: any) => s.teacherId === teacherId && (s.day || "").toLowerCase() === todayDayName.toLowerCase())

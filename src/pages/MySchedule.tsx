@@ -120,8 +120,8 @@ export const MySchedule: React.FC = () => {
 
   // Enhance schedules with periods, journals, status
   const enhancedSchedules = useMemo(() => {
-    const todayStr = new Date().toISOString().split("T")[0];
     const now = new Date();
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     const currentMin = now.getHours() * 60 + now.getMinutes();
 
     return teacherSchedules.map(s => {
@@ -199,7 +199,9 @@ export const MySchedule: React.FC = () => {
   }, [enhancedSchedules, todayDayName]);
 
   const handleCreateJournal = (schedule: any, dateString?: string) => {
-    const dateToUse = dateString || new Date().toISOString().split("T")[0];
+    const now = new Date();
+    const localToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const dateToUse = dateString || localToday;
     navigate(`/teaching-journals?prefillDate=${dateToUse}&prefillScheduleId=${schedule.id}&openForm=true`);
     toast(`Membuka formulir Jurnal Mengajar untuk Kelas ${schedule.className} - ${schedule.subjectName}`, "success");
   };

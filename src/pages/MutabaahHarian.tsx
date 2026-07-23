@@ -128,8 +128,15 @@ export const MutabaahHarian: React.FC = () => {
     setSearchParams({ tab });
   };
 
-  // Selected date for "saya" fill-up (defaults to today)
-  const todayStr = new Date().toISOString().split("T")[0];
+  // Selected date for "saya" fill-up (defaults to local today)
+  const getTodayDateStr = () => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+  const todayStr = getTodayDateStr();
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
 
   // Load all indicators
@@ -245,8 +252,8 @@ export const MutabaahHarian: React.FC = () => {
         }
 
         // 3. Check days applicable
-        if (ind.frequency === "harian" && (!ind.applicableDays || ind.applicableDays.length === 0 || ind.applicableDays.length >= 6)) {
-          // Applies every day for daily indicator
+        if (ind.frequency === "harian" || !ind.applicableDays || ind.applicableDays.length === 0) {
+          // Mutabaah Harian (Ruhiyah) tetap berlaku setiap hari, termasuk hari libur dan hari tidak aktif
         } else if (ind.applicableDays && ind.applicableDays.length > 0) {
           const matchDay = ind.applicableDays.some((d) => d.toLowerCase().trim() === selectedDayName.toLowerCase().trim());
           if (!matchDay) return false;
@@ -348,7 +355,7 @@ export const MutabaahHarian: React.FC = () => {
 
   const getIndicatorStatus = (ind: SdmMutabaahIndicator) => {
     const selectedDayName = getIndonesianDayName(selectedDate);
-    const isDayApplicable = !ind.applicableDays || ind.applicableDays.length === 0 || ind.applicableDays.includes(selectedDayName);
+    const isDayApplicable = ind.frequency === "harian" || !ind.applicableDays || ind.applicableDays.length === 0 || ind.applicableDays.some((d) => d.toLowerCase().trim() === selectedDayName.toLowerCase().trim());
     
     const activeHaidStatus = todayEntry?.userHaidStatus || user?.haidStatus || "Normal";
     const isHaidExempt = user?.gender === "P" && activeHaidStatus === "Haid" && ind.excludeDuringHaid === true;
@@ -500,7 +507,7 @@ export const MutabaahHarian: React.FC = () => {
     isActive: true,
     isArchived: false,
     frequency: "harian",
-    applicableDays: ["Senin", "Selasa", "Rabu", "Kamis", "Sabtu", "Minggu"],
+    applicableDays: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"],
     startTime: "",
     endTime: "",
     appliesToMale: true,
@@ -544,7 +551,7 @@ export const MutabaahHarian: React.FC = () => {
         isActive: true,
         isArchived: false,
         frequency: "harian",
-        applicableDays: ["Senin", "Selasa", "Rabu", "Kamis", "Sabtu", "Minggu"],
+        applicableDays: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"],
         startTime: "",
         endTime: "",
         appliesToMale: true,
@@ -650,7 +657,7 @@ export const MutabaahHarian: React.FC = () => {
           isArchived: ind.isArchived,
           updatedBy: ind.updatedBy,
           frequency: ind.frequency || "harian",
-          applicableDays: ind.applicableDays || ["Senin", "Selasa", "Rabu", "Kamis", "Sabtu", "Minggu"],
+          applicableDays: ind.applicableDays || ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"],
           startTime: ind.startTime || "",
           endTime: ind.endTime || "",
           appliesToMale: ind.appliesToMale !== undefined ? ind.appliesToMale : true,
@@ -1169,6 +1176,14 @@ export const MutabaahHarian: React.FC = () => {
                   </div>
                 ) : (
                   <div className="space-y-6">
+                    {/* Rule Notice */}
+                    <div className="bg-rose-50/80 dark:bg-rose-950/20 border border-rose-200/80 dark:border-rose-900/40 p-3.5 rounded-xl flex items-center gap-3">
+                      <CheckCircle className="h-4.5 w-4.5 text-rose-600 dark:text-rose-400 shrink-0" />
+                      <p className="text-xs text-rose-900 dark:text-rose-200">
+                        <strong className="font-extrabold">Aturan Mutabaah Ruhiyah:</strong> Pengisian evaluasi ibadah harian tetap <strong>wajib dilakukan setiap hari</strong>, termasuk pada hari libur nasional, akhir pekan (Sabtu/Minggu), dan hari tidak aktif KBM sekolah.
+                      </p>
+                    </div>
+
                     {/* Time limit alerts */}
                     {missedIndicators.length > 0 && (
                       <div className="bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200/50 dark:border-amber-900/40 p-4 rounded-xl flex items-start gap-3">
