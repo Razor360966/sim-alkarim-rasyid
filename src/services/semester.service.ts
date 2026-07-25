@@ -263,19 +263,6 @@ export const semesterService = {
       const id = newDocRef.id;
       const batch = writeBatch(db);
 
-      // If set to active, deactivate all other semesters in this academic year
-      if (data.isActive) {
-        existingSemesters.forEach((other) => {
-          if (other.isActive === true) {
-            batch.update(doc(db, COLLECTION_NAME, other.id), {
-              isActive: false,
-              updatedAt: serverTimestamp(),
-              updatedBy: userId
-            });
-          }
-        });
-      }
-
       const newSemesterDoc = {
         semesterId: id,
         academicYearId: ayId,
@@ -443,22 +430,6 @@ export const semesterService = {
       }
 
       const batch = writeBatch(db);
-
-      // Handle active state change
-      if (data.isActive === true) {
-        // Deactivate all other semesters in the same academic year
-        const sameYearQuery = query(colRef, where("academicYearId", "==", activeAyId));
-        const sameYearSnapshot = await getDocs(sameYearQuery);
-        sameYearSnapshot.forEach((document) => {
-          if (document.id !== id && document.data().isActive === true && document.data().isDeleted !== true) {
-            batch.update(doc(db, COLLECTION_NAME, document.id), { 
-              isActive: false,
-              updatedAt: serverTimestamp(),
-              updatedBy: userId
-            });
-          }
-        });
-      }
 
       // Prepare payload
       const updatePayload: any = {

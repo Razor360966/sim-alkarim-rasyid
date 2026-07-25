@@ -213,11 +213,14 @@ export const Semesters: React.FC = () => {
     }
   };
 
-  const handleSetSemesterActive = async (sem: Semester) => {
+  const handleToggleSemesterActive = async (sem: Semester) => {
     try {
-      await setActiveSemester(sem.id);
+      await updateSemester({
+        id: sem.id,
+        data: { isActive: !sem.isActive }
+      });
     } catch (err: any) {
-      toast(err.message || "Gagal mengaktifkan semester.", "error");
+      toast(err.message || "Gagal mengubah status semester.", "error");
     }
   };
 
@@ -254,7 +257,7 @@ export const Semesters: React.FC = () => {
           </div>
           <div>
             <h1 className="text-xl font-bold text-slate-900 dark:text-zinc-50">Master Data Semester</h1>
-            <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">Kelola data Semester 1 & 2 per Tahun Pelajaran, tanggal aktif, dan periode pembelajaran.</p>
+            <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">Kelola data Semester 1 & 2 per Tahun Pelajaran. Anda dapat mengaktifkan Semester 1 dan Semester 2 sekaligus agar perhitungan JP di Prota dihitung penuh 1 tahun ajaran (2 semester).</p>
           </div>
         </div>
         
@@ -390,15 +393,23 @@ export const Semesters: React.FC = () => {
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center justify-center gap-1.5">
-                          {/* Set Active Button */}
-                          {isAdmin && !sem.isActive && (
+                          {/* Toggle Active Button */}
+                          {isAdmin && (
                             <button
-                              onClick={() => handleSetSemesterActive(sem)}
-                              disabled={isSettingActive}
-                              title="Set Semester ini Aktif"
-                              className="p-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/20 rounded-lg cursor-pointer transition-colors disabled:opacity-50"
+                              onClick={() => handleToggleSemesterActive(sem)}
+                              disabled={isUpdating}
+                              title={sem.isActive ? "Klik untuk Menonaktifkan Semester" : "Klik untuk Mengaktifkan Semester"}
+                              className={`p-1.5 rounded-lg cursor-pointer transition-colors disabled:opacity-50 ${
+                                sem.isActive
+                                  ? "text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/20"
+                                  : "text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/20"
+                              }`}
                             >
-                              <Play className="h-4 w-4 fill-current" />
+                              {sem.isActive ? (
+                                <CheckCircle className="h-4 w-4" />
+                              ) : (
+                                <Play className="h-4 w-4 fill-current" />
+                              )}
                             </button>
                           )}
                           
@@ -542,7 +553,7 @@ export const Semesters: React.FC = () => {
               className="h-4.5 w-4.5 text-blue-600 border-slate-300 rounded-lg focus:ring-blue-500 cursor-pointer"
             />
             <label htmlFor="isActive" className="text-xs font-semibold text-slate-700 dark:text-zinc-300 cursor-pointer select-none">
-              Set semester ini aktif langsung (akan otomatis menonaktifkan semester lain di tahun ajaran yang sama)
+              Set semester ini aktif (dapat diaktifkan bersamaan dengan semester lain di tahun ajaran aktif)
             </label>
           </div>
 
@@ -666,7 +677,7 @@ export const Semesters: React.FC = () => {
               className="h-4.5 w-4.5 text-blue-600 border-slate-300 rounded-lg focus:ring-blue-500 cursor-pointer"
             />
             <label htmlFor="isActiveEdit" className="text-xs font-semibold text-slate-700 dark:text-zinc-300 cursor-pointer select-none">
-              Set semester ini aktif langsung (menonaktifkan semester lain di tahun ajaran yang sama)
+              Set semester ini aktif (dapat diaktifkan bersamaan dengan semester lain di tahun ajaran aktif)
             </label>
           </div>
 
