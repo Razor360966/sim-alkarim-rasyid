@@ -63,6 +63,7 @@ export interface SchoolSettings {
   updatedAt?: string;
   updatedBy?: string;
   jpStructure?: any[];
+  requiresJpAdjustmentApproval?: boolean;
   schoolHours?: {
     startTime: string;
     endTime: string;

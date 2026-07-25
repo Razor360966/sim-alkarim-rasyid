@@ -7,6 +7,7 @@ export * from "./mutabaah.types";
 export * from "./schoolSettings.types";
 export * from "./lessonPeriod.types";
 export * from "./schedule.types";
+export * from "./teacherTeachingAttendance.types";
 
 
 export interface Class {
@@ -122,3 +123,4 @@ export * from "./musrifJournal.types";
 export * from "./gtkDevelopment.types";
 export * from "./supervision.types";
 export * from "./lessonPlan.types";
+export * from "./realTeachingHours.types";

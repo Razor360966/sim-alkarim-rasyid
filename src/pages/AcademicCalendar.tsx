@@ -370,6 +370,10 @@ export const AcademicCalendar: React.FC = () => {
     specialLessonDuration: 40,
     affectsAcademicPlanning: true,
     affectsScheduler: true,
+    affectsKbm: true,
+    targetType: "all",
+    targetGrade: "",
+    targetClassId: "",
     isRange: false,
     startDate: "",
     endDate: ""
@@ -2018,6 +2022,50 @@ Keterangan: ${evt.description || "-"}`;
                         </label>
                       </div>
                     </div>
+                  </div>
+
+                  {/* KBM Impact & Target Audience */}
+                  <div className="border-t border-slate-150 dark:border-zinc-800 pt-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-xs font-bold text-slate-700 dark:text-zinc-200">Apakah Agenda ini Mengganggu KBM?</div>
+                        <div className="text-[10px] text-slate-400">Jika "Ya", JP pada mata pelajaran yang berada pada hari ini dihitung sebagai JP Hilang.</div>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={eventForm.affectsKbm ?? true}
+                        onChange={(e) => setEventForm({ ...eventForm, affectsKbm: e.target.checked })}
+                        className="h-5 w-5 text-blue-600 focus:ring-blue-500 rounded-md border-slate-300 cursor-pointer"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Cakupan Sasaran Agenda</label>
+                      <select
+                        value={eventForm.targetType || "all"}
+                        onChange={(e) => setEventForm({ ...eventForm, targetType: e.target.value as any })}
+                        className="w-full px-3 py-2 border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950 rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-500 dark:text-zinc-100"
+                      >
+                        <option value="all">Semua Kelas & Jenjang (MPLS umum, Libur Sekolah, dll)</option>
+                        <option value="grade">Jenjang Tertentu (Studi Tur VII, ANBK VIII, USP IX)</option>
+                        <option value="class">Kelas Tertentu (Agenda Khusus Rombel)</option>
+                      </select>
+                    </div>
+
+                    {eventForm.targetType === "grade" && (
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Pilih Jenjang Target</label>
+                        <select
+                          value={eventForm.targetGrade || "VII"}
+                          onChange={(e) => setEventForm({ ...eventForm, targetGrade: e.target.value })}
+                          className="w-full px-3 py-2 border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950 rounded-xl text-xs font-bold focus:outline-hidden text-slate-800 dark:text-zinc-100"
+                        >
+                          <option value="VII">Jenjang VII (Misal: MPLS / Studi Tur 7)</option>
+                          <option value="VIII">Jenjang VIII (Misal: ANBK Kelas 8)</option>
+                          <option value="IX">Jenjang IX (Misal: Ujian Sekolah 9)</option>
+                        </select>
+                      </div>
+                    )}
                   </div>
 
                   {/* Effective day and special JP reduction switches */}

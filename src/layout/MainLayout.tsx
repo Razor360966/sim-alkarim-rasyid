@@ -162,6 +162,9 @@ export const MainLayout: React.FC = () => {
     { name: "JP Efektif", path: "/effective-jp", icon: School, roles: ["admin", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Perencanaan Akademik" },
     { name: "Referensi Akademik", path: "/academic-references", icon: SettingsIcon, roles: ["admin", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Perencanaan Akademik" },
 
+    // Monitoring Pembelajaran
+    { name: "Absensi Mengajar Guru", path: "/teacher-teaching-attendance", icon: ClipboardList, roles: ["admin", "wakil kepala sekolah"], group: "Monitoring Pembelajaran" },
+
     // Perencanaan Pembelajaran
     { name: "Program Tahunan", path: "/annual-programs", icon: Calendar, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan"], group: "Perencanaan Pembelajaran" },
     { name: "Program Semester", path: "/semester-programs", icon: Grid, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan"], group: "Perencanaan Pembelajaran" },

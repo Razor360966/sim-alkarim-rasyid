@@ -4,6 +4,7 @@ import { semesterService } from "../services/semester.service";
 import { classService } from "../services/classService";
 import { curriculumMatrixService } from "../services/curriculumMatrixService";
 import { curriculumPlanningService } from "../services/curriculumPlanning.service";
+import { realTeachingHoursService } from "../services/realTeachingHours.service";
 import { useToast } from "../contexts/ToastContext";
 import { useAuth } from "../contexts/AuthContext";
 import { useQueryClient } from "@tanstack/react-query";
@@ -280,30 +281,48 @@ export const SemesterProgram: React.FC = () => {
 );
   const currentSemesterObj = semesters.find(s => s.id === selectedSemesterId);
 
-  // Calculate RPE - Fetch Weeks Analysis only
+  const [realEffectiveJp, setRealEffectiveJp] = useState<number | null>(null);
+
+  // Calculate RPE - Fetch Weeks Analysis and Real Teaching Hours Analysis
   useEffect(() => {
     if (!currentSemesterObj || !selectedClassId || !selectedSubjectId) {
       setWeekColumns([]);
       setEffectiveJpSemester(0);
       setEffectiveWeeksCount(0);
+      setRealEffectiveJp(null);
       return;
     }
 
     setLoading(true);
-    academicPlanningService.analyzeEffectiveWeeks(
-      currentSemesterObj.startDate,
-      currentSemesterObj.endDate,
-      currentSemesterObj.academicYearId,
-      currentSemesterObj.id
-    )
-      .then((analysis) => {
+    Promise.all([
+      academicPlanningService.analyzeEffectiveWeeks(
+        currentSemesterObj.startDate,
+        currentSemesterObj.endDate,
+        currentSemesterObj.academicYearId,
+        currentSemesterObj.id
+      ),
+      realTeachingHoursService.getRealTeachingHoursAnalysis(
+        currentSemesterObj.academicYearId,
+        currentSemesterObj.id
+      )
+    ])
+      .then(([analysis, realAnalysis]) => {
         setWeeksAnalysis(analysis);
         const currentWeeklyJp = selectedSubjectObj ? selectedSubjectObj.jp : 0;
         setWeeklyJp(currentWeeklyJp);
         setTeacherName(selectedSubjectObj?.teacherName || "Belum Ditentukan");
         setTeacherId(selectedSubjectObj?.teacherId || "");
+
+        const match = realAnalysis.bySubjectClass.find(
+          item => item.subjectId === selectedSubjectId && item.classId === selectedClassId
+        );
+        if (match && match.effectiveJp > 0) {
+          setRealEffectiveJp(match.effectiveJp);
+        } else {
+          setRealEffectiveJp(null);
+        }
       })
-      .catch((err) => showToast("Gagal melakukan analisis pekan efektif: " + err.message, "error"))
+      .catch((err) => showToast("Gagal melakukan analisis pekan & JP efektif: " + err.message, "error"))
       .finally(() => setLoading(false));
   }, [selectedSemesterId, selectedClassId, selectedSubjectId, semesters]);
 
@@ -320,7 +339,7 @@ export const SemesterProgram: React.FC = () => {
     if (isManualWeeks && customWeeksConfig && customWeeksConfig.length > 0) {
       const count = customWeeksConfig.reduce((sum, m) => sum + m.effectiveWeeks, 0);
       setEffectiveWeeksCount(count);
-      setEffectiveJpSemester(currentWeeklyJp * count);
+      setEffectiveJpSemester(realEffectiveJp !== null ? realEffectiveJp : currentWeeklyJp * count);
 
       const cols: WeekColumn[] = [];
       customWeeksConfig.forEach((m) => {
@@ -340,7 +359,7 @@ export const SemesterProgram: React.FC = () => {
         return sum + ew;
       }, 0);
       setEffectiveWeeksCount(levelEffectiveWeeks);
-      setEffectiveJpSemester(currentWeeklyJp * levelEffectiveWeeks);
+      setEffectiveJpSemester(realEffectiveJp !== null ? realEffectiveJp : currentWeeklyJp * levelEffectiveWeeks);
 
       const cols: WeekColumn[] = [];
       weeksAnalysis.details.forEach((m: any) => {
@@ -355,7 +374,7 @@ export const SemesterProgram: React.FC = () => {
       });
       setWeekColumns(cols);
     }
-  }, [weeksAnalysis, isManualWeeks, customWeeksConfig, selectedSubjectObj, gradeLevel]);
+  }, [weeksAnalysis, isManualWeeks, customWeeksConfig, selectedSubjectObj, gradeLevel, realEffectiveJp]);
 
   // Load Prota (source master) and Promes
   useEffect(() => {

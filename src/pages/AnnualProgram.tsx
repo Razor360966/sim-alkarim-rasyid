@@ -4,6 +4,7 @@ import { semesterService } from "../services/semester.service";
 import { classService } from "../services/classService";
 import { curriculumMatrixService } from "../services/curriculumMatrixService";
 import { curriculumPlanningService } from "../services/curriculumPlanning.service";
+import { realTeachingHoursService } from "../services/realTeachingHours.service";
 import { useToast } from "../contexts/ToastContext";
 import { useAuth } from "../contexts/AuthContext";
 import type {
@@ -170,14 +171,21 @@ export const AnnualProgram: React.FC = () => {
       return;
     }
 
-    // Calculate effective weeks for both semesters of the year
-    Promise.all(
-      semsForYear.map(sem => 
-        academicPlanningService.analyzeEffectiveWeeks(sem.startDate, sem.endDate, sem.academicYearId, sem.id)
+    // Calculate effective weeks and real teaching hours for all semesters of the year
+    Promise.all([
+      Promise.all(
+        semsForYear.map(sem => 
+          academicPlanningService.analyzeEffectiveWeeks(sem.startDate, sem.endDate, sem.academicYearId, sem.id)
+        )
+      ),
+      Promise.all(
+        semsForYear.map(sem =>
+          realTeachingHoursService.getRealTeachingHoursAnalysis(selectedAcademicYearId, sem.id)
+        )
       )
-    )
-      .then((analyses) => {
-        const totalWeeks = analyses.reduce((sum, current) => {
+    ])
+      .then(([weekAnalyses, realJpAnalyses]) => {
+        const totalWeeks = weekAnalyses.reduce((sum, current) => {
           const levelEffectiveWeeks = current.details?.reduce((s: number, m: any) => {
             const ew = m.effectiveWeeksByGrade?.[gradeLevel] ?? m.effectiveWeeks;
             return s + ew;
@@ -191,8 +199,19 @@ export const AnnualProgram: React.FC = () => {
         setTeacherName(selectedSubjectObj?.teacherName || "Belum Ditentukan");
         setTeacherId(selectedSubjectObj?.teacherId || "");
 
-        // Calculated effective JP Year
-        setEffectiveJpYear(currentWeeklyJp * totalWeeks);
+        // Sum real teaching hours across semesters for selected subject and class
+        let totalRealEffectiveJp = 0;
+        realJpAnalyses.forEach(analysis => {
+          const match = analysis.bySubjectClass.find(
+            item => item.subjectId === selectedSubjectId && item.classId === selectedClassId
+          );
+          if (match) {
+            totalRealEffectiveJp += match.effectiveJp;
+          }
+        });
+
+        // Fallback to weeklyJp * totalWeeks if real teaching hours is 0 (e.g. no schedule published yet)
+        setEffectiveJpYear(totalRealEffectiveJp > 0 ? totalRealEffectiveJp : currentWeeklyJp * totalWeeks);
       })
       .catch((err) => showToast("Gagal menganalisis JP Efektif: " + err.message, "error"))
       .finally(() => setLoading(false));

@@ -20,6 +20,10 @@ export interface AcademicEvent {
   specialLessonDuration: number; // in minutes
   affectsAcademicPlanning: boolean;
   affectsScheduler: boolean;
+  affectsKbm?: boolean; // Agenda ini mengganggu KBM? (true/false)
+  targetType?: "all" | "grade" | "class"; // Semua Kelas | Jenjang Tertentu | Kelas Tertentu
+  targetGrade?: string; // e.g. "VII", "VIII", "IX"
+  targetClassId?: string; // classId
   createdAt: string;
   startDate?: string;
   endDate?: string;
