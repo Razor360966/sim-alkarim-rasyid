@@ -157,7 +157,7 @@ export const realTeachingHoursService = {
       ]);
 
       const currentSemester = semesters.find(s => s.id === semesterId);
-      if (!currentSemester || !currentSemester.startDate || !currentSemester.endDate) {
+      if (!currentSemester) {
         return {
           academicYearId,
           semesterId,
@@ -169,13 +169,37 @@ export const realTeachingHoursService = {
         };
       }
 
+      // Determine date range with fallback if missing on semester record
+      let startDateVal = currentSemester.startDate;
+      let endDateVal = currentSemester.endDate;
+      if (!startDateVal || !endDateVal) {
+        const yearMatch = currentSemester.academicYearName ? currentSemester.academicYearName.match(/\d{4}/) : null;
+        const startYr = yearMatch ? parseInt(yearMatch[0]) : new Date().getFullYear();
+        const isGenap = currentSemester.code === "S2" || 
+                        currentSemester.name.toLowerCase().includes("2") || 
+                        currentSemester.name.toLowerCase().includes("genap");
+        if (isGenap) {
+          startDateVal = startDateVal || `${startYr + 1}-01-02`;
+          endDateVal = endDateVal || `${startYr + 1}-06-30`;
+        } else {
+          startDateVal = startDateVal || `${startYr}-07-15`;
+          endDateVal = endDateVal || `${startYr}-12-31`;
+        }
+      }
+
       const activeClasses = classes.filter(c => c.status === "Aktif" && !c.isDeleted);
       const activeDays = schoolSettings.activeDays || ["Sabtu", "Minggu", "Senin", "Selasa", "Rabu", "Kamis"];
 
-      // Filter schedules for current semester
-      const semesterSchedules = schedules.filter(
-        s => s.academicYearId === academicYearId && s.semesterId === semesterId
+      // Filter schedules for current semester with fallback to academic year schedules
+      let semesterSchedules = schedules.filter(
+        s => s.academicYearId === academicYearId && (s.semesterId === semesterId || !s.semesterId)
       );
+
+      if (semesterSchedules.length === 0) {
+        semesterSchedules = schedules.filter(
+          s => s.academicYearId === academicYearId
+        );
+      }
 
       // Build date map for calendar events and holidays
       const calendarEventsByDate: Record<string, any[]> = {};
@@ -219,9 +243,9 @@ export const realTeachingHoursService = {
         subjectClassMap[key].daysMap[day] = (subjectClassMap[key].daysMap[day] || 0) + 1;
       });
 
-      // Generate date range from semester.startDate to semester.endDate
-      const startDate = new Date(currentSemester.startDate);
-      const endDate = new Date(currentSemester.endDate);
+      // Generate date range from startDateVal to endDateVal
+      const startDate = new Date(startDateVal);
+      const endDate = new Date(endDateVal);
 
       const allDates: { dateStr: string; dayName: string; isHoliday: boolean }[] = [];
       let curr = new Date(startDate);
@@ -272,16 +296,30 @@ export const realTeachingHoursService = {
             eventsOnDate.forEach(evt => {
               eventTitles.push(evt.title);
               
-              // Check if event affects KBM
-              const affectsKbm = evt.affectsKbm ?? (!evt.isEffectiveDay || evt.reduceLesson);
+              const normalizeGrade = (g?: string) => {
+                if (!g) return "";
+                const s = g.toString().trim().toUpperCase();
+                if (s === "7" || s === "VII" || s.includes("VII") || s.includes("7")) return "VII";
+                if (s === "8" || s === "VIII" || s.includes("VIII") || s.includes("8")) return "VIII";
+                if (s === "9" || s === "IX" || s.includes("IX") || s.includes("9")) return "IX";
+                return s;
+              };
+
+              // Check if event affects KBM or is a holiday
+              const isHolidayCategory = evt.categoryId === "EVENT_LIBUR" || 
+                                        (evt.categoryName && evt.categoryName.toLowerCase().includes("libur")) || 
+                                        (evt.title && evt.title.toLowerCase().includes("libur")) || 
+                                        evt.isEffectiveDay === false;
+
+              const affectsKbm = isHolidayCategory || evt.affectsKbm !== false || evt.reduceLesson;
               const targetType = evt.targetType || "all";
               const targetGrade = evt.targetGrade;
               const targetClassId = evt.targetClassId;
 
               let isTargeted = false;
-              if (targetType === "all") {
+              if (targetType === "all" || !targetType) {
                 isTargeted = true;
-              } else if (targetType === "grade" && targetGrade === item.gradeLevel) {
+              } else if (targetType === "grade" && normalizeGrade(targetGrade) === normalizeGrade(item.gradeLevel)) {
                 isTargeted = true;
               } else if (targetType === "class" && targetClassId === item.classId) {
                 isTargeted = true;

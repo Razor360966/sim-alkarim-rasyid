@@ -257,6 +257,18 @@ export const academicPlanningService = {
       // Clean and migrate old-format documents on load
       await this.migrateOldFormatDocuments();
 
+      let targetSemester: any = null;
+      if (semesterId) {
+        try {
+          const semSnap = await getDoc(doc(db, "semesters", semesterId));
+          if (semSnap.exists()) {
+            targetSemester = semSnap.data();
+          }
+        } catch (e) {
+          // ignore lookup error
+        }
+      }
+
       let q = query(collection(db, CALENDAR_COLLECTION));
       if (academicYearId) {
         q = query(collection(db, CALENDAR_COLLECTION), where("academicYearId", "==", academicYearId));
@@ -265,6 +277,18 @@ export const academicPlanningService = {
       
       const daysMap: { [dateStr: string]: { events: AcademicEvent[]; academicYearId?: string; semesterId?: string } } = {};
 
+      const isDateInSemester = (dStr: string, dataSemId?: string) => {
+        if (!semesterId) return true;
+        if (dataSemId === semesterId) return true;
+        if (!dataSemId && targetSemester?.startDate && targetSemester?.endDate) {
+          return dStr >= targetSemester.startDate && dStr <= targetSemester.endDate;
+        }
+        if (targetSemester?.startDate && targetSemester?.endDate) {
+          return dStr >= targetSemester.startDate && dStr <= targetSemester.endDate;
+        }
+        return !dataSemId || dataSemId === semesterId;
+      };
+
       snap.forEach((docSnap) => {
         const data = docSnap.data();
         const docId = docSnap.id;
@@ -272,7 +296,7 @@ export const academicPlanningService = {
         
         // Backwards compatibility: Check if it's the old format (representing a single date with 'events' list)
         if (data.events && Array.isArray(data.events) && dateStr) {
-          if (!semesterId || data.semesterId === semesterId) {
+          if (isDateInSemester(dateStr, data.semesterId)) {
             if (!daysMap[dateStr]) {
               daysMap[dateStr] = { events: [], academicYearId: data.academicYearId, semesterId: data.semesterId };
             }
@@ -291,44 +315,48 @@ export const academicPlanningService = {
           }
         } else if (data.startDate && data.endDate) {
           // New format: Represents a single event that might span a date range
-          if (!semesterId || data.semesterId === semesterId) {
-            const startStr = data.startDate;
-            const endStr = data.endDate;
-            const eventId = data.id || docId;
-            
-            // Get all dates in this event's range
-            const rangeDates = this.getDatesRange(startStr, endStr);
-            const eventItem: AcademicEvent = {
-              id: eventId,
-              title: data.title || "",
-              categoryId: data.categoryId || "",
-              categoryName: data.categoryName || "",
-              statusId: data.statusId || "",
-              statusName: data.statusName || "",
-              description: data.description || "",
-              priority: data.priority || "Sedang",
-              isEffectiveDay: data.isEffectiveDay !== false,
-              reduceLesson: !!data.reduceLesson,
-              specialLessonDuration: Number(data.specialLessonDuration || 40),
-              affectsAcademicPlanning: data.affectsAcademicPlanning !== false,
-              affectsScheduler: data.affectsScheduler !== false,
-              createdAt: data.createdAt || new Date().toISOString(),
-              isRange: !!data.isRange,
-              startDate: startStr,
-              endDate: endStr,
-              sasaran: data.sasaran || "Semua Siswa",
-              pelaksana: data.pelaksana || "Sekolah"
-            };
+          const startStr = data.startDate;
+          const endStr = data.endDate;
+          const eventId = data.id || docId;
+          
+          // Get all dates in this event's range
+          const rangeDates = this.getDatesRange(startStr, endStr);
+          const eventItem: AcademicEvent = {
+            id: eventId,
+            title: data.title || "",
+            categoryId: data.categoryId || "",
+            categoryName: data.categoryName || "",
+            statusId: data.statusId || "",
+            statusName: data.statusName || "",
+            description: data.description || "",
+            priority: data.priority || "Sedang",
+            isEffectiveDay: data.isEffectiveDay !== false,
+            reduceLesson: !!data.reduceLesson,
+            specialLessonDuration: Number(data.specialLessonDuration || 40),
+            affectsAcademicPlanning: data.affectsAcademicPlanning !== false,
+            affectsScheduler: data.affectsScheduler !== false,
+            affectsKbm: data.affectsKbm !== false,
+            targetType: data.targetType || "all",
+            targetGrade: data.targetGrade || "",
+            targetClassId: data.targetClassId || "",
+            createdAt: data.createdAt || new Date().toISOString(),
+            isRange: !!data.isRange,
+            startDate: startStr,
+            endDate: endStr,
+            sasaran: data.sasaran || "Semua Siswa",
+            pelaksana: data.pelaksana || "Sekolah"
+          };
 
-            rangeDates.forEach((dStr) => {
+          rangeDates.forEach((dStr) => {
+            if (isDateInSemester(dStr, data.semesterId)) {
               if (!daysMap[dStr]) {
                 daysMap[dStr] = { events: [], academicYearId: data.academicYearId, semesterId: data.semesterId };
               }
               if (!daysMap[dStr].events.some(e => e.id === eventItem.id)) {
                 daysMap[dStr].events.push(eventItem);
               }
-            });
-          }
+            }
+          });
         }
       });
 
@@ -487,7 +515,7 @@ export const academicPlanningService = {
         
         if (data.events && Array.isArray(data.events) && dateStr) {
           // Old format day representation
-          if (!semesterId || data.semesterId === semesterId) {
+          if (!semesterId || !data.semesterId || data.semesterId === semesterId) {
             data.events.forEach((evt: AcademicEvent, index: number) => {
               const eventId = evt.id || `evt-${dateStr}-${index}`;
               eventsMap[eventId] = {
@@ -500,7 +528,7 @@ export const academicPlanningService = {
           }
         } else if (data.startDate && data.endDate) {
           // New format single event
-          if (!semesterId || data.semesterId === semesterId) {
+          if (!semesterId || !data.semesterId || data.semesterId === semesterId) {
             const eventId = data.id || docId;
             eventsMap[eventId] = {
               id: eventId,
