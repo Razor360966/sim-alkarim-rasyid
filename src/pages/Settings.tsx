@@ -198,6 +198,31 @@ export default function Settings() {
     };
   }, [isLoading]);
 
+  // Detect unsaved changes
+  const hasUnsavedChanges = useMemo(() => {
+    if (!fetchedSettings || !localSettings) return false;
+    return JSON.stringify(fetchedSettings) !== JSON.stringify(localSettings);
+  }, [fetchedSettings, localSettings]);
+
+  // Fetch settings history
+  const fetchHistoryItems = async () => {
+    setIsLoadingHistory(true);
+    try {
+      const items = await schoolSettingsService.getSettingsHistory();
+      setHistoryItems(items);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "riwayat") {
+      fetchHistoryItems();
+    }
+  }, [activeTab]);
+
   const hasWriteAccess = user?.role === "admin" || user?.role === "operator" || user?.role === "tata usaha";
 
   if (manualLoading) {
@@ -542,37 +567,12 @@ export default function Settings() {
     }
   };
 
-  // Detect unsaved changes
-  const hasUnsavedChanges = useMemo(() => {
-    if (!fetchedSettings || !localSettings) return false;
-    return JSON.stringify(fetchedSettings) !== JSON.stringify(localSettings);
-  }, [fetchedSettings, localSettings]);
-
   // Reset local changes back to saved settings
   const handleResetLocalSettings = () => {
     if (fetchedSettings) {
       setLocalSettings(JSON.parse(JSON.stringify(fetchedSettings)));
     }
   };
-
-  // Fetch settings history
-  const fetchHistoryItems = async () => {
-    setIsLoadingHistory(true);
-    try {
-      const items = await schoolSettingsService.getSettingsHistory();
-      setHistoryItems(items);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsLoadingHistory(false);
-    }
-  };
-
-  useEffect(() => {
-    if (activeTab === "riwayat") {
-      fetchHistoryItems();
-    }
-  }, [activeTab]);
 
   // Rollback to a historical version
   const handleRollbackVersion = async (item: SettingsHistoryItem) => {
