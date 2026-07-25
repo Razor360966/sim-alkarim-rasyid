@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useSchoolSettings } from "../hooks/schoolSettings.hook";
 import { useAuth } from "../contexts/AuthContext";
+import { schoolSettingsService, SettingsHistoryItem } from "../services/schoolSettings.service";
 import { 
   Settings as SettingsIcon, 
   Clock, 
@@ -21,7 +22,13 @@ import {
   HelpCircle,
   Edit2,
   X,
-  UserCheck
+  UserCheck,
+  RotateCcw,
+  Undo2,
+  Eye,
+  History,
+  ArrowRight,
+  CheckCircle2
 } from "lucide-react";
 import { generateDailySchedule, TimelineBlock, minutesToTime, timeToMinutes } from "../utils/scheduleCalculator";
 import { SchoolSettings, BreakTime, RoutineActivity } from "../types";
@@ -88,9 +95,9 @@ export default function Settings() {
   const { user } = useAuth();
   const { settings: fetchedSettings, isLoading, updateSettings, isUpdating, refetch } = useSchoolSettings();
 
-  // Menu Tabs for the 7 sections
+  // Menu Tabs for sections
   const [activeTab, setActiveTab] = useState<
-    "hari-aktif" | "jam-sekolah" | "kegiatan-rutin" | "waktu-istirahat" | "struktur-jp" | "hari-libur" | "simpan"
+    "hari-aktif" | "jam-sekolah" | "kegiatan-rutin" | "waktu-istirahat" | "struktur-jp" | "hari-libur" | "simpan" | "riwayat"
   >("hari-aktif");
 
   // Selected day for the timeline preview
@@ -98,6 +105,12 @@ export default function Settings() {
 
   // Local state for school settings
   const [localSettings, setLocalSettings] = useState<SchoolSettings | null>(null);
+
+  // Preview & Rollback states
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
+  const [historyItems, setHistoryItems] = useState<SettingsHistoryItem[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [isRollbacking, setIsRollbacking] = useState(false);
 
   // New break form state
   const [newBreakName, setNewBreakName] = useState("");
@@ -522,13 +535,67 @@ export default function Settings() {
       };
 
       await updateSettings(payload, "Menyempurnakan konfigurasi School Settings lengkap.");
+      setShowPreviewModal(false);
+      fetchHistoryItems();
     } catch (e) {
       console.error(e);
     }
   };
 
+  // Detect unsaved changes
+  const hasUnsavedChanges = useMemo(() => {
+    if (!fetchedSettings || !localSettings) return false;
+    return JSON.stringify(fetchedSettings) !== JSON.stringify(localSettings);
+  }, [fetchedSettings, localSettings]);
+
+  // Reset local changes back to saved settings
+  const handleResetLocalSettings = () => {
+    if (fetchedSettings) {
+      setLocalSettings(JSON.parse(JSON.stringify(fetchedSettings)));
+    }
+  };
+
+  // Fetch settings history
+  const fetchHistoryItems = async () => {
+    setIsLoadingHistory(true);
+    try {
+      const items = await schoolSettingsService.getSettingsHistory();
+      setHistoryItems(items);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "riwayat") {
+      fetchHistoryItems();
+    }
+  }, [activeTab]);
+
+  // Rollback to a historical version
+  const handleRollbackVersion = async (item: SettingsHistoryItem) => {
+    if (!hasWriteAccess) return;
+    const confirmMsg = `Apakah Anda yakin ingin melakukan rollback (pemulihan) ke versi tanggal ${new Date(item.savedAt).toLocaleString('id-ID')}?\n\nPengaturan saat ini akan digantikan dengan versi ini.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setIsRollbacking(true);
+    try {
+      await schoolSettingsService.rollbackSettings(item, user?.uid || "system", user?.displayName || user?.email || "Admin");
+      refetch();
+      await fetchHistoryItems();
+    } catch (err) {
+      console.error(err);
+      alert("Gagal melakukan rollback pengaturan.");
+    } finally {
+      setIsRollbacking(false);
+    }
+  };
+
   // Recalculate daily preview timeline based on the selected preview day
   const previewTimeline = generateDailySchedule(localSettings, selectedPreviewDay);
+  const savedPreviewTimeline = generateDailySchedule(fetchedSettings || localSettings, selectedPreviewDay);
 
   // Helper styles for Timeline items
   const getTimelineItemStyle = (type: string) => {
@@ -563,7 +630,7 @@ export default function Settings() {
     }
   };
 
-  // List of tabs corresponding exactly to Patch 9.4 spec (and Simpan)
+  // List of tabs corresponding exactly to spec
   const menuItems = [
     { id: "hari-aktif", label: "1. Hari Aktif", icon: Calendar },
     { id: "jam-sekolah", label: "2. Jam Sekolah", icon: Clock },
@@ -572,6 +639,7 @@ export default function Settings() {
     { id: "waktu-istirahat", label: "5. Waktu Istirahat", icon: Coffee },
     { id: "hari-libur", label: "6. Hari Libur Khusus", icon: ShieldAlert },
     { id: "simpan", label: "7. Simpan Pengaturan", icon: Save },
+    { id: "riwayat", label: "8. Riwayat & Rollback", icon: RotateCcw },
   ] as const;
 
   return (
@@ -585,23 +653,48 @@ export default function Settings() {
             Pengaturan Sekolah (School Settings)
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Konfigurasi pusat hari aktif, jam sekolah, struktur JP, kegiatan rutin harian, dan waktu istirahat SMP ALKARIM RASYID.
+            Konfigurasi pusat hari aktif, jam sekolah, struktur JP, kegiatan rutin harian, dan waktu istirahat.
           </p>
         </div>
 
         {hasWriteAccess && (
-          <button
-            onClick={handleSaveAllSettings}
-            disabled={isUpdating || !!routineOverlapError || !!breakOverlapError}
-            className="flex items-center gap-2 px-5 py-2.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md transition-all cursor-pointer disabled:opacity-50"
-          >
-            {isUpdating ? (
-              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Save className="h-3.5 w-3.5" />
+          <div className="flex flex-wrap items-center gap-2">
+            {hasUnsavedChanges && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleResetLocalSettings}
+                  className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-700 dark:text-zinc-200 bg-slate-200/70 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 rounded-xl transition-all cursor-pointer"
+                  title="Batalkan perubahan yang belum disimpan"
+                >
+                  <Undo2 className="h-3.5 w-3.5" />
+                  Urungkan (Reset)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowPreviewModal(true)}
+                  className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:text-indigo-300 dark:hover:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-900/40 rounded-xl transition-all cursor-pointer"
+                >
+                  <Eye className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
+                  Pratinjau Diff
+                </button>
+              </>
             )}
-            Simpan Semua Pengaturan
-          </button>
+
+            <button
+              onClick={() => setShowPreviewModal(true)}
+              disabled={isUpdating || !!routineOverlapError || !!breakOverlapError}
+              className="flex items-center gap-2 px-5 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md transition-all cursor-pointer disabled:opacity-50"
+            >
+              {isUpdating ? (
+                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Save className="h-3.5 w-3.5" />
+              )}
+              {hasUnsavedChanges ? "Pratinjau & Simpan" : "Simpan Pengaturan"}
+            </button>
+          </div>
         )}
       </div>
 
@@ -1420,6 +1513,109 @@ export default function Settings() {
                   </div>
                 </div>
               )}
+              {/* 8. RIWAYAT & ROLLBACK */}
+              {activeTab === "riwayat" && (
+                <div className="space-y-4">
+                  <div className="border-b border-slate-100 dark:border-zinc-850 pb-3 flex items-center justify-between">
+                    <div>
+                      <h2 className="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                        <RotateCcw className="h-4.5 w-4.5 text-indigo-600" />
+                        8. Riwayat & Rollback Pengaturan
+                      </h2>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        Lihat riwayat perubahan versi sebelumnya dan pulihkan (rollback) pengaturan jika versi baru tidak sesuai.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={fetchHistoryItems}
+                      disabled={isLoadingHistory}
+                      className="p-1.5 text-slate-500 hover:text-indigo-600 dark:text-zinc-400 rounded-lg border border-slate-200 dark:border-zinc-800"
+                      title="Refresh Riwayat"
+                    >
+                      <RefreshCw className={`h-3.5 w-3.5 ${isLoadingHistory ? "animate-spin" : ""}`} />
+                    </button>
+                  </div>
+
+                  {isLoadingHistory ? (
+                    <div className="py-12 text-center text-xs text-slate-400 flex flex-col items-center gap-2">
+                      <RefreshCw className="h-5 w-5 animate-spin text-indigo-600" />
+                      <span>Memuat riwayat pengaturan...</span>
+                    </div>
+                  ) : historyItems.length === 0 ? (
+                    <div className="py-10 text-center space-y-2 bg-slate-50 dark:bg-zinc-950/20 rounded-2xl border border-dashed border-slate-200 dark:border-zinc-800">
+                      <History className="h-8 w-8 text-slate-300 dark:text-zinc-700 mx-auto" />
+                      <p className="text-xs font-semibold text-slate-600 dark:text-zinc-400">Belum Ada Riwayat Tersimpan</p>
+                      <p className="text-[10px] text-slate-400 max-w-xs mx-auto">
+                        Setiap kali Anda menyimpan pengaturan sekolah, snapshot otomatis tersimpan di sini untuk keperluan rollback/undo.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3 max-h-[460px] overflow-y-auto pr-1">
+                      {historyItems.map((item) => {
+                        const savedDateStr = new Date(item.savedAt).toLocaleString('id-ID', {
+                          day: 'numeric',
+                          month: 'short',
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        });
+
+                        return (
+                          <div
+                            key={item.id}
+                            className="p-3.5 bg-white dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-2xl space-y-2 shadow-2xs hover:border-indigo-300 transition-all"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-bold text-slate-800 dark:text-zinc-100">{savedDateStr}</span>
+                                  <span className="text-[9px] font-bold px-2 py-0.5 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600 dark:text-indigo-400 rounded-md">
+                                    Oleh: {item.operatorName}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-slate-500 dark:text-zinc-400 mt-1">{item.description}</p>
+                              </div>
+
+                              {hasWriteAccess && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRollbackVersion(item)}
+                                  disabled={isRollbacking}
+                                  className="flex items-center gap-1 px-3 py-1.5 text-[11px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300 border border-amber-200 dark:border-amber-900/40 rounded-xl transition-all cursor-pointer disabled:opacity-50 shrink-0"
+                                >
+                                  {isRollbacking ? (
+                                    <RefreshCw className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <RotateCcw className="h-3 w-3 text-amber-600" />
+                                  )}
+                                  Rollback Ke Versi Ini
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Summary Metrics */}
+                            <div className="grid grid-cols-3 gap-2 pt-1 border-t border-slate-100 dark:border-zinc-900 text-[10px] text-slate-600 dark:text-zinc-400">
+                              <div>
+                                <span className="text-slate-400 block text-[9px]">Jam Sekolah:</span>
+                                <strong>{item.settings.schoolHours?.startTime || item.settings.startTime || "07:00"} - {item.settings.schoolHours?.endTime || item.settings.endTime || "14:00"}</strong>
+                              </div>
+                              <div>
+                                <span className="text-slate-400 block text-[9px]">Durasi 1 JP:</span>
+                                <strong>{item.settings.lessonPeriod || item.settings.jpDuration || 40} Menit</strong>
+                              </div>
+                              <div>
+                                <span className="text-slate-400 block text-[9px]">Hari Aktif:</span>
+                                <strong>{item.settings.activeDays?.length || 0} Hari</strong>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Bottom Actions inside Form card */}
@@ -1518,6 +1714,198 @@ export default function Settings() {
         </div>
 
       </div>
+
+      {/* PREVIEW & DIFF MODAL BEFORE SAVING */}
+      {showPreviewModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fade-in">
+          <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-3xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden">
+            
+            {/* Modal Header */}
+            <div className="p-5 border-b border-slate-100 dark:border-zinc-800 flex items-center justify-between bg-slate-50/50 dark:bg-zinc-900/50">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 rounded-2xl">
+                  <Eye className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 dark:text-white">Pratinjau & Perbandingan Perubahan</h3>
+                  <p className="text-xs text-slate-500 dark:text-zinc-400">Tinjau perbandingan pengaturan sebelum disimpan secara permanen ke database.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPreviewModal(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-zinc-200 rounded-xl"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto space-y-6 flex-1">
+              
+              {/* Diff Summary Badges */}
+              <div className="space-y-3">
+                <h4 className="text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider">
+                  Ringkasan Perubahan Konfigurasi
+                </h4>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                  {/* Hari Aktif Diff */}
+                  <div className="p-3.5 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-2xl space-y-1">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase block">Hari Aktif Sekolah</span>
+                    <div className="flex items-center gap-2 font-medium">
+                      <span className="text-slate-500 line-through">
+                        {fetchedSettings?.activeDays?.join(", ") || "-"}
+                      </span>
+                      <ArrowRight className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+                      <span className="font-bold text-indigo-600 dark:text-indigo-400">
+                        {localSettings?.activeDays?.join(", ") || "-"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Jam Sekolah Diff */}
+                  <div className="p-3.5 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-2xl space-y-1">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase block">Jam Masuk & Pulang</span>
+                    <div className="flex items-center gap-2 font-medium">
+                      <span className="text-slate-500 line-through">
+                        {fetchedSettings?.schoolHours?.startTime || "07:00"} - {fetchedSettings?.schoolHours?.endTime || "14:00"}
+                      </span>
+                      <ArrowRight className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+                      <span className="font-bold text-indigo-600 dark:text-indigo-400">
+                        {localSettings?.schoolHours?.startTime || "07:00"} - {localSettings?.schoolHours?.endTime || "14:00"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Durasi JP Diff */}
+                  <div className="p-3.5 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-2xl space-y-1">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase block">Durasi 1 JP</span>
+                    <div className="flex items-center gap-2 font-medium">
+                      <span className="text-slate-500 line-through">
+                        {fetchedSettings?.lessonPeriod || 40} Menit
+                      </span>
+                      <ArrowRight className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+                      <span className="font-bold text-indigo-600 dark:text-indigo-400">
+                        {localSettings?.lessonPeriod || 40} Menit
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Kegiatan Rutin Diff */}
+                  <div className="p-3.5 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-2xl space-y-1">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase block">Kegiatan Rutin Terjadwal</span>
+                    <div className="flex items-center gap-2 font-medium">
+                      <span className="text-slate-500 line-through">
+                        {fetchedSettings?.routineActivities?.length || 0} Kegiatan
+                      </span>
+                      <ArrowRight className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+                      <span className="font-bold text-indigo-600 dark:text-indigo-400">
+                        {localSettings?.routineActivities?.length || 0} Kegiatan
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Visual Schedule Diff Comparison */}
+              <div className="space-y-3 pt-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider">
+                    Perbandingan Hasil Jadwal Harian ({selectedPreviewDay})
+                  </h4>
+                  <div className="flex gap-1">
+                    {localSettings?.activeDays.map((d) => (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => setSelectedPreviewDay(d)}
+                        className={`px-2.5 py-1 text-[10px] font-bold rounded-lg transition-all ${
+                          selectedPreviewDay === d
+                            ? "bg-indigo-600 text-white"
+                            : "bg-slate-100 text-slate-600 dark:bg-zinc-800 dark:text-zinc-400"
+                        }`}
+                      >
+                        {d}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Before Timeline */}
+                  <div className="p-4 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-2xl space-y-2">
+                    <span className="text-xs font-bold text-slate-500 flex items-center gap-1.5 pb-2 border-b border-slate-200 dark:border-zinc-800">
+                      <Clock className="h-3.5 w-3.5" /> Jadwal Saat Ini (Sebelum)
+                    </span>
+                    <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
+                      {savedPreviewTimeline.map((b, i) => (
+                        <div key={i} className="flex items-center justify-between p-2 bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 rounded-xl text-[11px]">
+                          <span className="font-semibold text-slate-700 dark:text-zinc-300">{b.name}</span>
+                          <span className="font-mono text-[10px] font-bold text-slate-500">{b.start} - {b.end}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* After Timeline */}
+                  <div className="p-4 bg-indigo-50/40 dark:bg-indigo-950/20 border border-indigo-200 dark:border-indigo-900/40 rounded-2xl space-y-2">
+                    <span className="text-xs font-bold text-indigo-700 dark:text-indigo-300 flex items-center gap-1.5 pb-2 border-b border-indigo-100 dark:border-indigo-900/40">
+                      <Sparkles className="h-3.5 w-3.5 text-indigo-600" /> Jadwal Baru (Sesudah)
+                    </span>
+                    <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
+                      {previewTimeline.map((b, i) => (
+                        <div key={i} className="flex items-center justify-between p-2 bg-white dark:bg-zinc-900 border border-indigo-100 dark:border-indigo-900/40 rounded-xl text-[11px]">
+                          <span className="font-bold text-indigo-950 dark:text-indigo-200">{b.name}</span>
+                          <span className="font-mono text-[10px] font-bold text-indigo-600 dark:text-indigo-400">{b.start} - {b.end}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-100 dark:border-zinc-800 bg-slate-50/50 dark:bg-zinc-900/50 flex flex-col md:flex-row items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={handleResetLocalSettings}
+                className="flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-rose-600 dark:text-zinc-400 dark:hover:text-rose-400 cursor-pointer"
+              >
+                <Undo2 className="h-3.5 w-3.5" /> Urungkan Perubahan (Reset)
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowPreviewModal(false)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 dark:text-zinc-300 hover:bg-slate-200/60 dark:hover:bg-zinc-800 rounded-xl cursor-pointer"
+                >
+                  Kembali Edit
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSaveAllSettings}
+                  disabled={isUpdating || !!routineOverlapError || !!breakOverlapError}
+                  className="flex items-center gap-2 px-5 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {isUpdating ? (
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                  )}
+                  Konfirmasi & Simpan Pengaturan
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

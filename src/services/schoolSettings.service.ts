@@ -59,6 +59,17 @@ const DEFAULT_SETTINGS: SchoolSettings = {
   lessonPeriod: 40
 };
 
+const HISTORY_COLLECTION = "school_settings_history";
+
+export interface SettingsHistoryItem {
+  id: string;
+  settings: SchoolSettings;
+  operatorId: string;
+  operatorName: string;
+  description: string;
+  savedAt: string;
+}
+
 export const schoolSettingsService = {
   // Get settings document or initialize with defaults if not found
   async getSettings(): Promise<SchoolSettings> {
@@ -146,6 +157,20 @@ export const schoolSettingsService = {
         logDesc
       );
 
+      // Save a history snapshot for rollback purposes
+      try {
+        const historyRef = collection(db, HISTORY_COLLECTION);
+        await addDoc(historyRef, {
+          settings,
+          operatorId,
+          operatorName,
+          description: logDesc,
+          savedAt: new Date().toISOString()
+        });
+      } catch (histError) {
+        console.error("Failed to save settings history snapshot:", histError);
+      }
+
       return {
         ...settings,
         updatedAt: new Date().toISOString()
@@ -153,5 +178,42 @@ export const schoolSettingsService = {
     } catch (error) {
       return handleFirestoreError(error, OperationType.WRITE, `${COLLECTION_NAME}/${DOCUMENT_ID}`);
     }
+  },
+
+  // Get settings history for rollback UI
+  async getSettingsHistory(): Promise<SettingsHistoryItem[]> {
+    try {
+      const historyRef = collection(db, HISTORY_COLLECTION);
+      const snap = await getDocs(historyRef);
+      const history: SettingsHistoryItem[] = [];
+
+      snap.forEach(d => {
+        const data = d.data();
+        history.push({
+          id: d.id,
+          settings: data.settings,
+          operatorId: data.operatorId || "system",
+          operatorName: data.operatorName || "Admin",
+          description: data.description || "Pengaturan disimpan",
+          savedAt: data.savedAt || new Date().toISOString()
+        });
+      });
+
+      // Sort descending by savedAt
+      return history.sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime());
+    } catch (error) {
+      console.error("Failed to get settings history:", error);
+      return [];
+    }
+  },
+
+  // Rollback settings to a specific historical version
+  async rollbackSettings(
+    historyItem: SettingsHistoryItem,
+    operatorId: string,
+    operatorName: string
+  ): Promise<SchoolSettings> {
+    const desc = `Rollback / pemulihan pengaturan ke versi tanggal ${new Date(historyItem.savedAt).toLocaleString('id-ID')} (Oleh: ${historyItem.operatorName})`;
+    return this.updateSettings(historyItem.settings, operatorId, operatorName, desc);
   }
 };

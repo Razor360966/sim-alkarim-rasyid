@@ -69,9 +69,19 @@ const finalDayRoutines = [...activeDayRoutines];
 
   const fixedBlocks: FixedBlock[] = [];
 
-  // 1. Add final day routines
+  // 1. Add final day routines with sequential chaining
+  // Sort routines by start time first
+  finalDayRoutines.sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
+
+  let routineTracker = startMins;
+
   finalDayRoutines.forEach(r => {
-    const rStart = timeToMinutes(r.startTime);
+    let rStart = timeToMinutes(r.startTime);
+    // If routine start time is before or equal to current routine end time, chain it after
+    if (rStart < routineTracker) {
+      rStart = routineTracker;
+    }
+
     let rDuration = r.duration;
     if (!rDuration && r.autoEndTime) {
       rDuration = Math.max(0, timeToMinutes(r.autoEndTime) - rStart);
@@ -80,11 +90,14 @@ const finalDayRoutines = [...activeDayRoutines];
       rDuration = 10;
     }
 
+    const rEnd = rStart + rDuration;
+    routineTracker = rEnd;
+
     fixedBlocks.push({
       id: r.id,
       name: r.name,
       start: rStart,
-      end: rStart + rDuration,
+      end: rEnd,
       duration: rDuration,
       type: "assembly"
     });

@@ -12,7 +12,7 @@ import {
 } from "firebase/firestore";
 import { db, handleFirestoreError, OperationType } from "../firebase/config";
 import { schoolSettingsService } from "./schoolSettings.service";
-import { generateDailySchedule } from "../utils/scheduleCalculator";
+import { generateDailySchedule, timeToMinutes } from "../utils/scheduleCalculator";
 import { LessonPeriod, LessonPeriodType, SchoolSettings, RoutineActivity } from "../types";
 
 const COLLECTION_NAME = "lesson_periods";
@@ -53,7 +53,7 @@ export const lessonPeriodService = {
         } as LessonPeriod);
       });
 
-      // Sort periods by day order and then by sequence
+      // Sort periods by day order and then chronologically by start time and sequence
       const DAY_ORDER: Record<string, number> = {
         "Sabtu": 1,
         "Minggu": 2,
@@ -69,6 +69,11 @@ export const lessonPeriodService = {
         const dayB = DAY_ORDER[b.day] || 99;
         if (dayA !== dayB) {
           return dayA - dayB;
+        }
+        const startA = timeToMinutes(a.startTime);
+        const startB = timeToMinutes(b.startTime);
+        if (startA !== startB) {
+          return startA - startB;
         }
         return a.sequence - b.sequence;
       });
@@ -153,7 +158,8 @@ export const lessonPeriodService = {
         // Generate schedule blocks for this day using the core calculation engine
         const blocks = generateDailySchedule(mergedSettings, day);
         
-        // Filter blocks for ROUTINE, LESSON, BREAK and assign sequences
+        // Filter blocks for ROUTINE, LESSON, BREAK and assign chronological sequence
+        let dailySeq = 1;
         let lessonSeq = 1;
         let routineSeq = 1;
         let breakSeq = 1;
@@ -169,22 +175,22 @@ export const lessonPeriodService = {
           }
 
           if (type) {
-            let seq = 0;
+            let typeCodeSeq = 0;
             if (type === LessonPeriodType.LESSON) {
-              seq = block.jpNumber || lessonSeq;
+              typeCodeSeq = block.jpNumber || lessonSeq;
               lessonSeq++;
             } else if (type === LessonPeriodType.ROUTINE) {
-              seq = routineSeq;
+              typeCodeSeq = routineSeq;
               routineSeq++;
             } else {
-              seq = breakSeq;
+              typeCodeSeq = breakSeq;
               breakSeq++;
             }
 
-            const periodCode = `${day.substring(0, 3).toUpperCase()}-${type}-${seq}`;
+            const periodCode = `${day.substring(0, 3).toUpperCase()}-${type}-${typeCodeSeq}`;
             const period: LessonPeriod = {
               day,
-              sequence: seq,
+              sequence: dailySeq,
               periodCode,
               type,
               title: block.name,
@@ -194,6 +200,7 @@ export const lessonPeriodService = {
               instructional: type === LessonPeriodType.LESSON,
               generatedAt: generatedAtISO
             };
+            dailySeq++;
             generatedPeriods.push(period);
           }
         }
@@ -284,6 +291,7 @@ export const lessonPeriodService = {
 
          const blocks = generateDailySchedule(mergedSettings, day);
          
+         let dailySeq = 1;
          let lessonSeq = 1;
          let routineSeq = 1;
          let breakSeq = 1;
@@ -297,24 +305,24 @@ export const lessonPeriodService = {
            } else if (block.type === "break") {
              type = LessonPeriodType.BREAK;
            }
- 
+
            if (type) {
-             let seq = 0;
+             let typeCodeSeq = 0;
              if (type === LessonPeriodType.LESSON) {
-               seq = block.jpNumber || lessonSeq;
+               typeCodeSeq = block.jpNumber || lessonSeq;
                lessonSeq++;
              } else if (type === LessonPeriodType.ROUTINE) {
-               seq = routineSeq;
+               typeCodeSeq = routineSeq;
                routineSeq++;
              } else {
-               seq = breakSeq;
+               typeCodeSeq = breakSeq;
                breakSeq++;
              }
- 
-             const periodCode = `${day.substring(0, 3).toUpperCase()}-${type}-${seq}`;
+
+             const periodCode = `${day.substring(0, 3).toUpperCase()}-${type}-${typeCodeSeq}`;
              const period: LessonPeriod = {
                day,
-               sequence: seq,
+               sequence: dailySeq,
                periodCode,
                type,
                title: block.name,
@@ -324,6 +332,7 @@ export const lessonPeriodService = {
                instructional: type === LessonPeriodType.LESSON,
                generatedAt: generatedAtISO
              };
+             dailySeq++;
              generatedPeriods.push(period);
            }
          }
