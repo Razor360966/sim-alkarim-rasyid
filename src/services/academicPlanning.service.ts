@@ -974,19 +974,60 @@ export const academicPlanningService = {
                   storedMonth.weeks = [];
                 }
 
-                // If storedMonth.weeks is empty but totalWeeks > 0, generate default weeks array
-                if (storedMonth.weeks.length === 0 && (storedMonth.totalWeeks > 0 || storedMonth.effectiveWeeks > 0)) {
-                  const targetTotal = typeof storedMonth.totalWeeks === "number" && storedMonth.totalWeeks > 0 ? storedMonth.totalWeeks : 4;
-                  const targetEff = typeof storedMonth.effectiveWeeks === "number" ? storedMonth.effectiveWeeks : targetTotal;
-                  storedMonth.weeks = Array.from({ length: targetTotal }, (_, idx) => ({
-                    weekNum: idx + 1,
-                    isEffective: idx < targetEff,
-                    notes: idx < targetEff ? "" : (storedMonth.notes || "Minggu Tidak Efektif"),
-                    dates: []
-                  }));
+                const targetTotal = typeof storedMonth.totalWeeks === "number" && storedMonth.totalWeeks > 0 
+                  ? storedMonth.totalWeeks 
+                  : (storedMonth.weeks.length > 0 ? storedMonth.weeks.length : 4);
+                
+                storedMonth.totalWeeks = targetTotal;
+
+                // Determine target effective weeks
+                let targetEff = typeof storedMonth.effectiveWeeks === "number" 
+                  ? storedMonth.effectiveWeeks 
+                  : undefined;
+
+                if (targetEff === undefined && storedMonth.effectiveWeeksByGrade?.["VII"] !== undefined) {
+                  targetEff = storedMonth.effectiveWeeksByGrade["VII"];
                 }
 
-                // Ensure weekNum and valid isEffective flag on every week without overwriting
+                // If storedMonth.weeks is empty, generate default weeks array
+                if (storedMonth.weeks.length === 0) {
+                  const effCount = targetEff !== undefined ? targetEff : targetTotal;
+                  storedMonth.weeks = Array.from({ length: targetTotal }, (_, idx) => ({
+                    weekNum: idx + 1,
+                    isEffective: idx < effCount,
+                    notes: idx < effCount ? "" : (storedMonth.notes || "Minggu Tidak Efektif"),
+                    dates: []
+                  }));
+                } else {
+                  // Adjust length of weeks array if totalWeeks changed
+                  if (storedMonth.weeks.length < targetTotal) {
+                    const diff = targetTotal - storedMonth.weeks.length;
+                    const curEff = targetEff !== undefined ? targetEff : storedMonth.weeks.filter((w: any) => w.isEffective).length;
+                    for (let i = 0; i < diff; i++) {
+                      const idx = storedMonth.weeks.length;
+                      storedMonth.weeks.push({
+                        weekNum: idx + 1,
+                        isEffective: idx < curEff,
+                        notes: idx < curEff ? "" : (storedMonth.notes || "Minggu Tidak Efektif"),
+                        dates: []
+                      });
+                    }
+                  } else if (storedMonth.weeks.length > targetTotal) {
+                    storedMonth.weeks = storedMonth.weeks.slice(0, targetTotal);
+                  }
+
+                  // If explicit targetEff is set, keep the isEffective flags in weeks in sync
+                  if (targetEff !== undefined) {
+                    const currentEffCount = storedMonth.weeks.filter((w: any) => w.isEffective).length;
+                    if (currentEffCount !== targetEff) {
+                      storedMonth.weeks.forEach((w: any, idx: number) => {
+                        w.isEffective = idx < targetEff!;
+                      });
+                    }
+                  }
+                }
+
+                // Ensure weekNum and valid isEffective flag on every week
                 storedMonth.weeks.forEach((w: any, idx: number) => {
                   w.weekNum = idx + 1;
                   if (typeof w.isEffective !== "boolean") {
@@ -997,18 +1038,74 @@ export const academicPlanningService = {
                 // Calculate actual totals directly from the weeks array
                 const mTotal = storedMonth.weeks.length;
                 const mEff = storedMonth.weeks.filter((w: any) => w.isEffective).length;
-                const mIneff = mTotal - mEff;
+                const mIneff = Math.max(0, mTotal - mEff);
                 const mNotesList = storedMonth.weeks.filter((w: any) => !w.isEffective).map((w: any) => w.notes).filter(Boolean);
 
                 storedMonth.totalWeeks = mTotal;
-                storedMonth.effectiveWeeks = mEff;
-                storedMonth.ineffectiveWeeks = mIneff;
-                storedMonth.effectiveWeeksByGrade = {
-                  "VII": mEff,
-                  "VIII": mEff,
-                  "IX": mEff
-                };
-                storedMonth.notes = mNotesList.length > 0 ? mNotesList.join(", ") : "Hari efektif belajar penuh";
+                storedMonth.effectiveWeeks = targetEff !== undefined ? targetEff : mEff;
+                storedMonth.ineffectiveWeeks = Math.max(0, storedMonth.totalWeeks - storedMonth.effectiveWeeks);
+
+                // Ensure weeksByGrade exists and is synced for all grade levels
+                if (!storedMonth.weeksByGrade || typeof storedMonth.weeksByGrade !== "object") {
+                  storedMonth.weeksByGrade = {};
+                }
+
+                const gradeLevelsList = ["VII", "VIII", "IX"];
+                const gradeMap: Record<string, number> = (storedMonth.effectiveWeeksByGrade && typeof storedMonth.effectiveWeeksByGrade === "object")
+                  ? { ...storedMonth.effectiveWeeksByGrade }
+                  : { "VII": storedMonth.effectiveWeeks, "VIII": storedMonth.effectiveWeeks, "IX": storedMonth.effectiveWeeks };
+
+                gradeLevelsList.forEach((g) => {
+                  if (gradeMap[g] === undefined) {
+                    gradeMap[g] = storedMonth.effectiveWeeks;
+                  }
+                  const gEff = gradeMap[g];
+
+                  let gWeeks: any[] = Array.isArray(storedMonth.weeksByGrade[g]) ? [...storedMonth.weeksByGrade[g]] : [];
+                  if (gWeeks.length === 0) {
+                    if (storedMonth.weeks.length > 0) {
+                      gWeeks = storedMonth.weeks.map((w: any, idx: number) => ({
+                        ...w,
+                        isEffective: idx < gEff
+                      }));
+                    } else {
+                      gWeeks = Array.from({ length: targetTotal }, (_, idx) => ({
+                        weekNum: idx + 1,
+                        isEffective: idx < gEff,
+                        notes: idx < gEff ? "" : (storedMonth.notes || "Minggu Tidak Efektif"),
+                        dates: []
+                      }));
+                    }
+                  }
+
+                  if (gWeeks.length < targetTotal) {
+                    const diff = targetTotal - gWeeks.length;
+                    for (let i = 0; i < diff; i++) {
+                      const idx = gWeeks.length;
+                      gWeeks.push({
+                        weekNum: idx + 1,
+                        isEffective: idx < gEff,
+                        notes: idx < gEff ? "" : (storedMonth.notes || "Minggu Tidak Efektif"),
+                        dates: []
+                      });
+                    }
+                  } else if (gWeeks.length > targetTotal) {
+                    gWeeks = gWeeks.slice(0, targetTotal);
+                  }
+
+                  gWeeks.forEach((w: any, idx: number) => {
+                    w.weekNum = idx + 1;
+                    if (typeof w.isEffective !== "boolean") {
+                      w.isEffective = idx < gEff;
+                    }
+                  });
+
+                  gradeMap[g] = gWeeks.filter((w: any) => w.isEffective).length;
+                  storedMonth.weeksByGrade[g] = gWeeks;
+                });
+
+                storedMonth.effectiveWeeksByGrade = gradeMap;
+                storedMonth.notes = storedMonth.notes || (mNotesList.length > 0 ? mNotesList.join(", ") : "Hari efektif belajar penuh");
               });
 
               // Merge any dynamically computed months that are not in storedDetails

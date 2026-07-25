@@ -99,6 +99,14 @@ export const getIndonesianHolidaysAndBigDays = (year: number): SyncedHoliday[] =
       isEffectiveDay: false
     },
     {
+      date: `${year}-07-23`,
+      title: "Hari Anak Nasional",
+      categoryCode: "EVENT_KEGIATAN",
+      statusCode: "STATUS_EFEKTIF",
+      description: "Hari Anak Nasional - Peringatan & Kegiatan Sekolah (KBM Efektif)",
+      isEffectiveDay: true
+    },
+    {
       date: `${year}-08-17`,
       title: "Hari Kemerdekaan RI",
       categoryCode: "EVENT_LIBUR",
@@ -2171,11 +2179,34 @@ Keterangan: ${evt.description || "-"}`;
                                   Object.keys(gradeMap).forEach(k => {
                                     gradeMap[k] = Math.min(gradeMap[k], val);
                                   });
+                                  const newEff = Math.min(w.effectiveWeeks, val);
+                                  const newIneff = Math.max(0, val - newEff);
+
+                                  let updatedWeeks = Array.isArray(w.weeks) ? [...w.weeks] : [];
+                                  if (updatedWeeks.length < val) {
+                                    for (let k = updatedWeeks.length; k < val; k++) {
+                                      updatedWeeks.push({
+                                        weekNum: k + 1,
+                                        isEffective: k < newEff,
+                                        notes: k < newEff ? "" : (w.notes || "Minggu Tidak Efektif"),
+                                        dates: []
+                                      });
+                                    }
+                                  } else if (updatedWeeks.length > val) {
+                                    updatedWeeks = updatedWeeks.slice(0, val);
+                                  }
+                                  updatedWeeks.forEach((wk, kIdx) => {
+                                    wk.weekNum = kIdx + 1;
+                                    wk.isEffective = kIdx < newEff;
+                                  });
+
                                   return {
                                     ...w,
                                     totalWeeks: val,
-                                    effectiveWeeks: Math.min(w.effectiveWeeks, val),
-                                    effectiveWeeksByGrade: gradeMap
+                                    effectiveWeeks: newEff,
+                                    ineffectiveWeeks: newIneff,
+                                    effectiveWeeksByGrade: gradeMap,
+                                    weeks: updatedWeeks
                                   };
                                 }));
                               }}
@@ -2201,11 +2232,37 @@ Keterangan: ${evt.description || "-"}`;
                                       if (i !== idx) return w;
                                       const gradeMap = { ...(w.effectiveWeeksByGrade || {}) };
                                       gradeMap[grade] = validatedVal;
+                                      const weeksByGrade = { ...(w.weeksByGrade || {}) };
+
+                                      let gWeeks = Array.isArray(weeksByGrade[grade])
+                                        ? [...weeksByGrade[grade]]
+                                        : (Array.isArray(w.weeks) ? [...w.weeks] : []);
+
+                                      if (gWeeks.length === 0) {
+                                        gWeeks = Array.from({ length: w.totalWeeks }, (_, k) => ({
+                                          weekNum: k + 1,
+                                          isEffective: k < validatedVal,
+                                          notes: k < validatedVal ? "" : (w.notes || "Minggu Tidak Efektif"),
+                                          dates: []
+                                        }));
+                                      } else {
+                                        gWeeks = gWeeks.map((wk, kIdx) => ({
+                                          ...wk,
+                                          isEffective: kIdx < validatedVal
+                                        }));
+                                      }
+                                      weeksByGrade[grade] = gWeeks;
+
+                                      const newEff = grade === gradeLevels[0] ? validatedVal : w.effectiveWeeks;
+                                      const newIneff = Math.max(0, w.totalWeeks - newEff);
+
                                       return {
                                         ...w,
                                         effectiveWeeksByGrade: gradeMap,
-                                        // Also keep backward compatible default in sync with the first grade level
-                                        effectiveWeeks: grade === gradeLevels[0] ? validatedVal : w.effectiveWeeks
+                                        weeksByGrade,
+                                        effectiveWeeks: newEff,
+                                        ineffectiveWeeks: newIneff,
+                                        weeks: grade === gradeLevels[0] ? gWeeks : w.weeks
                                       };
                                     }));
                                   }}

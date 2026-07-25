@@ -122,135 +122,173 @@ export const EffectiveWeeks: React.FC = () => {
     setIsEditing(false);
   }, [selectedSemesterId, semesters]);
 
-  // Handle status toggle for a specific week
+  // Helper to extract weeks array for the selected grade
+  const getWeeksForGrade = (monthRow: any, grade: string) => {
+    if (monthRow.weeksByGrade?.[grade] && Array.isArray(monthRow.weeksByGrade[grade]) && monthRow.weeksByGrade[grade].length > 0) {
+      return monthRow.weeksByGrade[grade];
+    }
+    const effCount = monthRow.effectiveWeeksByGrade?.[grade] ?? monthRow.effectiveWeeks ?? 0;
+    if (Array.isArray(monthRow.weeks) && monthRow.weeks.length > 0) {
+      return monthRow.weeks.map((w: any, idx: number) => ({
+        ...w,
+        isEffective: idx < effCount
+      }));
+    }
+    const total = monthRow.totalWeeks || 4;
+    return Array.from({ length: total }, (_, idx) => ({
+      weekNum: idx + 1,
+      isEffective: idx < effCount,
+      notes: idx < effCount ? "" : (monthRow.notes || "Minggu Tidak Efektif"),
+      dates: []
+    }));
+  };
+
+  // Handle status toggle for a specific week in the selected grade
   const handleWeekStatusChange = (monthIndex: number, weekIndex: number, isEffective: boolean) => {
     const updated = [...editingDetails];
     const month = { ...updated[monthIndex] };
-    const weeks = [...(month.weeks || [])];
-    
-    if (weeks[weekIndex]) {
-      weeks[weekIndex] = { 
-        ...weeks[weekIndex], 
+    const gradeMap = { ...(month.effectiveWeeksByGrade || {}) };
+    const weeksByGrade = { ...(month.weeksByGrade || {}) };
+
+    const currentGradeWeeks = getWeeksForGrade(month, selectedGrade);
+    const updatedGradeWeeks = [...currentGradeWeeks];
+
+    if (updatedGradeWeeks[weekIndex]) {
+      updatedGradeWeeks[weekIndex] = { 
+        ...updatedGradeWeeks[weekIndex], 
         isEffective,
-        notes: isEffective ? "" : (weeks[weekIndex].notes || "Kegiatan Sekolah")
+        notes: isEffective ? "" : (updatedGradeWeeks[weekIndex].notes || "Kegiatan Sekolah")
       };
     }
 
-    // Recalculate monthly totals
-    const totalWeeks = weeks.length;
-    const effectiveWeeks = weeks.filter(w => w.isEffective).length;
-    const ineffectiveWeeks = totalWeeks - effectiveWeeks;
-
-    month.weeks = weeks;
-    month.totalWeeks = totalWeeks;
-    month.effectiveWeeks = effectiveWeeks;
-    month.ineffectiveWeeks = ineffectiveWeeks;
+    weeksByGrade[selectedGrade] = updatedGradeWeeks;
     
-    // Auto update grade-level specific numbers as well
-    month.effectiveWeeksByGrade = {
-      "VII": effectiveWeeks,
-      "VIII": effectiveWeeks,
-      "IX": effectiveWeeks
-    };
+    // Recalculate effective weeks for selected grade only
+    const newGradeEff = updatedGradeWeeks.filter(w => w.isEffective).length;
+    gradeMap[selectedGrade] = newGradeEff;
 
-    const notesArray = weeks.filter(w => !w.isEffective).map(w => w.notes).filter(Boolean);
-    month.notes = notesArray.length > 0 ? notesArray.join(", ") : "Hari efektif belajar penuh";
+    month.weeksByGrade = weeksByGrade;
+    month.effectiveWeeksByGrade = gradeMap;
+
+    // Keep fallback base fields synced if primary grade
+    if (selectedGrade === (gradeLevels[0] || "VII")) {
+      month.weeks = updatedGradeWeeks;
+      month.effectiveWeeks = newGradeEff;
+      month.ineffectiveWeeks = Math.max(0, month.totalWeeks - newGradeEff);
+    }
+
+    const notesArray = updatedGradeWeeks.filter(w => !w.isEffective).map(w => w.notes).filter(Boolean);
+    if (notesArray.length > 0) {
+      month.notes = notesArray.join(", ");
+    }
 
     updated[monthIndex] = month;
     setEditingDetails(updated);
   };
 
-  // Handle notes change for a specific week
+  // Handle notes change for a specific week in the selected grade
   const handleWeekNotesChange = (monthIndex: number, weekIndex: number, notes: string) => {
     const updated = [...editingDetails];
     const month = { ...updated[monthIndex] };
-    const weeks = [...(month.weeks || [])];
+    const weeksByGrade = { ...(month.weeksByGrade || {}) };
 
-    if (weeks[weekIndex]) {
-      weeks[weekIndex] = { ...weeks[weekIndex], notes };
+    const currentGradeWeeks = getWeeksForGrade(month, selectedGrade);
+    const updatedGradeWeeks = [...currentGradeWeeks];
+
+    if (updatedGradeWeeks[weekIndex]) {
+      updatedGradeWeeks[weekIndex] = { ...updatedGradeWeeks[weekIndex], notes };
     }
 
-    month.weeks = weeks;
-    const notesArray = weeks.filter(w => !w.isEffective).map(w => w.notes).filter(Boolean);
-    month.notes = notesArray.length > 0 ? notesArray.join(", ") : "Hari efektif belajar penuh";
+    weeksByGrade[selectedGrade] = updatedGradeWeeks;
+    month.weeksByGrade = weeksByGrade;
+
+    if (selectedGrade === (gradeLevels[0] || "VII")) {
+      month.weeks = updatedGradeWeeks;
+    }
+
+    const notesArray = updatedGradeWeeks.filter(w => !w.isEffective).map(w => w.notes).filter(Boolean);
+    if (notesArray.length > 0) {
+      month.notes = notesArray.join(", ");
+    }
 
     updated[monthIndex] = month;
     setEditingDetails(updated);
   };
 
-  // Add week to month
+  // Add week to month (applies to all grades while maintaining each grade's independent settings)
   const handleAddWeekToMonth = (monthIndex: number) => {
     const updated = [...editingDetails];
     const month = { ...updated[monthIndex] };
-    const weeks = [...(month.weeks || [])];
+    const weeksByGrade = { ...(month.weeksByGrade || {}) };
+    const gradeMap = { ...(month.effectiveWeeksByGrade || {}) };
 
-    const newWeekNum = weeks.length + 1;
-    weeks.push({
-      weekNum: newWeekNum,
-      isEffective: true,
-      notes: "",
-      dates: []
+    const targetTotal = (month.totalWeeks || 4) + 1;
+    month.totalWeeks = targetTotal;
+
+    gradeLevels.forEach((g) => {
+      const gWeeks = getWeeksForGrade(month, g);
+      const newWeekNum = gWeeks.length + 1;
+      const updatedWeeks = [
+        ...gWeeks,
+        {
+          weekNum: newWeekNum,
+          isEffective: true,
+          notes: "",
+          dates: []
+        }
+      ];
+      weeksByGrade[g] = updatedWeeks;
+      gradeMap[g] = updatedWeeks.filter(w => w.isEffective).length;
     });
 
-    const totalWeeks = weeks.length;
-    const effectiveWeeks = weeks.filter(w => w.isEffective).length;
-    const ineffectiveWeeks = totalWeeks - effectiveWeeks;
-
-    month.weeks = weeks;
-    month.totalWeeks = totalWeeks;
-    month.effectiveWeeks = effectiveWeeks;
-    month.ineffectiveWeeks = ineffectiveWeeks;
-
-    month.effectiveWeeksByGrade = {
-      "VII": effectiveWeeks,
-      "VIII": effectiveWeeks,
-      "IX": effectiveWeeks
-    };
-
-    const notesArray = weeks.filter(w => !w.isEffective).map(w => w.notes).filter(Boolean);
-    month.notes = notesArray.length > 0 ? notesArray.join(", ") : "Hari efektif belajar penuh";
+    month.weeksByGrade = weeksByGrade;
+    month.effectiveWeeksByGrade = gradeMap;
+    month.effectiveWeeks = gradeMap[gradeLevels[0] || "VII"] ?? month.effectiveWeeks;
+    month.ineffectiveWeeks = Math.max(0, month.totalWeeks - month.effectiveWeeks);
+    if (weeksByGrade[gradeLevels[0] || "VII"]) {
+      month.weeks = weeksByGrade[gradeLevels[0] || "VII"];
+    }
 
     updated[monthIndex] = month;
     setEditingDetails(updated);
-    showToast(`Berhasil menambahkan Pekan ${newWeekNum} di bulan ${month.month}`, "success");
+    showToast(`Berhasil menambahkan Pekan ${targetTotal} di bulan ${month.month}`, "success");
   };
 
   // Delete week from month
   const handleDeleteWeekFromMonth = (monthIndex: number, weekIndex: number) => {
     const updated = [...editingDetails];
     const month = { ...updated[monthIndex] };
-    const weeks = [...(month.weeks || [])];
 
-    if (weeks.length <= 1) {
+    if ((month.totalWeeks || 0) <= 1) {
       showToast("Bulan harus memiliki minimal 1 pekan!", "error");
       return;
     }
 
-    weeks.splice(weekIndex, 1);
+    const weeksByGrade = { ...(month.weeksByGrade || {}) };
+    const gradeMap = { ...(month.effectiveWeeksByGrade || {}) };
+    const targetTotal = month.totalWeeks - 1;
+    month.totalWeeks = targetTotal;
 
-    // Reindex week numbers
-    const reindexedWeeks = weeks.map((w, idx) => ({
-      ...w,
-      weekNum: idx + 1
-    }));
+    gradeLevels.forEach((g) => {
+      const gWeeks = getWeeksForGrade(month, g);
+      if (gWeeks.length > weekIndex) {
+        gWeeks.splice(weekIndex, 1);
+      }
+      const reindexed = gWeeks.map((w, idx) => ({
+        ...w,
+        weekNum: idx + 1
+      }));
+      weeksByGrade[g] = reindexed;
+      gradeMap[g] = reindexed.filter(w => w.isEffective).length;
+    });
 
-    const totalWeeks = reindexedWeeks.length;
-    const effectiveWeeks = reindexedWeeks.filter(w => w.isEffective).length;
-    const ineffectiveWeeks = totalWeeks - effectiveWeeks;
-
-    month.weeks = reindexedWeeks;
-    month.totalWeeks = totalWeeks;
-    month.effectiveWeeks = effectiveWeeks;
-    month.ineffectiveWeeks = ineffectiveWeeks;
-
-    month.effectiveWeeksByGrade = {
-      "VII": effectiveWeeks,
-      "VIII": effectiveWeeks,
-      "IX": effectiveWeeks
-    };
-
-    const notesArray = reindexedWeeks.filter(w => !w.isEffective).map(w => w.notes).filter(Boolean);
-    month.notes = notesArray.length > 0 ? notesArray.join(", ") : "Hari efektif belajar penuh";
+    month.weeksByGrade = weeksByGrade;
+    month.effectiveWeeksByGrade = gradeMap;
+    month.effectiveWeeks = gradeMap[gradeLevels[0] || "VII"] ?? month.effectiveWeeks;
+    month.ineffectiveWeeks = Math.max(0, month.totalWeeks - month.effectiveWeeks);
+    if (weeksByGrade[gradeLevels[0] || "VII"]) {
+      month.weeks = weeksByGrade[gradeLevels[0] || "VII"];
+    }
 
     updated[monthIndex] = month;
     setEditingDetails(updated);
@@ -262,14 +300,15 @@ export const EffectiveWeeks: React.FC = () => {
     e.preventDefault();
     if (!currentSemester) return;
 
-    // VALIDATION: All ineffective weeks must have a reason (notes)
+    // VALIDATION: All ineffective weeks must have a reason (notes) across all grade levels
     for (let mIdx = 0; mIdx < editingDetails.length; mIdx++) {
       const month = editingDetails[mIdx];
-      if (Array.isArray(month.weeks)) {
-        for (let wIdx = 0; wIdx < month.weeks.length; wIdx++) {
-          const week = month.weeks[wIdx];
+      for (const g of gradeLevels) {
+        const gWeeks = getWeeksForGrade(month, g);
+        for (let wIdx = 0; wIdx < gWeeks.length; wIdx++) {
+          const week = gWeeks[wIdx];
           if (!week.isEffective && (!week.notes || week.notes.trim() === "")) {
-            showToast(`Gagal Menyimpan: Alasan wajib diisi untuk ${month.month} - Pekan ${week.weekNum}!`, "error");
+            showToast(`Gagal Menyimpan: Alasan wajib diisi untuk Jenjang ${g} - ${month.month} Pekan ${week.weekNum}!`, "error");
             return;
           }
         }
@@ -740,7 +779,7 @@ export const EffectiveWeeks: React.FC = () => {
                         Bulan {monthRow.month}
                       </h3>
                       <p className="text-[11px] text-slate-400 mt-0.5">
-                        Total {monthRow.totalWeeks} pekan &bull; {monthRow.effectiveWeeks} Pekan Efektif
+                        Total {monthRow.totalWeeks} pekan &bull; {monthRow.effectiveWeeksByGrade?.[selectedGrade] ?? monthRow.effectiveWeeks} Pekan Efektif (Jenjang {selectedGrade})
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -754,7 +793,7 @@ export const EffectiveWeeks: React.FC = () => {
                         </button>
                       )}
                       <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300">
-                        Evaluasi Bulan
+                        Jenjang {selectedGrade}
                       </span>
                     </div>
                   </div>
@@ -766,23 +805,15 @@ export const EffectiveWeeks: React.FC = () => {
                         <tr className="bg-slate-50/50 dark:bg-zinc-850/20 border-b border-slate-200 dark:border-zinc-800 text-xs text-slate-500 dark:text-zinc-400">
                           <th className="p-3 font-semibold w-24 text-center">Pekan</th>
                           <th className="p-3 font-semibold w-48">Rentang Tanggal</th>
-                          <th className="p-3 font-semibold w-40 text-center">Status</th>
+                          <th className="p-3 font-semibold w-40 text-center">Status ({selectedGrade})</th>
                           <th className="p-3 font-semibold">Alasan / Keterangan Agenda (Wajib jika Tidak Efektif)</th>
                           {isEditing && <th className="p-3 font-semibold w-20 text-center">Aksi</th>}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 dark:divide-zinc-850">
                         {(() => {
-                          const weeks = Array.isArray(monthRow.weeks) ? monthRow.weeks : [];
-                          if (weeks.length === 0 && monthRow.totalWeeks > 0) {
-                            monthRow.weeks = Array.from({ length: monthRow.totalWeeks }, (_, idx) => ({
-                              weekNum: idx + 1,
-                              isEffective: idx < (monthRow.effectiveWeeks || 0),
-                              notes: idx < (monthRow.effectiveWeeks || 0) ? "" : (monthRow.notes || "Minggu Tidak Efektif"),
-                              dates: []
-                            }));
-                          }
-                          return (monthRow.weeks || []).map((w: any, wIdx: number) => {
+                          const gradeWeeks = getWeeksForGrade(monthRow, selectedGrade);
+                          return gradeWeeks.map((w: any, wIdx: number) => {
                             const isEff = w.isEffective;
                             return (
                               <tr 
