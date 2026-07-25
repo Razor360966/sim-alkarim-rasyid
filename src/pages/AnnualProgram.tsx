@@ -57,10 +57,15 @@ export const AnnualProgram: React.FC = () => {
   // Calculated and Loaded States
   const [prota, setProta] = useState<AnnualProgramData | null>(null);
   const [weeklyJp, setWeeklyJp] = useState<number>(0);
+  const [effectiveWeeksGanjil, setEffectiveWeeksGanjil] = useState<number>(0);
+  const [effectiveWeeksGenap, setEffectiveWeeksGenap] = useState<number>(0);
   const [effectiveWeeksYear, setEffectiveWeeksYear] = useState<number>(0);
+  const [effectiveJpGanjil, setEffectiveJpGanjil] = useState<number>(0);
+  const [effectiveJpGenap, setEffectiveJpGenap] = useState<number>(0);
   const [effectiveJpYear, setEffectiveJpYear] = useState<number>(0);
   const [teacherName, setTeacherName] = useState<string>("");
   const [teacherId, setTeacherId] = useState<string>("");
+  const [selectedSemesterTab, setSelectedSemesterTab] = useState<"semua" | "Ganjil" | "Genap">("semua");
 
   // Interactive UI States
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -152,10 +157,14 @@ export const AnnualProgram: React.FC = () => {
 
   const selectedSubjectObj = offeredSubjects.find(s => s.id === selectedSubjectId);
 
-  // Load effective weeks and calculate effective JP
+  // Load effective weeks and calculate effective JP per semester
   useEffect(() => {
     if (!selectedAcademicYearId || !selectedClassId || !selectedSubjectId) {
+      setEffectiveJpGanjil(0);
+      setEffectiveJpGenap(0);
       setEffectiveJpYear(0);
+      setEffectiveWeeksGanjil(0);
+      setEffectiveWeeksGenap(0);
       setEffectiveWeeksYear(0);
       setWeeklyJp(0);
       setTeacherName("");
@@ -185,37 +194,52 @@ export const AnnualProgram: React.FC = () => {
       )
     ])
       .then(([weekAnalyses, realJpAnalyses]) => {
-        const totalWeeks = weekAnalyses.reduce((sum, current) => {
-          const levelEffectiveWeeks = current.details?.reduce((s: number, m: any) => {
-            const ew = m.effectiveWeeksByGrade?.[gradeLevel] ?? m.effectiveWeeks;
-            return s + ew;
-          }, 0) ?? current.effectiveWeeks;
-          return sum + levelEffectiveWeeks;
-        }, 0);
-        setEffectiveWeeksYear(totalWeeks);
-
         const currentWeeklyJp = selectedSubjectObj ? selectedSubjectObj.jp : 0;
         setWeeklyJp(currentWeeklyJp);
         setTeacherName(selectedSubjectObj?.teacherName || "Belum Ditentukan");
         setTeacherId(selectedSubjectObj?.teacherId || "");
 
-        // Sum real teaching hours across semesters for selected subject and class
-        let totalRealEffectiveJp = 0;
-        realJpAnalyses.forEach(analysis => {
-          const match = analysis.bySubjectClass.find(
+        let gWeeks = 0;
+        let pWeeks = 0;
+        let gJp = 0;
+        let pJp = 0;
+
+        semsForYear.forEach((sem, idx) => {
+          const wAnalysis = weekAnalyses[idx];
+          const rJpAnalysis = realJpAnalyses[idx];
+
+          const semWeeks = wAnalysis?.details?.reduce((s: number, m: any) => {
+            const ew = m.effectiveWeeksByGrade?.[gradeLevel] ?? m.effectiveWeeks;
+            return s + ew;
+          }, 0) ?? wAnalysis?.effectiveWeeks ?? 0;
+
+          const match = rJpAnalysis?.bySubjectClass.find(
             item => item.subjectId === selectedSubjectId && item.classId === selectedClassId
           );
-          if (match) {
-            totalRealEffectiveJp += match.effectiveJp;
+
+          const semJp = (match && match.effectiveJp > 0) ? match.effectiveJp : currentWeeklyJp * semWeeks;
+
+          const isGanjil = sem.type === "Ganjil" || sem.name.toLowerCase().includes("ganjil") || idx === 0;
+          if (isGanjil) {
+            gWeeks += semWeeks;
+            gJp += semJp;
+          } else {
+            pWeeks += semWeeks;
+            pJp += semJp;
           }
         });
 
-        // Fallback to weeklyJp * totalWeeks if real teaching hours is 0 (e.g. no schedule published yet)
-        setEffectiveJpYear(totalRealEffectiveJp > 0 ? totalRealEffectiveJp : currentWeeklyJp * totalWeeks);
+        setEffectiveWeeksGanjil(gWeeks);
+        setEffectiveWeeksGenap(pWeeks);
+        setEffectiveWeeksYear(gWeeks + pWeeks);
+
+        setEffectiveJpGanjil(gJp);
+        setEffectiveJpGenap(pJp);
+        setEffectiveJpYear(gJp + pJp);
       })
       .catch((err) => showToast("Gagal menganalisis JP Efektif: " + err.message, "error"))
       .finally(() => setLoading(false));
-  }, [selectedAcademicYearId, selectedClassId, selectedSubjectId, semesters, selectedSubjectId, gradeLevel]);
+  }, [selectedAcademicYearId, selectedClassId, selectedSubjectId, semesters, gradeLevel, selectedSubjectObj]);
 
   // Load the annual program (Prota) from Firestore
   useEffect(() => {
@@ -264,6 +288,12 @@ export const AnnualProgram: React.FC = () => {
   // Calculations for Indicators
   const currentTopics = prota?.topics || [];
   const usedJp = currentTopics.reduce((sum, t) => sum + t.jp, 0);
+  const usedJpGanjil = currentTopics
+    .filter(t => t.semester === "Ganjil" || t.semester === "Ganjil & Genap")
+    .reduce((sum, t) => sum + t.jp, 0);
+  const usedJpGenap = currentTopics
+    .filter(t => t.semester === "Genap")
+    .reduce((sum, t) => sum + t.jp, 0);
   const remainingJp = effectiveJpYear - usedJp;
   const progressPercent = effectiveJpYear > 0 ? Math.min(100, (usedJp / effectiveJpYear) * 100) : 0;
 
@@ -303,7 +333,10 @@ export const AnnualProgram: React.FC = () => {
   };
 
   // Open modal for adding / editing topic
-  const handleOpenModal = (topic: ProtaTopic | null = null) => {
+  const handleOpenModal = (
+    topic: ProtaTopic | null = null,
+    defaultSemester: "Ganjil" | "Genap" | "Ganjil & Genap" = "Ganjil"
+  ) => {
     if (topic) {
       setEditingTopic(topic);
       setTopicTitle(topic.title);
@@ -315,7 +348,7 @@ export const AnnualProgram: React.FC = () => {
       setEditingTopic(null);
       setTopicTitle("");
       setTopicJp(0);
-      setTopicSemester("Ganjil");
+      setTopicSemester(defaultSemester);
       setTopicDescription("");
       setSubTopics([]);
     }
@@ -331,15 +364,34 @@ export const AnnualProgram: React.FC = () => {
     e.preventDefault();
     if (!prota) return;
 
-    // Validation: Total JP should not exceed effective JP
+    const targetTopicJp = subTopics.length > 0 ? subTopics.reduce((sum, s) => sum + s.jp, 0) : topicJp;
+
+    // Validation per semester
+    if (topicSemester === "Ganjil") {
+      const otherGanjilJp = currentTopics
+        .filter(t => t.id !== editingTopic?.id && t.semester === "Ganjil")
+        .reduce((sum, t) => sum + t.jp, 0);
+      if (effectiveJpGanjil > 0 && otherGanjilJp + targetTopicJp > effectiveJpGanjil) {
+        showToast(`Gagal: Total alokasi JP Semester Ganjil (${otherGanjilJp + targetTopicJp} JP) melebihi JP Efektif Ganjil (${effectiveJpGanjil} JP)!`, "error");
+        return;
+      }
+    } else if (topicSemester === "Genap") {
+      const otherGenapJp = currentTopics
+        .filter(t => t.id !== editingTopic?.id && t.semester === "Genap")
+        .reduce((sum, t) => sum + t.jp, 0);
+      if (effectiveJpGenap > 0 && otherGenapJp + targetTopicJp > effectiveJpGenap) {
+        showToast(`Gagal: Total alokasi JP Semester Genap (${otherGenapJp + targetTopicJp} JP) melebihi JP Efektif Genap (${effectiveJpGenap} JP)!`, "error");
+        return;
+      }
+    }
+
+    // Validation total annual JP
     const otherTopicsJp = currentTopics
       .filter(t => t.id !== editingTopic?.id)
       .reduce((sum, t) => sum + t.jp, 0);
 
-    const targetTopicJp = subTopics.length > 0 ? subTopics.reduce((sum, s) => sum + s.jp, 0) : topicJp;
-
-    if (otherTopicsJp + targetTopicJp > effectiveJpYear) {
-      showToast(`Gagal: Total alokasi JP (${otherTopicsJp + targetTopicJp} JP) melebihi JP Efektif Tahunan (${effectiveJpYear} JP)!`, "error");
+    if (effectiveJpYear > 0 && otherTopicsJp + targetTopicJp > effectiveJpYear) {
+      showToast(`Gagal: Total alokasi JP Tahunan (${otherTopicsJp + targetTopicJp} JP) melebihi JP Efektif Tahunan (${effectiveJpYear} JP)!`, "error");
       return;
     }
 
@@ -855,65 +907,135 @@ export const AnnualProgram: React.FC = () => {
         </div>
       </div>
 
-      {/* RPE and JP Indicators Panel */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        {/* Total JP Efektif */}
-        <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl p-4 shadow-xs flex items-center justify-between">
-          <div className="space-y-1">
-            <span className="text-[10px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">JP Efektif Tahunan</span>
-            <div className="text-2xl font-black text-slate-800 dark:text-zinc-100">{effectiveJpYear} JP</div>
-            <p className="text-[10px] text-slate-500">{weeklyJp} JP/Minggu &bull; {effectiveWeeksYear} Pekan</p>
+      {/* RPE and JP Indicators Panel (Semester Ganjil, Semester Genap, Total Tahunan) */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Semester Ganjil Card */}
+        <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl p-4 shadow-xs space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-zinc-800 pb-2">
+            <span className="text-xs font-black text-blue-600 dark:text-blue-400 uppercase tracking-wider flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+              Semester Ganjil
+            </span>
+            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300">
+              {effectiveWeeksGanjil} Pekan
+            </span>
           </div>
-          <div className="h-10 w-10 bg-blue-50 dark:bg-blue-950/30 rounded-xl flex items-center justify-center text-blue-600 dark:text-blue-400 font-bold text-sm">
-            {weeklyJp}
-          </div>
-        </div>
 
-        {/* JP Terpakai */}
-        <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl p-4 shadow-xs flex items-center justify-between">
-          <div className="space-y-1">
-            <span className="text-[10px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">JP Dialokasikan</span>
-            <div className={`text-2xl font-black ${usedJp > effectiveJpYear ? 'text-rose-600 dark:text-rose-400' : 'text-slate-800 dark:text-zinc-100'}`}>{usedJp} JP</div>
-            <p className="text-[10px] text-slate-500">{currentTopics.length} Topik Pembelajaran</p>
-          </div>
-          <div className={`h-10 w-10 rounded-xl flex items-center justify-center font-bold text-sm ${usedJp > effectiveJpYear ? 'bg-rose-50 text-rose-600 dark:bg-rose-950/30 dark:text-rose-400' : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400'}`}>
-            {usedJp}
-          </div>
-        </div>
-
-        {/* Sisa JP */}
-        <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl p-4 shadow-xs flex items-center justify-between">
-          <div className="space-y-1">
-            <span className="text-[10px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">Sisa Alokasi JP</span>
-            <div className={`text-2xl font-black ${remainingJp < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-800 dark:text-zinc-100'}`}>{remainingJp} JP</div>
-            <p className="text-[10px] text-slate-500">Tingkat kecukupan materi</p>
-          </div>
-          <div className={`h-10 w-10 rounded-xl flex items-center justify-center font-bold text-xs ${remainingJp < 0 ? 'bg-rose-50 text-rose-600 dark:bg-rose-950/30 dark:text-rose-400' : 'bg-slate-100 text-slate-600 dark:bg-zinc-800 dark:text-zinc-300'}`}>
-            {remainingJp}
-          </div>
-        </div>
-
-        {/* Progress Bar and Alert */}
-        <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl p-4 shadow-xs flex flex-col justify-between">
-          <div className="space-y-1.5 w-full">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">Kecukupan Kurikulum</span>
-              <span className="text-xs font-extrabold text-blue-600 dark:text-blue-400">{Math.round(progressPercent)}%</span>
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="bg-slate-50 dark:bg-zinc-850 p-2 rounded-xl">
+              <span className="text-[10px] text-slate-400 font-bold block">Target</span>
+              <span className="text-sm font-black text-slate-800 dark:text-zinc-100">{effectiveJpGanjil} JP</span>
             </div>
-            <div className="w-full bg-slate-100 dark:bg-zinc-850 h-3 rounded-full overflow-hidden">
-              <div 
-                className={`h-full transition-all duration-350 rounded-full ${usedJp > effectiveJpYear ? 'bg-rose-500' : 'bg-blue-600'}`} 
-                style={{ width: `${progressPercent}%` }} 
+            <div className="bg-slate-50 dark:bg-zinc-850 p-2 rounded-xl">
+              <span className="text-[10px] text-slate-400 font-bold block">Prota</span>
+              <span className={`text-sm font-black ${usedJpGanjil > effectiveJpGanjil ? 'text-rose-600 dark:text-rose-400' : 'text-blue-600 dark:text-blue-400'}`}>{usedJpGanjil} JP</span>
+            </div>
+            <div className="bg-slate-50 dark:bg-zinc-850 p-2 rounded-xl">
+              <span className="text-[10px] text-slate-400 font-bold block">Sisa</span>
+              <span className={`text-sm font-black ${effectiveJpGanjil - usedJpGanjil < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                {effectiveJpGanjil - usedJpGanjil} JP
+              </span>
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <div className="flex justify-between text-[10px] text-slate-500 font-semibold">
+              <span>Alokasi Prota Ganjil</span>
+              <span>{effectiveJpGanjil > 0 ? Math.round((usedJpGanjil / effectiveJpGanjil) * 100) : 0}%</span>
+            </div>
+            <div className="w-full bg-slate-100 dark:bg-zinc-800 h-2 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${usedJpGanjil > effectiveJpGanjil ? 'bg-rose-500' : 'bg-blue-600'}`}
+                style={{ width: `${effectiveJpGanjil > 0 ? Math.min(100, (usedJpGanjil / effectiveJpGanjil) * 100) : 0}%` }}
               />
             </div>
           </div>
-          
-          {usedJp > effectiveJpYear && (
-            <div className="flex items-center gap-1 text-rose-600 dark:text-rose-400 text-[10px] font-bold mt-1">
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-              Alokasi melebihi batas JP efektif!
+        </div>
+
+        {/* Semester Genap Card */}
+        <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl p-4 shadow-xs space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-zinc-800 pb-2">
+            <span className="text-xs font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-wider flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
+              Semester Genap
+            </span>
+            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300">
+              {effectiveWeeksGenap} Pekan
+            </span>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="bg-slate-50 dark:bg-zinc-850 p-2 rounded-xl">
+              <span className="text-[10px] text-slate-400 font-bold block">Target</span>
+              <span className="text-sm font-black text-slate-800 dark:text-zinc-100">{effectiveJpGenap} JP</span>
             </div>
-          )}
+            <div className="bg-slate-50 dark:bg-zinc-850 p-2 rounded-xl">
+              <span className="text-[10px] text-slate-400 font-bold block">Prota</span>
+              <span className={`text-sm font-black ${usedJpGenap > effectiveJpGenap ? 'text-rose-600 dark:text-rose-400' : 'text-indigo-600 dark:text-indigo-400'}`}>{usedJpGenap} JP</span>
+            </div>
+            <div className="bg-slate-50 dark:bg-zinc-850 p-2 rounded-xl">
+              <span className="text-[10px] text-slate-400 font-bold block">Sisa</span>
+              <span className={`text-sm font-black ${effectiveJpGenap - usedJpGenap < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                {effectiveJpGenap - usedJpGenap} JP
+              </span>
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <div className="flex justify-between text-[10px] text-slate-500 font-semibold">
+              <span>Alokasi Prota Genap</span>
+              <span>{effectiveJpGenap > 0 ? Math.round((usedJpGenap / effectiveJpGenap) * 100) : 0}%</span>
+            </div>
+            <div className="w-full bg-slate-100 dark:bg-zinc-800 h-2 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${usedJpGenap > effectiveJpGenap ? 'bg-rose-500' : 'bg-indigo-600'}`}
+                style={{ width: `${effectiveJpGenap > 0 ? Math.min(100, (usedJpGenap / effectiveJpGenap) * 100) : 0}%` }}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Total Tahunan Card */}
+        <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl p-4 shadow-xs space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-zinc-800 pb-2">
+            <span className="text-xs font-black text-slate-900 dark:text-zinc-100 uppercase tracking-wider flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-slate-800 dark:bg-zinc-200"></span>
+              Total Tahunan (1 Tahun)
+            </span>
+            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-slate-100 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300">
+              {effectiveWeeksYear} Pekan
+            </span>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="bg-slate-50 dark:bg-zinc-850 p-2 rounded-xl">
+              <span className="text-[10px] text-slate-400 font-bold block">Target</span>
+              <span className="text-sm font-black text-slate-800 dark:text-zinc-100">{effectiveJpYear} JP</span>
+            </div>
+            <div className="bg-slate-50 dark:bg-zinc-850 p-2 rounded-xl">
+              <span className="text-[10px] text-slate-400 font-bold block">Total Prota</span>
+              <span className={`text-sm font-black ${usedJp > effectiveJpYear ? 'text-rose-600 dark:text-rose-400' : 'text-slate-800 dark:text-zinc-100'}`}>{usedJp} JP</span>
+            </div>
+            <div className="bg-slate-50 dark:bg-zinc-850 p-2 rounded-xl">
+              <span className="text-[10px] text-slate-400 font-bold block">Sisa</span>
+              <span className={`text-sm font-black ${remainingJp < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                {remainingJp} JP
+              </span>
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <div className="flex justify-between text-[10px] text-slate-500 font-semibold">
+              <span>Kecukupan Prota Setahun</span>
+              <span>{Math.round(progressPercent)}%</span>
+            </div>
+            <div className="w-full bg-slate-100 dark:bg-zinc-800 h-2 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${usedJp > effectiveJpYear ? 'bg-rose-500' : 'bg-emerald-600'}`}
+                style={{ width: `${Math.min(100, progressPercent)}%` }}
+              />
+            </div>
+          </div>
         </div>
       </div>
 
@@ -959,9 +1081,43 @@ export const AnnualProgram: React.FC = () => {
       {/* Main Prota Table and Actions */}
       <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl overflow-hidden shadow-xs">
         {/* Table Toolbar */}
-        <div className="px-5 py-4 border-b border-slate-150 dark:border-zinc-850/60 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-slate-50/40 dark:bg-zinc-900/40">
-          <div className="flex items-center gap-2">
+        <div className="px-5 py-4 border-b border-slate-150 dark:border-zinc-850/60 flex flex-col md:flex-row md:items-center md:justify-between gap-3 bg-slate-50/40 dark:bg-zinc-900/40">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
             <span className="text-sm font-bold text-slate-800 dark:text-zinc-200 uppercase tracking-tight">Daftar Rincian Materi Pokok</span>
+            
+            {/* Semester Tab Switcher */}
+            <div className="flex items-center gap-1 bg-slate-100 dark:bg-zinc-850 p-1 rounded-xl border border-slate-200 dark:border-zinc-800">
+              <button
+                onClick={() => setSelectedSemesterTab("semua")}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  selectedSemesterTab === "semua"
+                    ? "bg-white dark:bg-zinc-900 text-slate-900 dark:text-zinc-100 shadow-xs"
+                    : "text-slate-500 hover:text-slate-700 dark:hover:text-zinc-300"
+                }`}
+              >
+                Semua (1 Tahun)
+              </button>
+              <button
+                onClick={() => setSelectedSemesterTab("Ganjil")}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  selectedSemesterTab === "Ganjil"
+                    ? "bg-blue-600 text-white shadow-xs"
+                    : "text-slate-500 hover:text-slate-700 dark:hover:text-zinc-300"
+                }`}
+              >
+                Semester Ganjil
+              </button>
+              <button
+                onClick={() => setSelectedSemesterTab("Genap")}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  selectedSemesterTab === "Genap"
+                    ? "bg-indigo-600 text-white shadow-xs"
+                    : "text-slate-500 hover:text-slate-700 dark:hover:text-zinc-300"
+                }`}
+              >
+                Semester Genap
+              </button>
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
@@ -1001,7 +1157,7 @@ export const AnnualProgram: React.FC = () => {
             </button>
 
             <button
-              onClick={() => handleOpenModal(null)}
+              onClick={() => handleOpenModal(null, selectedSemesterTab === "semua" ? "Ganjil" : selectedSemesterTab)}
               className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-500/15 transition-all cursor-pointer"
             >
               <Plus className="h-4 w-4" /> Tambah Topik
@@ -1023,18 +1179,27 @@ export const AnnualProgram: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {currentTopics.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="py-12 text-center text-slate-400">
-                    <div className="flex flex-col items-center gap-2">
-                      <FolderOpen className="h-10 w-10 text-slate-300 dark:text-zinc-700" />
-                      <span className="font-semibold text-xs">Belum ada topik pembelajaran yang terdaftar</span>
-                      <p className="text-[10px] text-slate-400 max-w-xs">Silakan tambah topik baru atau impor melalui file Excel standar sekolah Anda.</p>
-                    </div>
-                  </td>
-                </tr>
-              ) : (
-                currentTopics.map((topic, index) => {
+              {(() => {
+                const filteredTopics = currentTopics.filter(t => {
+                  if (selectedSemesterTab === "semua") return true;
+                  return t.semester === selectedSemesterTab || t.semester === "Ganjil & Genap";
+                });
+
+                if (filteredTopics.length === 0) {
+                  return (
+                    <tr>
+                      <td colSpan={6} className="py-12 text-center text-slate-400">
+                        <div className="flex flex-col items-center gap-2">
+                          <FolderOpen className="h-10 w-10 text-slate-300 dark:text-zinc-700" />
+                          <span className="font-semibold text-xs">Belum ada topik pembelajaran {selectedSemesterTab !== "semua" ? `untuk Semester ${selectedSemesterTab}` : ""}</span>
+                          <p className="text-[10px] text-slate-400 max-w-xs">Silakan tambah topik baru atau impor melalui file Excel standar sekolah Anda.</p>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                }
+
+                return filteredTopics.map((topic, index) => {
                   const hasSubtopics = topic.subtopics && topic.subtopics.length > 0;
                   const isExpanded = expandedTopics[topic.id];
 
@@ -1135,8 +1300,8 @@ export const AnnualProgram: React.FC = () => {
                       )}
                     </React.Fragment>
                   );
-                })
-              )}
+                });
+              })()}
             </tbody>
           </table>
         </div>

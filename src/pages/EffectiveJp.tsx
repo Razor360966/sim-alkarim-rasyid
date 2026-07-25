@@ -5,6 +5,7 @@ import { teacherService } from "../services/teacherService";
 import { subjectService } from "../services/subjectService";
 import { schoolSettingsService } from "../services/schoolSettings.service";
 import { realTeachingHoursService } from "../services/realTeachingHours.service";
+import { academicPlanningService } from "../services/academicPlanning.service";
 import { 
   Semester, 
   Class, 
@@ -37,8 +38,10 @@ import {
   X,
   Sliders,
   ChevronRight,
+  ChevronDown,
   ShieldAlert,
-  CalendarCheck
+  CalendarCheck,
+  CalendarDays
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
@@ -63,7 +66,10 @@ export const EffectiveJp: React.FC = () => {
 
   // Analysis Data
   const [summary, setSummary] = useState<RealTeachingHoursSummary | null>(null);
+  const [daysAnalysis, setDaysAnalysis] = useState<any | null>(null);
+  const [weeksAnalysis, setWeeksAnalysis] = useState<any | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [expandedMonths, setExpandedMonths] = useState<Record<string, boolean>>({});
 
   // Detail Modal State
   const [selectedItem, setSelectedItem] = useState<SubjectRealTeachingHours | null>(null);
@@ -75,8 +81,8 @@ export const EffectiveJp: React.FC = () => {
   const [adjustmentReasonInput, setAdjustmentReasonInput] = useState<string>("");
   const [isSavingAdjustment, setIsSavingAdjustment] = useState<boolean>(false);
 
-  // Approval Management
-  const [activeTab, setActiveTab] = useState<"analysis" | "approvals">("analysis");
+  // Tabs Management
+  const [activeTab, setActiveTab] = useState<"analysis" | "monthly_details" | "approvals">("analysis");
   const [pendingAdjustments, setPendingAdjustments] = useState<JpAdjustment[]>([]);
 
   const isApprover = ["admin", "kepala_sekolah", "wakil_kepala_sekolah", "operator", "pimpinan"].includes(
@@ -117,16 +123,33 @@ export const EffectiveJp: React.FC = () => {
 
   const currentSemester = semesters.find(s => s.id === selectedSemesterId);
 
-  // Run Real Teaching Hours Calculation
+  // Run Real Teaching Hours Calculation & Monthly Effective Days Analysis
   const fetchAnalysis = async () => {
     if (!currentSemester) return;
     setLoading(true);
     try {
-      const data = await realTeachingHoursService.getRealTeachingHoursAnalysis(
-        currentSemester.academicYearId,
-        currentSemester.id
-      );
+      const [data, dAnalysis, wAnalysis] = await Promise.all([
+        realTeachingHoursService.getRealTeachingHoursAnalysis(
+          currentSemester.academicYearId,
+          currentSemester.id
+        ),
+        academicPlanningService.analyzeEffectiveDays(
+          currentSemester.startDate,
+          currentSemester.endDate,
+          currentSemester.academicYearId,
+          currentSemester.id
+        ),
+        academicPlanningService.analyzeEffectiveWeeks(
+          currentSemester.startDate,
+          currentSemester.endDate,
+          currentSemester.academicYearId,
+          currentSemester.id
+        )
+      ]);
+
       setSummary(data);
+      setDaysAnalysis(dAnalysis);
+      setWeeksAnalysis(wAnalysis);
 
       // Extract pending adjustments for approvals tab
       const pendingList: JpAdjustment[] = [];
@@ -137,7 +160,7 @@ export const EffectiveJp: React.FC = () => {
       });
       setPendingAdjustments(pendingList);
     } catch (error: any) {
-      showToast("Gagal menghitung JP Efektif Riil: " + error.message, "error");
+      showToast("Gagal menghitung JP Efektif Riil & Hari Efektif: " + error.message, "error");
     } finally {
       setLoading(false);
     }
@@ -400,6 +423,17 @@ export const EffectiveJp: React.FC = () => {
             }`}
           >
             <Clock className="h-4 w-4" /> Real Teaching Hours
+          </button>
+
+          <button
+            onClick={() => setActiveTab("monthly_details")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeTab === "monthly_details"
+                ? "bg-blue-600 text-white shadow-md shadow-blue-500/10"
+                : "text-slate-600 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-zinc-800"
+            }`}
+          >
+            <CalendarDays className="h-4 w-4" /> Rincian Hari Efektif Bulanan
           </button>
 
           {isApprover && (
@@ -689,6 +723,232 @@ export const EffectiveJp: React.FC = () => {
             )}
           </div>
         </>
+      )}
+
+      {/* Monthly Effective Days Details Tab */}
+      {activeTab === "monthly_details" && (
+        <div className="space-y-6">
+          {/* Monthly Summary Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 p-4 rounded-2xl shadow-xs">
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Hari Pembelajaran</p>
+              <div className="flex items-center justify-between">
+                <h3 className="text-2xl font-black text-emerald-600 dark:text-emerald-400">{daysAnalysis?.learningDays || 0} Hari</h3>
+                <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+              </div>
+              <p className="text-[10px] text-slate-400 mt-2">KBM efektif tatap muka / aktif</p>
+            </div>
+
+            <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 p-4 rounded-2xl shadow-xs">
+              <p className="text-[10px] font-bold text-blue-500 uppercase tracking-wider mb-1">Hari Asesmen / Ujian</p>
+              <div className="flex items-center justify-between">
+                <h3 className="text-2xl font-black text-blue-600 dark:text-blue-400">{daysAnalysis?.assessmentDays || 0} Hari</h3>
+                <CalendarCheck className="h-5 w-5 text-blue-500" />
+              </div>
+              <p className="text-[10px] text-slate-400 mt-2">Sumatif, STS, SAS, Try Out</p>
+            </div>
+
+            <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 p-4 rounded-2xl shadow-xs">
+              <p className="text-[10px] font-bold text-amber-500 uppercase tracking-wider mb-1">Hari Kegiatan Sekolah/Pondok</p>
+              <div className="flex items-center justify-between">
+                <h3 className="text-2xl font-black text-amber-600 dark:text-amber-400">{daysAnalysis?.activityDays || 0} Hari</h3>
+                <BookOpen className="h-5 w-5 text-amber-500" />
+              </div>
+              <p className="text-[10px] text-slate-400 mt-2">MPLS, P5, Outbound, Kegiatan Khusus</p>
+            </div>
+
+            <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 p-4 rounded-2xl shadow-xs">
+              <p className="text-[10px] font-bold text-rose-500 uppercase tracking-wider mb-1">Hari Libur / Non-Efektif</p>
+              <div className="flex items-center justify-between">
+                <h3 className="text-2xl font-black text-rose-600 dark:text-rose-400">{daysAnalysis?.holidayDays || 0} Hari</h3>
+                <XCircle className="h-5 w-5 text-rose-500" />
+              </div>
+              <p className="text-[10px] text-slate-400 mt-2">Libur Nasional, Libur Pondok, Jumat</p>
+            </div>
+          </div>
+
+          {/* Monthly Accordion Sections */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-slate-900 dark:text-zinc-100 flex items-center gap-2">
+                <CalendarDays className="h-5 w-5 text-blue-500" />
+                Rincian Hari Efektif Per Bulan (Semester {currentSemester?.name})
+              </h3>
+              <span className="text-xs text-slate-500">
+                Total Pekan Efektif: <strong className="text-blue-600 font-black">{weeksAnalysis?.effectiveWeeks || 0} Pekan</strong>
+              </span>
+            </div>
+
+            {loading ? (
+              <div className="p-12 text-center text-slate-400">
+                <RefreshCw className="h-8 w-8 animate-spin mx-auto text-blue-500 mb-2" />
+                <p className="text-xs font-semibold">Memuat rincian hari efektif per bulan...</p>
+              </div>
+            ) : !weeksAnalysis?.details || weeksAnalysis.details.length === 0 ? (
+              <div className="p-12 text-center text-slate-400 bg-white dark:bg-zinc-900 rounded-2xl border border-slate-200 dark:border-zinc-800">
+                <Calendar className="h-10 w-10 mx-auto opacity-30 mb-2" />
+                <p className="text-sm font-semibold">Belum ada data kalender akademik untuk semester ini</p>
+              </div>
+            ) : (
+              weeksAnalysis.details.map((mDetail: any, mIdx: number) => {
+                const monthName = mDetail.month;
+                const isExpanded = expandedMonths[monthName] ?? (mIdx === 0);
+
+                // Filter days from daysAnalysis that fall in this month
+                const monthDays = (daysAnalysis?.details || []).filter((d: any) => {
+                  const dObj = new Date(d.date);
+                  const dMonthStr = dObj.toLocaleDateString("id-ID", { month: "long", year: "numeric" });
+                  return dMonthStr.toLowerCase() === monthName.toLowerCase();
+                });
+
+                const countLearning = monthDays.filter((d: any) => d.type === "pembelajaran").length;
+                const countAssessment = monthDays.filter((d: any) => d.type === "asesmen").length;
+                const countActivity = monthDays.filter((d: any) => d.type === "kegiatan").length;
+                const countHoliday = monthDays.filter((d: any) => d.type === "libur").length;
+
+                return (
+                  <div 
+                    key={monthName}
+                    className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl overflow-hidden shadow-xs transition-all"
+                  >
+                    {/* Month Header Card */}
+                    <div 
+                      onClick={() => setExpandedMonths(prev => ({ ...prev, [monthName]: !isExpanded }))}
+                      className="p-4 bg-slate-50/70 dark:bg-zinc-850/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer hover:bg-slate-100/70 dark:hover:bg-zinc-850 transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="p-2.5 bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 rounded-xl font-bold">
+                          <Calendar className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <h4 className="text-base font-bold text-slate-900 dark:text-zinc-100">{monthName}</h4>
+                          <div className="flex flex-wrap items-center gap-2 mt-1 text-xs">
+                            <span className="font-extrabold px-2.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300">
+                              {mDetail.effectiveWeeks} Pekan Efektif
+                            </span>
+                            <span className="text-emerald-600 dark:text-emerald-400 font-bold">{countLearning} Belajar</span> &bull;
+                            <span className="text-blue-600 dark:text-blue-400 font-bold">{countAssessment} Asesmen</span> &bull;
+                            <span className="text-amber-600 dark:text-amber-400 font-bold">{countActivity} Kegiatan</span> &bull;
+                            <span className="text-rose-500 dark:text-rose-400 font-bold">{countHoliday} Libur</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3 shrink-0">
+                        {mDetail.holidayNotes && mDetail.holidayNotes.length > 0 && (
+                          <div className="hidden lg:flex items-center gap-1.5 text-xs text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/30 px-3 py-1 rounded-xl border border-rose-100 dark:border-rose-900/40">
+                            <Info className="h-3.5 w-3.5 shrink-0" />
+                            <span className="truncate max-w-[220px]">{mDetail.holidayNotes.join(", ")}</span>
+                          </div>
+                        )}
+                        <button className="p-1.5 rounded-xl bg-white dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-slate-600 dark:text-zinc-300">
+                          {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Collapsible Day Details Table */}
+                    {isExpanded && (
+                      <div className="p-4 border-t border-slate-200 dark:border-zinc-800 space-y-3">
+                        {monthDays.length === 0 ? (
+                          <p className="text-xs text-slate-400 p-4 text-center">Data tanggal kalender belum terurai untuk bulan ini.</p>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left text-xs border-collapse">
+                              <thead>
+                                <tr className="bg-slate-50 dark:bg-zinc-850 text-slate-500 dark:text-zinc-400 font-bold uppercase tracking-wider border-b border-slate-200 dark:border-zinc-800">
+                                  <th className="p-2.5 text-center w-12">No</th>
+                                  <th className="p-2.5">Tanggal & Hari</th>
+                                  <th className="p-2.5 text-center">Kategori Hari</th>
+                                  <th className="p-2.5 text-center">Status Efektif KBM</th>
+                                  <th className="p-2.5">Agenda / Event Sekolah & Pondok</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100 dark:divide-zinc-850">
+                                {monthDays.map((dayItem: any, dayIdx: number) => {
+                                  const dateFormatted = new Date(dayItem.date).toLocaleDateString("id-ID", {
+                                    weekday: "long",
+                                    day: "numeric",
+                                    month: "long",
+                                    year: "numeric"
+                                  });
+
+                                  let typeBadge = (
+                                    <span className="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 font-bold text-[10px]">
+                                      KBM Efektif
+                                    </span>
+                                  );
+                                  if (dayItem.type === "asesmen") {
+                                    typeBadge = (
+                                      <span className="px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-bold text-[10px]">
+                                        Asesmen / Ujian
+                                      </span>
+                                    );
+                                  } else if (dayItem.type === "kegiatan") {
+                                    typeBadge = (
+                                      <span className="px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 font-bold text-[10px]">
+                                        Kegiatan Sekolah
+                                      </span>
+                                    );
+                                  } else if (dayItem.type === "libur") {
+                                    typeBadge = (
+                                      <span className="px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 font-bold text-[10px]">
+                                        Hari Libur
+                                      </span>
+                                    );
+                                  }
+
+                                  return (
+                                    <tr 
+                                      key={dayItem.date}
+                                      className={`hover:bg-slate-50/60 dark:hover:bg-zinc-850/40 transition-colors ${
+                                        !dayItem.isEffective ? "bg-rose-50/20 dark:bg-rose-950/10" : ""
+                                      }`}
+                                    >
+                                      <td className="p-2.5 text-center font-bold text-slate-400">{dayIdx + 1}</td>
+                                      <td className="p-2.5 font-bold text-slate-800 dark:text-zinc-200">
+                                        {dateFormatted}
+                                      </td>
+                                      <td className="p-2.5 text-center">{typeBadge}</td>
+                                      <td className="p-2.5 text-center">
+                                        {dayItem.isEffective ? (
+                                          <span className="inline-flex items-center gap-1 font-bold text-emerald-600 dark:text-emerald-400 text-[11px]">
+                                            <CheckCircle2 className="h-3.5 w-3.5" /> Efektif
+                                          </span>
+                                        ) : (
+                                          <span className="inline-flex items-center gap-1 font-bold text-rose-600 dark:text-rose-400 text-[11px]">
+                                            <XCircle className="h-3.5 w-3.5" /> Non-Efektif
+                                          </span>
+                                        )}
+                                      </td>
+                                      <td className="p-2.5 text-slate-600 dark:text-zinc-400">
+                                        {dayItem.events && dayItem.events.length > 0 ? (
+                                          <div className="flex flex-wrap gap-1">
+                                            {dayItem.events.map((ev: string, evIdx: number) => (
+                                              <span key={evIdx} className="px-2 py-0.5 bg-slate-100 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 rounded-md font-medium text-[11px]">
+                                                {ev}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        ) : (
+                                          <span className="text-slate-400 text-[11px]">-</span>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
       )}
 
       {/* Approvals Tab */}
