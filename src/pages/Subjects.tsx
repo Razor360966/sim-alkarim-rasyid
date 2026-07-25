@@ -11,7 +11,8 @@ import { Dialog } from "../components/Dialog";
 import { useToast } from "../contexts/ToastContext";
 import { Loading } from "../components/Loading";
 import { exportToExcel, exportToPDF } from "../utils/exportUtils";
-import { BookOpen, Plus, Edit2, Trash2, FileDown, TableProperties } from "lucide-react";
+import { BookOpen, Plus, Edit2, Trash2, FileDown, TableProperties, ShieldCheck, FileSpreadsheet } from "lucide-react";
+import { getSubjectCategoryType } from "../utils/subjectHelper";
 
 const gradeOptions = [
   { value: "7", label: "VII" },
@@ -23,6 +24,7 @@ const subjectSchema = z.object({
   code: z.string().min(2, { message: "Kode mapel minimal 2 karakter" }),
   name: z.string().min(3, { message: "Nama mapel minimal 3 karakter" }),
   group: z.enum(["A", "B", "C"], { message: "Pilih kelompok mata pelajaran" }),
+  categoryType: z.enum(["umum_pai", "diniyah_pondok"]).optional(),
   kkm: z.coerce.number().min(0).max(100, { message: "KKM bernilai 0 - 100" }),
   grades: z.array(z.enum(["7", "8", "9"])).min(1, { message: "Pilih peruntukan kelas" })
 });
@@ -33,6 +35,7 @@ const defaultSubjectValues: SubjectFormValues = {
   code: "",
   name: "",
   group: "A",
+  categoryType: "umum_pai",
   kkm: 75,
   grades: ["7", "8", "9"]
 };
@@ -174,6 +177,7 @@ export const Subjects: React.FC = () => {
       code: subject.code,
       name: subject.name,
       group: subject.group,
+      categoryType: getSubjectCategoryType(subject),
       kkm: subject.kkm,
       grades: normalizeGrades(subject)
     });
@@ -257,6 +261,25 @@ export const Subjects: React.FC = () => {
       accessor: (item) => <span className="font-mono font-bold text-gray-900 dark:text-white">{item.kkm}</span>,
       sortable: true,
       sortKey: "kkm"
+    },
+    {
+      header: "Syarat Jurnal Guru",
+      accessor: (item) => {
+        const cat = getSubjectCategoryType(item);
+        if (cat === "diniyah_pondok") {
+          return (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 rounded-md">
+              Diniyah (Langsung)
+            </span>
+          );
+        }
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded-md">
+            Wajib Prota & Prosem
+          </span>
+        );
+      },
+      sortable: true
     },
     {
       header: "Kelas Tingkat",
@@ -373,6 +396,18 @@ export const Subjects: React.FC = () => {
               register={createForm.register("group")}
               error={createForm.formState.errors.group?.message}
             />
+            <FormSelect
+              label="Aturan Pengisian Jurnal Guru"
+              options={[
+                { value: "umum_pai", label: "Mapel Umum & PAI (Wajib Prota & Prosem)" },
+                { value: "diniyah_pondok", label: "Mapel Diniyah / Pondok (Langsung tanpa Prota/Prosem)" }
+              ]}
+              register={createForm.register("categoryType")}
+              error={createForm.formState.errors.categoryType?.message}
+            />
+          </div>
+
+          <div>
             <FormInput
               label="KKM Kelulusan"
               type="number"
@@ -438,6 +473,18 @@ export const Subjects: React.FC = () => {
               register={editForm.register("group")}
               error={editForm.formState.errors.group?.message}
             />
+            <FormSelect
+              label="Aturan Pengisian Jurnal Guru"
+              options={[
+                { value: "umum_pai", label: "Mapel Umum & PAI (Wajib Prota & Prosem)" },
+                { value: "diniyah_pondok", label: "Mapel Diniyah / Pondok (Langsung tanpa Prota/Prosem)" }
+              ]}
+              register={editForm.register("categoryType")}
+              error={editForm.formState.errors.categoryType?.message}
+            />
+          </div>
+
+          <div>
             <FormInput
               label="KKM Kelulusan"
               type="number"

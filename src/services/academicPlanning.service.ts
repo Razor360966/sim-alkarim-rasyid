@@ -541,6 +541,42 @@ export const academicPlanningService = {
     semesterId: string
   ): Promise<{ isEffective: boolean; notes?: string }> {
     try {
+      const dateObj = new Date(dateStr);
+      if (isNaN(dateObj.getTime())) {
+        return { isEffective: true };
+      }
+
+      // 1. Direct Weekend Check (Sunday = 0)
+      if (dateObj.getDay() === 0) {
+        return { isEffective: false, notes: "Hari Libur Akhir Pekan (Minggu)" };
+      }
+
+      // 2. Direct Calendar Event / Day Check
+      if (academicYearId) {
+        const calDays = await this.getCalendarDays(academicYearId, semesterId);
+        const dayMatch = calDays.find(d => d.date === dateStr);
+        if (dayMatch && dayMatch.events && dayMatch.events.length > 0) {
+          const nonEffectiveEvt = dayMatch.events.find(
+            e => e.isEffectiveDay === false || e.categoryName?.toLowerCase().includes("libur") || e.statusName?.toLowerCase().includes("tidak efektif")
+          );
+          if (nonEffectiveEvt) {
+            return {
+              isEffective: false,
+              notes: nonEffectiveEvt.title || "Hari Libur / Tidak Efektif"
+            };
+          }
+          const explicitEffectiveEvt = dayMatch.events.find(
+            e => e.isEffectiveDay === true || e.statusName?.toLowerCase().includes("efektif")
+          );
+          if (explicitEffectiveEvt) {
+            return {
+              isEffective: true,
+              notes: explicitEffectiveEvt.title || "Hari Efektif KBM"
+            };
+          }
+        }
+      }
+
       if (!semesterId) {
         return { isEffective: true };
       }
@@ -551,11 +587,6 @@ export const academicPlanningService = {
       }
       const semData = semSnap.data();
       
-      const dateObj = new Date(dateStr);
-      if (isNaN(dateObj.getTime())) {
-        return { isEffective: true };
-      }
-      
       const monthNames = [
         "Januari", "Februari", "Maret", "April", "Mei", "Juni", 
         "Juli", "Agustus", "September", "Oktober", "November", "Desember"
@@ -564,11 +595,10 @@ export const academicPlanningService = {
       const year = dateObj.getFullYear();
       const monthYearKey = `${monthName} ${year}`;
 
-      // Check manual config first
+      // Check manual config
       if (semData.manualWeeksConfigured && Array.isArray(semData.details)) {
         const detail = semData.details.find((d: any) => d.month === monthYearKey || d.month.startsWith(monthName));
         if (detail) {
-          // Calculate week index
           const weekIdx = this.getWeekIndexInMonth(dateObj);
           if (Array.isArray(detail.weeks) && detail.weeks[weekIdx]) {
             const isEffective = detail.weeks[weekIdx].isEffective === true;

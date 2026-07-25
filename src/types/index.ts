@@ -59,6 +59,7 @@ export interface Subject {
   kkm: number; // Kriteria Ketuntasan Minimal, e.g., 75
   grades: ("7" | "8" | "9")[];
   grade?: "7" | "8" | "9" | "Semua"; // Legacy field for existing Firestore documents
+  categoryType?: "umum_pai" | "diniyah_pondok"; // Journal filing rule
   createdAt: string;
 }
 

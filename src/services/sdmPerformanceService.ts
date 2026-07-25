@@ -16,6 +16,7 @@ import { db, handleFirestoreError, OperationType } from "../firebase/config";
 import { teachingJournalService } from "./teachingJournalService";
 import { musrifJournalService } from "./musrifJournalService";
 import { gtkDevelopmentService } from "./gtkDevelopmentService";
+import { academicPlanningService } from "./academicPlanning.service";
 
 export interface MasterJabatan {
   id: string; // e.g., "guru", "musrif"
@@ -56,6 +57,12 @@ export interface SDMPerformanceEvaluation {
   finalScore?: number; // 0 - 100
   category?: string; // Sangat Baik, Baik, etc.
   
+  // Action notes for Kepala Sekolah & Wakasek
+  coachingNote?: string;
+  appreciationNote?: string;
+  nextSemesterTarget?: string;
+  unit?: string; // e.g., "SMP", "SMA", "Pondok", "TK/SD"
+
   // Future Automatic Stats Schema integration
   autoStats?: {
     teachingJournals: number;
@@ -358,15 +365,15 @@ export const sdmPerformanceService = {
           return checked > 0 ? Math.round((terlaksana / checked) * 100) : 0;
         };
 
-        mutabaahBulanIni = calcPercent(logsBulanIni) || 85;
-        mutabaahSemester = calcPercent(logsSemester) || 88;
-        mutabaahTahunan = calcPercent(logsTahunan) || 87;
+        mutabaahBulanIni = calcPercent(logsBulanIni);
+        mutabaahSemester = calcPercent(logsSemester);
+        mutabaahTahunan = calcPercent(logsTahunan);
 
       } catch (e) {
         console.warn("Mutaba'ah fetch error:", e);
-        mutabaahBulanIni = 85;
-        mutabaahSemester = 88;
-        mutabaahTahunan = 87;
+        mutabaahBulanIni = 0;
+        mutabaahSemester = 0;
+        mutabaahTahunan = 0;
       }
 
       // 6. Fetch Supervision Results (Otomatis)
@@ -395,6 +402,69 @@ export const sdmPerformanceService = {
         console.warn("Failed to fetch supervision results for autoStats:", e);
       }
 
+      // 7. Dynamic Attendance Rate Calculation based on Schedule + Calendar + Journals
+      let attendanceRate = 0;
+      try {
+        if (teacherId && academicYearId && semesterId) {
+          // Fetch schedules for teacher
+          const schedsSnap = await getDocs(query(collection(db, "schedules"), where("teacherId", "==", teacherId), where("academicYearId", "==", academicYearId), where("semesterId", "==", semesterId)));
+          const teacherSchedules: any[] = [];
+          schedsSnap.forEach(s => teacherSchedules.push(s.data()));
+
+          if (teacherSchedules.length > 0) {
+            // Fetch semester dates
+            const semRef = doc(db, "semesters", semesterId);
+            const semSnap = await getDoc(semRef);
+            let startDateStr = "2024-07-15";
+            let endDateStr = "2024-12-20";
+            if (semSnap.exists()) {
+              const semData = semSnap.data();
+              if (semData.startDate) startDateStr = semData.startDate;
+              if (semData.endDate) endDateStr = semData.endDate;
+            }
+
+            const start = new Date(startDateStr);
+            const end = new Date(endDateStr);
+
+            // Fetch calendar days to check holidays
+            const calDays = await academicPlanningService.getCalendarDays(academicYearId, semesterId);
+            const holidayDates = new Set<string>();
+            calDays.forEach(d => {
+              if (d.events && d.events.some(e => e.isEffectiveDay === false || e.categoryName?.toLowerCase().includes("libur") || e.statusName?.toLowerCase().includes("tidak efektif"))) {
+                holidayDates.add(d.date);
+              }
+            });
+
+            const indonesianDays = ["minggu", "senin", "selasa", "rabu", "kamis", "jumat", "sabtu"];
+            let totalExpectedSessions = 0;
+
+            const current = new Date(start);
+            while (current <= end) {
+              const dayIndex = current.getDay();
+              const dateIso = current.toISOString().split("T")[0];
+              const dayName = indonesianDays[dayIndex];
+
+              // Skip Sundays and explicit holidays
+              if (dayIndex !== 0 && !holidayDates.has(dateIso)) {
+                const daySchedules = teacherSchedules.filter(s => (s.day || "").toLowerCase() === dayName);
+                totalExpectedSessions += daySchedules.length;
+              }
+              current.setDate(current.getDate() + 1);
+            }
+
+            if (totalExpectedSessions > 0) {
+              attendanceRate = Math.min(100, Math.round((teachingTotalSubmitted / totalExpectedSessions) * 100));
+            } else if (teachingTotalSubmitted > 0) {
+              attendanceRate = 100;
+            }
+          } else if (teachingTotalSubmitted > 0) {
+            attendanceRate = 100;
+          }
+        }
+      } catch (e) {
+        console.warn("Attendance rate calculation error:", e);
+      }
+
       return {
         teachingJournals: teachingTotalSubmitted,
         teachingTotalSubmitted,
@@ -405,14 +475,14 @@ export const sdmPerformanceService = {
         
         // Musrif specific
         halaqahMeetings,
-        halaqahGroupsCount: halaqahGroups.size || 1,
-        halaqahStudentsCount: halaqahStudents.size || 12,
-        targetTahfidz: targetTahfidz || 10,
-        targetTahsin: targetTahsin || 5,
+        halaqahGroupsCount: halaqahGroups.size,
+        halaqahStudentsCount: halaqahStudents.size,
+        targetTahfidz,
+        targetTahsin,
 
         // Development
-        developmentActivities: devActivitiesCount || 2,
-        developmentTotalJP: devTotalJP || 32,
+        developmentActivities: devActivitiesCount,
+        developmentTotalJP: devTotalJP,
 
         // Mutaba'ah
         mutabaahBulanIni,
@@ -424,8 +494,8 @@ export const sdmPerformanceService = {
         supervisionScore,
         supervisionStatus,
         supervisionNotes,
-        attendanceRate: 98,
-        rewards: Math.floor(Math.random() * 2),
+        attendanceRate,
+        rewards: 0,
         violations: 0
       };
 
@@ -439,20 +509,20 @@ export const sdmPerformanceService = {
         musrifTotalSubmitted: 0,
         musrifCompleteness: 0,
         halaqahMeetings: 0,
-        halaqahGroupsCount: 1,
-        halaqahStudentsCount: 12,
-        targetTahfidz: 10,
-        targetTahsin: 5,
-        developmentActivities: 2,
-        developmentTotalJP: 32,
-        mutabaahBulanIni: 85,
-        mutabaahSemester: 88,
-        mutabaahTahunan: 87,
+        halaqahGroupsCount: 0,
+        halaqahStudentsCount: 0,
+        targetTahfidz: 0,
+        targetTahsin: 0,
+        developmentActivities: 0,
+        developmentTotalJP: 0,
+        mutabaahBulanIni: 0,
+        mutabaahSemester: 0,
+        mutabaahTahunan: 0,
         supervisions: 0,
         supervisionScore: 0,
         supervisionStatus: "Belum Supervisi",
         supervisionNotes: "",
-        attendanceRate: 98,
+        attendanceRate: 0,
         rewards: 0,
         violations: 0
       };

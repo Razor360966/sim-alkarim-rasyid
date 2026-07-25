@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
+import { getSubjectCategoryType, SubjectCategoryType } from "../utils/subjectHelper";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import { Dialog } from "../components/Dialog";
@@ -66,7 +67,11 @@ import {
   Filter,
   Check,
   X,
-  ExternalLink
+  ExternalLink,
+  CheckCircle2,
+  Calendar,
+  Grid,
+  AlertTriangle
 } from "lucide-react";
 
 export const TeachingJournals: React.FC = () => {
@@ -178,10 +183,72 @@ export const TeachingJournals: React.FC = () => {
     total: 0
   });
 
-  // Custom Verification State
+  // Custom Verification State & Curriculum Restrictions
   const [verifyStatus, setVerifyStatus] = useState<"Disetujui" | "Ditolak">("Disetujui");
   const [verifyComment, setVerifyComment] = useState<string>("");
   const [isWeekEffective, setIsWeekEffective] = useState<boolean>(true);
+  const [effectivenessNotes, setEffectivenessNotes] = useState<string>("");
+  const [subjectCategoryType, setSubjectCategoryType] = useState<SubjectCategoryType>("umum_pai");
+  const [hasProta, setHasProta] = useState<boolean>(true);
+  const [hasProsem, setHasProsem] = useState<boolean>(true);
+  const [isCheckingCurriculum, setIsCheckingCurriculum] = useState<boolean>(false);
+
+  // Helper to check curriculum status (Prota & Prosem) for selected subject
+  const checkCurriculumStatus = async (classId: string, subjectId: string) => {
+    setIsCheckingCurriculum(true);
+    const subj = subjects.find(s => s.id === subjectId);
+    const catType = getSubjectCategoryType(subj);
+    setSubjectCategoryType(catType);
+
+    if (catType === "diniyah_pondok") {
+      setHasProta(true);
+      setHasProsem(true);
+      setIsCheckingCurriculum(false);
+      return;
+    }
+
+    try {
+      const prota = await curriculumPlanningService.getAnnualProgram(
+        activeYear?.id || "",
+        classId,
+        subjectId
+      );
+      const prosem = await curriculumPlanningService.getSemesterProgram(
+        activeYear?.id || "",
+        activeSemester?.id || "",
+        classId,
+        subjectId
+      );
+
+      const protaValid = !!(prota && Array.isArray(prota.topics) && prota.topics.length > 0);
+      const prosemValid = !!(prosem && Array.isArray(prosem.allocations) && prosem.allocations.length > 0);
+
+      setHasProta(protaValid);
+      setHasProsem(prosemValid);
+
+      if (prota && prota.topics) {
+        const currentSemesterName = activeSemester?.name || "Ganjil";
+        const isGanjil = currentSemesterName.includes("1") || currentSemesterName.toLowerCase().includes("ganjil");
+        const isGenap = currentSemesterName.includes("2") || currentSemesterName.toLowerCase().includes("genap");
+
+        const filteredTopics = prota.topics.filter(t => {
+          if (t.semester === "Ganjil & Genap") return true;
+          if (isGanjil && t.semester === "Ganjil") return true;
+          if (isGenap && t.semester === "Genap") return true;
+          return t.semester.toLowerCase() === currentSemesterName.toLowerCase();
+        });
+        setProtaTopics(filteredTopics);
+      } else {
+        setProtaTopics([]);
+      }
+    } catch (err) {
+      console.error("Prota/Prosem check error:", err);
+      setHasProta(false);
+      setHasProsem(false);
+    } finally {
+      setIsCheckingCurriculum(false);
+    }
+  };
 
   // Prefill check on mount or when searchParams change
   useEffect(() => {
@@ -229,14 +296,7 @@ export const TeachingJournals: React.FC = () => {
               total: count
             });
 
-            try {
-              const prota = await curriculumPlanningService.getAnnualProgram(activeYear?.id || "", matchedSched.classId, matchedSched.subjectId);
-              if (prota) {
-                setProtaTopics(prota.topics || []);
-              }
-            } catch (err) {
-              console.error("Prota load error:", err);
-            }
+            await checkCurriculumStatus(matchedSched.classId, matchedSched.subjectId);
           }
         } else {
           setSelectedScheduleId("");
@@ -253,10 +313,11 @@ export const TeachingJournals: React.FC = () => {
       try {
         const res = await academicPlanningService.checkDateEffectiveness(
           selectedDate,
-          activeYear.id,
-          activeSemester.id
+          activeYear?.id || "",
+          activeSemester?.id || ""
         );
         setIsWeekEffective(res.isEffective);
+        setEffectivenessNotes(res.notes || (res.isEffective ? "Hari Efektif KBM" : "Hari Libur / Tidak Efektif"));
       } catch (error) {
         console.error("Failed to check date effectiveness:", error);
       }
@@ -266,7 +327,7 @@ export const TeachingJournals: React.FC = () => {
       fetchSchedules();
     }
     checkEffectiveness();
-  }, [selectedDate, activeYear, activeSemester, isGuru, user, searchParams, students]);
+  }, [selectedDate, activeYear, activeSemester, isGuru, user, searchParams, students, subjects]);
 
   // Handle schedule selection
   const handleScheduleChange = async (scheduleId: string) => {
@@ -287,33 +348,12 @@ export const TeachingJournals: React.FC = () => {
         total: count
       });
 
-      // Load Prota topics to offer auto-populate helper
-      try {
-        const prota = await curriculumPlanningService.getAnnualProgram(activeYear?.id || "", sched.classId, sched.subjectId);
-        if (prota && prota.topics) {
-          // Filter topics for the active semester
-          const currentSemesterName = activeSemester?.name || "Ganjil";
-          const isGanjil = currentSemesterName.includes("1") || currentSemesterName.toLowerCase().includes("ganjil");
-          const isGenap = currentSemesterName.includes("2") || currentSemesterName.toLowerCase().includes("genap");
-
-          const filteredTopics = prota.topics.filter(t => {
-            if (t.semester === "Ganjil & Genap") return true;
-            if (isGanjil && t.semester === "Ganjil") return true;
-            if (isGenap && t.semester === "Genap") return true;
-            return t.semester.toLowerCase() === currentSemesterName.toLowerCase();
-          });
-          setProtaTopics(filteredTopics);
-        } else {
-          setProtaTopics([]);
-        }
-        setSelectedProtaTopicId("");
-      } catch (err) {
-        console.error("Failed to fetch Prota:", err);
-        setProtaTopics([]);
-      }
+      await checkCurriculumStatus(sched.classId, sched.subjectId);
     } else {
       setProtaTopics([]);
       setSelectedProtaTopicId("");
+      setHasProta(true);
+      setHasProsem(true);
     }
   };
 
@@ -398,6 +438,19 @@ export const TeachingJournals: React.FC = () => {
 
   // Handle Form Submission
   const handleSubmit = (status: "Draft" | "Diajukan") => {
+    if (!isWeekEffective) {
+      toast(`Gagal: Jurnal Mengajar tidak dapat diisi pada tanggal ini (${effectivenessNotes || "Hari Libur / Tidak Efektif KBM"}).`, "error");
+      return;
+    }
+
+    if (subjectCategoryType === "umum_pai" && (!hasProta || !hasProsem)) {
+      const missingDocs = [];
+      if (!hasProta) missingDocs.push("Prota (Program Tahunan)");
+      if (!hasProsem) missingDocs.push("Prosem (Program Semester)");
+      toast(`Gagal: Pengisian jurnal untuk mata pelajaran umum & PAI wajib menyusun ${missingDocs.join(" dan ")} terlebih dahulu.`, "error");
+      return;
+    }
+
     if (!selectedSchedule && !selectedJournal) {
       toast("Jadwal mengajar belum dipilih!", "error");
       return;
@@ -499,6 +552,8 @@ export const TeachingJournals: React.FC = () => {
       supportingLink: journal.supportingLink
     });
     setAttendance(journal.studentAttendance);
+
+    checkCurriculumStatus(journal.classId, journal.subjectId);
     setIsFormOpen(true);
   };
 
@@ -832,13 +887,126 @@ export const TeachingJournals: React.FC = () => {
       >
         <div className="space-y-6">
           {!isWeekEffective && (
-            <div className="flex items-center gap-2 p-3 bg-red-50 dark:bg-red-950/20 text-red-800 dark:text-red-300 border border-red-200 dark:border-red-900 rounded-xl">
-              <span className="flex-shrink-0 inline-block h-2.5 w-2.5 rounded-full bg-red-600 animate-pulse" />
-              <div className="text-xs">
-                <span className="font-bold uppercase tracking-wider mr-1.5">Minggu Tidak Efektif:</span>
-                <span className="font-medium text-red-700 dark:text-red-400">Jurnal tetap dapat dibuat, tetapi pekan ini terhitung sebagai pekan tidak efektif belajar.</span>
+            <div className="flex items-center gap-2.5 p-3.5 bg-red-100 dark:bg-red-950/40 text-red-800 dark:text-red-300 border border-red-300 dark:border-red-800 rounded-xl shadow-sm">
+              <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 flex-shrink-0" />
+              <div className="text-xs leading-relaxed">
+                <span className="font-bold uppercase tracking-wider mr-1.5 text-red-700 dark:text-red-400">
+                  {effectivenessNotes || "Hari Libur / Tidak Efektif KBM"}:
+                </span>
+                <span className="font-medium text-red-800 dark:text-red-200">
+                  Pengisian jurnal dikunci oleh sistem. Jurnal mengajar tidak dapat dibuat atau disimpan pada hari libur / tidak efektif KBM.
+                </span>
               </div>
             </div>
+          )}
+
+          {/* Prota / Prosem Gating Banner */}
+          {(selectedSchedule || selectedJournal) && (
+            <>
+              {subjectCategoryType === "umum_pai" && (!hasProta || !hasProsem) && (
+                <div className="p-4 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800/80 rounded-xl space-y-3 shadow-xs">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+                    <div className="space-y-1 w-full">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-amber-900 dark:text-amber-200 uppercase tracking-wider">
+                          Syarat Pengisian Jurnal Belum Terpenuhi
+                        </span>
+                        <span className="px-2 py-0.5 text-[10px] font-bold bg-amber-200 dark:bg-amber-900 text-amber-900 dark:text-amber-200 rounded-md">
+                          Mapel Umum & PAI
+                        </span>
+                      </div>
+                      <p className="text-xs text-amber-800 dark:text-amber-300 leading-relaxed">
+                        Sesuai kebijakan kurikulum sekolah, pengisian jurnal untuk mata pelajaran <strong>{selectedSchedule?.subjectName || selectedJournal?.subjectName}</strong> wajib menyusun <strong>Prota (Program Tahunan)</strong> dan <strong>Prosem (Program Semester)</strong> terlebih dahulu.
+                      </p>
+                      <div className="text-xs font-medium text-amber-900 dark:text-amber-200 space-y-1 pt-1.5 border-t border-amber-200/60 dark:border-amber-800/60 mt-2">
+                        <div className="flex items-center gap-2">
+                          {hasProta ? (
+                            <span className="text-emerald-700 dark:text-emerald-400 font-bold flex items-center gap-1">
+                              <CheckCircle2 className="h-3.5 w-3.5" /> Prota (Program Tahunan): Sudah Diisi
+                            </span>
+                          ) : (
+                            <span className="text-rose-700 dark:text-rose-400 font-bold flex items-center gap-1">
+                              <XCircle className="h-3.5 w-3.5" /> Prota (Program Tahunan): Belum Diisi / Tidak Ada Topik
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {hasProsem ? (
+                            <span className="text-emerald-700 dark:text-emerald-400 font-bold flex items-center gap-1">
+                              <CheckCircle2 className="h-3.5 w-3.5" /> Prosem (Program Semester): Sudah Diisi
+                            </span>
+                          ) : (
+                            <span className="text-rose-700 dark:text-rose-400 font-bold flex items-center gap-1">
+                              <XCircle className="h-3.5 w-3.5" /> Prosem (Program Semester): Belum Diisi / Tidak Ada Alokasi
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 pt-2 border-t border-amber-200 dark:border-amber-800/60">
+                    {!hasProta && (
+                      <Link
+                        to="/annual-programs"
+                        target="_blank"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-lg shadow-xs transition-colors"
+                      >
+                        <Calendar className="h-3.5 w-3.5" /> Susun Prota Sekarang <ExternalLink className="h-3 w-3 ml-0.5" />
+                      </Link>
+                    )}
+                    {!hasProsem && (
+                      <Link
+                        to="/semester-programs"
+                        target="_blank"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-lg shadow-xs transition-colors"
+                      >
+                        <Grid className="h-3.5 w-3.5" /> Susun Prosem Sekarang <ExternalLink className="h-3 w-3 ml-0.5" />
+                      </Link>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {subjectCategoryType === "diniyah_pondok" && (
+                <div className="p-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-xl flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2.5">
+                    <CheckCircle2 className="h-4.5 w-4.5 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+                    <div>
+                      <div className="font-bold text-emerald-900 dark:text-emerald-200">
+                        Kategori Mapel Diniyah / Pondok
+                      </div>
+                      <div className="text-emerald-700 dark:text-emerald-300 text-[11px]">
+                        Pengisian jurnal mengajar dapat langsung dilakukan tanpa kewajiban Prota & Prosem.
+                      </div>
+                    </div>
+                  </div>
+                  <span className="px-2.5 py-1 text-[10px] font-bold bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-200 rounded-md">
+                    Langsung Aktif
+                  </span>
+                </div>
+              )}
+
+              {subjectCategoryType === "umum_pai" && hasProta && hasProsem && (
+                <div className="p-3 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-xl flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2.5">
+                    <CheckCircle2 className="h-4.5 w-4.5 text-blue-600 dark:text-blue-400 flex-shrink-0" />
+                    <div>
+                      <div className="font-bold text-blue-900 dark:text-blue-200">
+                        Prota & Prosem Terverifikasi
+                      </div>
+                      <div className="text-blue-700 dark:text-blue-300 text-[11px]">
+                        Program Tahunan dan Semester untuk mata pelajaran ini telah lengkap. Form jurnal siap diisi.
+                      </div>
+                    </div>
+                  </div>
+                  <span className="px-2.5 py-1 text-[10px] font-bold bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 rounded-md">
+                    Siap Mengisi Jurnal
+                  </span>
+                </div>
+              )}
+            </>
           )}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <FormInput
@@ -1042,15 +1210,15 @@ export const TeachingJournals: React.FC = () => {
             </button>
             <button
               onClick={() => handleSubmit("Draft")}
-              disabled={createMutation.isPending || updateMutation.isPending}
-              className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white font-semibold rounded-xl cursor-pointer transition-colors"
+              disabled={!isWeekEffective || (subjectCategoryType === "umum_pai" && (!hasProta || !hasProsem)) || createMutation.isPending || updateMutation.isPending}
+              className={`px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white font-semibold rounded-xl transition-colors ${(!isWeekEffective || (subjectCategoryType === "umum_pai" && (!hasProta || !hasProsem))) ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
             >
               Simpan Draft
             </button>
             <button
               onClick={() => handleSubmit("Diajukan")}
-              disabled={createMutation.isPending || updateMutation.isPending}
-              className="flex items-center gap-1.5 px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl shadow-md shadow-blue-500/15 cursor-pointer transition-colors"
+              disabled={!isWeekEffective || (subjectCategoryType === "umum_pai" && (!hasProta || !hasProsem)) || createMutation.isPending || updateMutation.isPending}
+              className={`flex items-center gap-1.5 px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl shadow-md shadow-blue-500/15 transition-colors ${(!isWeekEffective || (subjectCategoryType === "umum_pai" && (!hasProta || !hasProsem))) ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
             >
               <Send className="h-4 w-4" />
               Ajukan Sekarang
