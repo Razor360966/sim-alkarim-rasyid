@@ -12,6 +12,7 @@ import {
 } from "firebase/firestore";
 import { db, handleFirestoreError, OperationType } from "../firebase/config";
 import { Class } from "../types";
+import { sortClasses } from "../utils/classSorter";
 
 const COLLECTION_NAME = "classes";
 
@@ -57,7 +58,7 @@ export const classService = {
           } as Class);
         }
       });
-      return items;
+      return sortClasses(items, (c) => c.name || c.gradeLevel);
     } catch (error) {
       return handleFirestoreError(error, OperationType.LIST, COLLECTION_NAME);
     }

@@ -41,6 +41,33 @@ export interface PromesAllocation {
   jp: number;
 }
 
+export interface PromesMeetingEntry {
+  id: string; // e.g., "meeting_2026-07-25" or doc key
+  meetingNo: number; // 1, 2, 3...
+  date: string; // YYYY-MM-DD
+  dayName: string; // "Sabtu", "Senin", etc.
+  jpSlot?: string; // e.g. "JP 1-2"
+  jpCount: number; // e.g. 2
+  status: "KBM" | "HOLIDAY" | "AGENDA_CANCEL" | "INEFFECTIVE_WEEK" | "CUSTOM";
+  statusLabel?: string; // e.g. "Hari Pembelajaran Normal (KBM)", "Libur Nasional", "MPLS", etc.
+  topicId?: string;
+  topicTitle?: string;
+  subtopicId?: string;
+  subtopicTitle?: string;
+  tp?: string; // Tujuan Pembelajaran
+  modulAjarId?: string;
+  modulAjarStatus?: "TERSEDIA" | "BELUM_DIBUAT";
+  journalStatus?: "BELUM_MENGAJAR" | "SUDAH_MENGAJAR" | "TERVERIFIKASI";
+  notes?: string;
+
+  // Schedule Adjustment fields
+  isAdjusted?: boolean;
+  originalDate?: string;
+  adjustmentReason?: string;
+  adjustedByUserName?: string;
+  adjustedAt?: string;
+}
+
 export interface SemesterProgram {
   id: string; // Document ID: academicYearId_semesterId_classId_subjectId
   academicYearId: string;
@@ -55,7 +82,8 @@ export interface SemesterProgram {
   teacherName: string;
   effectiveJpSemester: number;
   effectiveWeeksCount: number;
-  allocations: PromesAllocation[];
+  allocations?: PromesAllocation[]; // legacy week-based allocations
+  meetings?: PromesMeetingEntry[]; // real teaching schedule meeting allocations
   isManualWeeks?: boolean;
   customWeeksConfig?: {
     month: string;

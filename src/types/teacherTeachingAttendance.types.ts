@@ -37,8 +37,26 @@ export interface TeacherTeachingAttendance {
 
   recordedByUserId?: string;
   recordedByUserName?: string;
+  isInputSusulan?: boolean;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface TeacherAttendanceAuditLog {
+  id?: string;
+  attendanceDate: string; // YYYY-MM-DD
+  inputTimestamp: string; // ISO string
+  userId: string;
+  userName: string;
+  scheduleId: string;
+  teacherName: string;
+  className: string;
+  subjectName: string;
+  jp?: string;
+  previousStatus: AttendanceTeachingStatus | string;
+  newStatus: AttendanceTeachingStatus;
+  reason?: string;
+  isLateInput: boolean;
 }
 
 export interface AttendanceDailyStats {

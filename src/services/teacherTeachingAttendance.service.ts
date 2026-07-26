@@ -15,7 +15,8 @@ import {
   TeacherTeachingAttendance, 
   AttendanceDailyStats, 
   TeacherAttendanceSummary,
-  AttendanceTeachingStatus
+  AttendanceTeachingStatus,
+  TeacherAttendanceAuditLog
 } from "../types/teacherTeachingAttendance.types";
 import { scheduleService } from "./schedule.service";
 import { academicPlanningService } from "./academicPlanning.service";
@@ -23,6 +24,7 @@ import { lessonPeriodService } from "./lessonPeriod.service";
 import { classService } from "./classService";
 
 const COLLECTION_NAME = "teacher_teaching_attendances";
+const AUDIT_LOGS_COLLECTION = "teacher_attendance_audit_logs";
 
 export function getIndonesianDayName(dateStr: string): string {
   if (!dateStr) return "Senin";
@@ -212,25 +214,42 @@ export const teacherTeachingAttendanceService = {
     };
   },
 
-  // Save/Update daily attendance batch
+  // Save/Update daily attendance batch with Audit Logging for Back-dating
   async saveAttendanceForDate(
     dateStr: string,
     items: TeacherTeachingAttendance[],
     userId: string,
-    userName: string
+    userName: string,
+    reason?: string
   ): Promise<void> {
     try {
       const batch = writeBatch(db);
       const timestamp = new Date().toISOString();
+      const todayStr = new Date().toISOString().split("T")[0];
+      const isPastDate = dateStr < todayStr;
+
+      // Fetch existing snapshot to compare previous values for audit log
+      const colRef = collection(db, COLLECTION_NAME);
+      const q = query(colRef, where("date", "==", dateStr));
+      const existingSnap = await getDocs(q);
+      const existingMap = new Map<string, any>();
+      existingSnap.forEach(d => existingMap.set(d.id, d.data()));
+
+      const auditLogs: TeacherAttendanceAuditLog[] = [];
 
       items.forEach(item => {
         const docId = item.id || `${dateStr}_${item.scheduleId}`;
         const ref = doc(db, COLLECTION_NAME, docId);
+        const existingData = existingMap.get(docId);
+
+        const isSusulan = isPastDate || (existingData && existingData.recordedByUserId !== userId);
+        const previousStatus = existingData ? existingData.status : "Belum Diisi";
 
         const payload: TeacherTeachingAttendance = {
           ...item,
           id: docId,
           date: dateStr,
+          isInputSusulan: isSusulan ? true : (item.isInputSusulan || false),
           recordedByUserId: userId,
           recordedByUserName: userName,
           updatedAt: timestamp,
@@ -238,12 +257,98 @@ export const teacherTeachingAttendanceService = {
         };
 
         batch.set(ref, payload, { merge: true });
+
+        // Record audit log if past date or status changed
+        if (isPastDate || (existingData && previousStatus !== item.status)) {
+          auditLogs.push({
+            attendanceDate: dateStr,
+            inputTimestamp: timestamp,
+            userId,
+            userName,
+            scheduleId: item.scheduleId,
+            teacherName: item.teacherName,
+            className: item.className,
+            subjectName: item.subjectName,
+            jp: item.jp,
+            previousStatus,
+            newStatus: item.status,
+            reason: reason || (isPastDate ? "Input / Koreksi Susulan Tanggal Lampau" : "Perubahan Status Absensi"),
+            isLateInput: isPastDate
+          });
+        }
       });
 
       await batch.commit();
-      await logActivity(userId, userName, "Save Attendance", `Menyimpan ${items.length} data absensi mengajar tanggal ${dateStr}`);
+
+      if (auditLogs.length > 0) {
+        const auditColRef = collection(db, AUDIT_LOGS_COLLECTION);
+        const auditPromises = auditLogs.map(log => addDoc(auditColRef, log));
+        await Promise.all(auditPromises);
+      }
+
+      await logActivity(userId, userName, "Save Attendance", `Menyimpan ${items.length} data absensi mengajar tanggal ${dateStr}${isPastDate ? ' (Input Susulan)' : ''}`);
     } catch (error) {
       return handleFirestoreError(error, OperationType.WRITE, COLLECTION_NAME);
+    }
+  },
+
+  // Get Audit Logs for Back-dating inputs
+  async getAuditLogs(startDate?: string, endDate?: string): Promise<TeacherAttendanceAuditLog[]> {
+    try {
+      const colRef = collection(db, AUDIT_LOGS_COLLECTION);
+      const snap = await getDocs(colRef);
+      const items: TeacherAttendanceAuditLog[] = [];
+      snap.forEach(d => {
+        const data = d.data() as TeacherAttendanceAuditLog;
+        if (startDate && data.attendanceDate < startDate) return;
+        if (endDate && data.attendanceDate > endDate) return;
+        items.push({ id: d.id, ...data });
+      });
+      items.sort((a, b) => b.inputTimestamp.localeCompare(a.inputTimestamp));
+      return items;
+    } catch (error) {
+      console.error("Failed to fetch audit logs:", error);
+      return [];
+    }
+  },
+
+  // Get list of dates in active semester up to today with incomplete attendance
+  async getIncompleteAttendanceDates(
+    academicYearId: string,
+    semesterId: string,
+    limitDays: number = 30
+  ): Promise<{ date: string; day: string; missingCount: number; totalCount: number }[]> {
+    try {
+      const today = new Date();
+      const results: { date: string; day: string; missingCount: number; totalCount: number }[] = [];
+
+      for (let i = 1; i <= limitDays; i++) {
+        const d = new Date();
+        d.setDate(today.getDate() - i);
+        const dateStr = d.toISOString().split("T")[0];
+
+        const kaldik = await this.checkKaldikStatus(dateStr, academicYearId, semesterId);
+        if (kaldik.isKbmDisabled) continue;
+
+        const dayName = getIndonesianDayName(dateStr);
+        const { items } = await this.getAttendanceForDate(dateStr, academicYearId, semesterId);
+        if (items.length === 0) continue;
+
+        const unsubmitted = items.filter(item => !item.recordedByUserId).length;
+        if (unsubmitted > 0) {
+          results.push({
+            date: dateStr,
+            day: dayName,
+            missingCount: unsubmitted,
+            totalCount: items.length
+          });
+        }
+      }
+
+      return results;
+    } catch (error) {
+      console.error("Failed to check incomplete attendance dates:", error);
+      return [];
     }
   },
 

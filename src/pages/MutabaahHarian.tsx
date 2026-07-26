@@ -5,9 +5,9 @@ import { useToast } from "../contexts/ToastContext";
 import { Dialog } from "../components/Dialog";
 import { Loading } from "../components/Loading";
 import { FormInput } from "../components/FormInput";
-import { mutabaahService } from "../services/mutabaahService";
+import { mutabaahService, calculateMutabaahTargetDays } from "../services/mutabaahService";
 import { userService } from "../services/user.service";
-import { SdmMutabaahIndicator, SdmMutabaahEntry, SdmMutabaahChangeLog } from "../types/mutabaah.types";
+import { SdmMutabaahIndicator, SdmMutabaahEntry, SdmMutabaahChangeLog, SdmMutabaahPeriod } from "../types/mutabaah.types";
 import { useSearchParams } from "react-router-dom";
 import {
   Calendar,
@@ -781,10 +781,84 @@ export const MutabaahHarian: React.FC = () => {
       });
   }, [allUsers, monitoringEntries, monitoredRole, canViewAllRekap, user]);
 
+  // Load active Mutabaah period
+  const { data: activePeriod } = useQuery<SdmMutabaahPeriod>({
+    queryKey: ["mutabaahActivePeriod"],
+    queryFn: () => mutabaahService.getActivePeriod()
+  });
+
+  // State for editing active period in settings tab
+  const [periodNameInput, setPeriodNameInput] = useState<string>("");
+  const [periodStartInput, setPeriodStartInput] = useState<string>("");
+  const [periodEndInput, setPeriodEndInput] = useState<string>("");
+
+  useEffect(() => {
+    if (activePeriod) {
+      setPeriodNameInput(activePeriod.name || "");
+      setPeriodStartInput(activePeriod.startDate || "");
+      setPeriodEndInput(activePeriod.endDate || "");
+    } else {
+      const year = new Date().getFullYear();
+      setPeriodNameInput(`Semester Ganjil ${year}/${year + 1}`);
+      setPeriodStartInput(`${year}-07-15`);
+      setPeriodEndInput(`${year}-12-20`);
+    }
+  }, [activePeriod]);
+
+  const savePeriodMutation = useMutation({
+    mutationFn: async () => {
+      await mutabaahService.savePeriod(
+        {
+          name: periodNameInput || "Semester Aktif",
+          startDate: periodStartInput,
+          endDate: periodEndInput,
+          isActive: true
+        },
+        user?.name || user?.displayName || "System",
+        user?.uid || "admin"
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["mutabaahActivePeriod"] });
+      toast("Periode Mutabaah Aktif berhasil diperbarui!", "success");
+    },
+    onError: (err: any) => {
+      toast(`Gagal menyimpan periode: ${err.message}`, "error");
+    }
+  });
+
   // --- ANALYTICS DASHBOARD CALCULATIONS ---
   const dashboardStats = useMemo(() => {
-    const userEntries = globalEntries.filter(e => e.userId === user?.userId);
-    
+    const periodStart = activePeriod?.startDate || `${new Date().getFullYear()}-07-15`;
+    const periodEnd = activePeriod?.endDate || `${new Date().getFullYear()}-12-20`;
+    const today = todayStr;
+
+    // Filter user entries in active period
+    const userEntries = globalEntries.filter(
+      e => e.userId === user?.userId && e.date >= periodStart && e.date <= periodEnd
+    );
+
+    // Calculate Target Filling Days
+    const effectiveEnd = today < periodEnd ? today : periodEnd;
+    const startD = new Date(periodStart + "T00:00:00");
+    const endD = new Date(effectiveEnd + "T00:00:00");
+    const diffTime = endD >= startD ? endD.getTime() - startD.getTime() : 0;
+    const targetFillingDays = endD >= startD ? Math.floor(diffTime / (1000 * 3600 * 24)) + 1 : 0;
+
+    // Filled days = unique entry dates
+    const filledDatesSet = new Set(userEntries.map(e => e.date));
+    const filledDays = filledDatesSet.size;
+    const unfilledDays = Math.max(0, targetFillingDays - filledDays);
+
+    const fillingDisciplinePercent = targetFillingDays > 0 
+      ? Math.min(100, Math.round((filledDays / targetFillingDays) * 100))
+      : 100;
+
+    const totalEntries = userEntries.length;
+    const mutabaahQualityPercent = totalEntries > 0
+      ? Math.round(userEntries.reduce((sum, e) => sum + e.compliancePercentage, 0) / totalEntries)
+      : 100;
+
     // Streaks
     let streak = 0;
     const sortedUserEntries = [...userEntries].sort((a, b) => b.date.localeCompare(a.date));
@@ -795,12 +869,6 @@ export const MutabaahHarian: React.FC = () => {
         break;
       }
     }
-
-    // Averages
-    const totalEntries = userEntries.length;
-    const averageCompliance = totalEntries > 0 
-      ? Math.round(userEntries.reduce((sum, e) => sum + e.compliancePercentage, 0) / totalEntries)
-      : 100;
 
     // Categories breakdown
     const categoriesList = ["Ibadah Wajib", "Ibadah Sunnah", "Ruhiyah", "Akhlak"];
@@ -844,12 +912,20 @@ export const MutabaahHarian: React.FC = () => {
     }));
 
     return {
+      periodName: activePeriod?.name || "Periode Aktif",
+      periodStart,
+      periodEnd,
+      targetFillingDays,
+      filledDays,
+      unfilledDays,
+      fillingDisciplinePercent,
+      mutabaahQualityPercent,
       streak,
-      averageCompliance,
+      averageCompliance: mutabaahQualityPercent,
       categoryAverages,
       trendData
     };
-  }, [globalEntries, user?.userId, indicators]);
+  }, [globalEntries, user?.userId, indicators, activePeriod, todayStr]);
 
   // --- REKAPITULASI PERIODIK DECOUPLED DATA ---
   const currentYear = new Date().getFullYear();
@@ -1115,41 +1191,54 @@ export const MutabaahHarian: React.FC = () => {
           {/* TAB 1: DASHBOARD MUTABAAH */}
           {activeTab === "dashboard" && (
             <div className="space-y-6">
+              {/* Active Period Banner */}
+              <div className="bg-rose-50/70 dark:bg-rose-950/20 border border-rose-200/80 dark:border-rose-900/40 p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2.5">
+                  <CalendarDays className="h-5 w-5 text-rose-600 dark:text-rose-400 shrink-0" />
+                  <div>
+                    <span className="font-extrabold text-slate-800 dark:text-zinc-100">{dashboardStats.periodName}</span>
+                    <p className="text-[11px] text-slate-500 dark:text-zinc-400">
+                      Mulai {dashboardStats.periodStart} s.d. {dashboardStats.periodEnd}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 text-[11px] font-bold text-slate-600 dark:text-zinc-300">
+                  <span className="bg-white dark:bg-zinc-800 px-3 py-1 rounded-lg border border-slate-200 dark:border-zinc-700 shadow-2xs">
+                    Target: {dashboardStats.targetFillingDays} Hari
+                  </span>
+                </div>
+              </div>
+
               {/* Top stats grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-850 p-6 rounded-2xl flex items-center justify-between shadow-xs">
-                  <div className="space-y-1">
-                    <span className="text-[10px] font-black uppercase text-slate-400">Rata-rata Kepatuhan</span>
-                    <div className="text-3xl font-black text-rose-600 dark:text-rose-400">{dashboardStats.averageCompliance}%</div>
-                    <p className="text-[10px] text-slate-400">Seluruh pengisian Anda</p>
-                  </div>
-                  <div className="h-12 w-12 bg-rose-50 dark:bg-rose-950/20 text-rose-600 dark:text-rose-400 rounded-xl flex items-center justify-center">
-                    <Award className="h-6 w-6" />
-                  </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-850 p-5 rounded-2xl space-y-1 shadow-2xs">
+                  <span className="text-[10px] font-black uppercase text-slate-400">Kedisiplinan Pengisian</span>
+                  <div className="text-2xl font-black text-rose-600 dark:text-rose-400">{dashboardStats.fillingDisciplinePercent}%</div>
+                  <p className="text-[10px] text-slate-400">{dashboardStats.filledDays} dari {dashboardStats.targetFillingDays} hari target</p>
                 </div>
 
-                <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-850 p-6 rounded-2xl flex items-center justify-between shadow-xs">
-                  <div className="space-y-1">
-                    <span className="text-[10px] font-black uppercase text-slate-400">Konsistensi Beruntun</span>
-                    <div className="text-3xl font-black text-emerald-600 dark:text-emerald-400">{dashboardStats.streak} Hari</div>
-                    <p className="text-[10px] text-slate-400">Kepatuhan di atas 80%</p>
-                  </div>
-                  <div className="h-12 w-12 bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400 rounded-xl flex items-center justify-center">
-                    <Heart className="h-6 w-6 animate-pulse" />
-                  </div>
+                <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-850 p-5 rounded-2xl space-y-1 shadow-2xs">
+                  <span className="text-[10px] font-black uppercase text-slate-400">Hari Berhasil Diisi</span>
+                  <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">{dashboardStats.filledDays} Hari</div>
+                  <p className="text-[10px] text-slate-400">Sudah terisi dalam periode</p>
                 </div>
 
-                <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-850 p-6 rounded-2xl flex items-center justify-between shadow-xs">
-                  <div className="space-y-1">
-                    <span className="text-[10px] font-black uppercase text-slate-400">Total Pengisian</span>
-                    <div className="text-3xl font-black text-blue-600 dark:text-blue-400">
-                      {globalEntries.filter(e => e.userId === user?.userId).length} Kali
-                    </div>
-                    <p className="text-[10px] text-slate-400">Mencatat spiritualitas harian</p>
-                  </div>
-                  <div className="h-12 w-12 bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 rounded-xl flex items-center justify-center">
-                    <Activity className="h-6 w-6" />
-                  </div>
+                <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-850 p-5 rounded-2xl space-y-1 shadow-2xs">
+                  <span className="text-[10px] font-black uppercase text-slate-400">Hari Belum Diisi</span>
+                  <div className="text-2xl font-black text-amber-600 dark:text-amber-400">{dashboardStats.unfilledDays} Hari</div>
+                  <p className="text-[10px] text-slate-400">Belum terisi dalam periode</p>
+                </div>
+
+                <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-850 p-5 rounded-2xl space-y-1 shadow-2xs">
+                  <span className="text-[10px] font-black uppercase text-slate-400">Capaian Kualitas</span>
+                  <div className="text-2xl font-black text-indigo-600 dark:text-indigo-400">{dashboardStats.mutabaahQualityPercent}%</div>
+                  <p className="text-[10px] text-slate-400">Rata-rata skor mutabaah</p>
+                </div>
+
+                <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-850 p-5 rounded-2xl space-y-1 shadow-2xs">
+                  <span className="text-[10px] font-black uppercase text-slate-400">Konsistensi Beruntun</span>
+                  <div className="text-2xl font-black text-blue-600 dark:text-blue-400">{dashboardStats.streak} Hari</div>
+                  <p className="text-[10px] text-slate-400">Skor mutabaah ≥ 80%</p>
                 </div>
               </div>
 
@@ -1923,6 +2012,72 @@ export const MutabaahHarian: React.FC = () => {
           {/* TAB 8: PENGATURAN INDIKATOR */}
           {activeTab === "pengaturan" && (
             <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-850 rounded-3xl p-6 shadow-xs space-y-6">
+              {/* Periode Mutabaah Configuration Card */}
+              <div className="bg-rose-50/60 dark:bg-rose-950/20 border border-rose-200/80 dark:border-rose-900/40 p-5 rounded-2xl space-y-4">
+                <div className="flex items-center justify-between border-b border-rose-100 dark:border-rose-900/30 pb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 bg-rose-600 text-white rounded-xl shadow-xs">
+                      <CalendarDays className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-black text-rose-950 dark:text-rose-200 uppercase tracking-wider">
+                        Pengaturan Periode Aktif Mutabaah
+                      </h3>
+                      <p className="text-[11px] text-rose-900/80 dark:text-rose-300 mt-0.5">
+                        Tentukan rentang tanggal periode mutabaah (misal: Semester Ganjil 15 Juli 2026 s.d. 20 Desember 2026) sebagai acuan perhitungan persentase kedisiplinan pengisian.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Nama Periode</label>
+                    <input
+                      type="text"
+                      value={periodNameInput}
+                      onChange={(e) => setPeriodNameInput(e.target.value)}
+                      placeholder="Semester Ganjil 2026/2027"
+                      className="w-full px-3 py-2 text-xs font-bold border border-slate-200 dark:border-zinc-800 rounded-xl bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Tanggal Mulai</label>
+                    <input
+                      type="date"
+                      value={periodStartInput}
+                      onChange={(e) => setPeriodStartInput(e.target.value)}
+                      className="w-full px-3 py-2 text-xs font-bold border border-slate-200 dark:border-zinc-800 rounded-xl bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100 cursor-pointer"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Tanggal Selesai</label>
+                    <input
+                      type="date"
+                      value={periodEndInput}
+                      onChange={(e) => setPeriodEndInput(e.target.value)}
+                      className="w-full px-3 py-2 text-xs font-bold border border-slate-200 dark:border-zinc-800 rounded-xl bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100 cursor-pointer"
+                    />
+                  </div>
+                </div>
+
+                {canManageIndicators && (
+                  <div className="flex justify-end pt-2">
+                    <button
+                      type="button"
+                      onClick={() => savePeriodMutation.mutate()}
+                      disabled={savePeriodMutation.isPending}
+                      className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-extrabold shadow-sm flex items-center gap-2 cursor-pointer transition-all"
+                    >
+                      <CheckCircle className="h-4 w-4" />
+                      {savePeriodMutation.isPending ? "Memproses..." : "Simpan Periode Mutabaah"}
+                    </button>
+                  </div>
+                )}
+              </div>
+
               <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-100 dark:border-zinc-800 pb-4 gap-3">
                 <div>
                   <h2 className="text-sm font-black text-slate-800 dark:text-zinc-200 uppercase tracking-wider">Konfigurasi Indikator Mutabaah</h2>

@@ -15,6 +15,7 @@ import {
 } from "../types/teacherTeachingAttendance.types";
 import { Teacher } from "../types";
 import { Loading } from "../components/Loading";
+import { Dialog } from "../components/Dialog";
 import { 
   ClipboardList, 
   Calendar, 
@@ -112,6 +113,24 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
     }
   }, [activeSem, selectedSemesterId]);
 
+  // Incomplete Attendance Dates alert query
+  const { data: incompleteDates = [] } = useQuery({
+    queryKey: ["incompleteAttendanceDates", selectedAyId, selectedSemesterId],
+    queryFn: () => teacherTeachingAttendanceService.getIncompleteAttendanceDates(selectedAyId, selectedSemesterId),
+    enabled: isWakakurOrAdmin && !!selectedAyId && !!selectedSemesterId
+  });
+
+  // Audit logs query
+  const [showAuditModal, setShowAuditModal] = useState(false);
+  const { data: auditLogs = [] } = useQuery({
+    queryKey: ["teacherAttendanceAuditLogs"],
+    queryFn: () => teacherTeachingAttendanceService.getAuditLogs(),
+    enabled: showAuditModal
+  });
+
+  // Reason state for back-dating
+  const [backdateReason, setBackdateReason] = useState("");
+
   // --- TAB 1: INPUT ABSENSI ---
   const dayName = getIndonesianDayName(selectedDate);
 
@@ -178,19 +197,26 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!user) throw new Error("Pengguna belum diautentikasi");
+      const isPastDate = selectedDate < todayStr;
+      const reason = isPastDate ? (backdateReason || "Input Susulan Tanggal Lampau oleh Wakakur") : undefined;
+
       await teacherTeachingAttendanceService.saveAttendanceForDate(
         selectedDate,
         localAttendanceItems,
         user.uid,
-        user.displayName || user.name || "Wakakur"
+        user.displayName || user.name || "Wakakur",
+        reason
       );
     },
     onSuccess: () => {
       toast("Absensi mengajar guru berhasil disimpan!", "success");
       setIsDirty(false);
+      setBackdateReason("");
       queryClient.invalidateQueries({ queryKey: ["teacherTeachingAttendance"] });
       queryClient.invalidateQueries({ queryKey: ["teacherAttendanceRecap"] });
       queryClient.invalidateQueries({ queryKey: ["teacherDailyStats"] });
+      queryClient.invalidateQueries({ queryKey: ["incompleteAttendanceDates"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherAttendanceAuditLogs"] });
     },
     onError: (err: any) => {
       toast("Gagal menyimpan absensi: " + err.message, "error");
@@ -549,6 +575,46 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
       {/* ========================================================= */}
       {activeTab === "input" && (
         <div className="space-y-6">
+          {/* Absensi Belum Lengkap Alert Card for Wakakur */}
+          {isWakakurOrAdmin && incompleteDates.length > 0 && (
+            <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 p-4 rounded-2xl space-y-3 shadow-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-amber-900 dark:text-amber-200 font-bold text-xs uppercase tracking-wider">
+                  <AlertTriangle className="w-4 h-4 text-amber-600" />
+                  Absensi Mengajar Belum Lengkap ({incompleteDates.length} Tanggal)
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowAuditModal(true)}
+                  className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  Lihat Log Audit Perubahan
+                </button>
+              </div>
+              <p className="text-xs text-amber-800 dark:text-amber-300">
+                Wakakur dapat melakukan pengisian atau perbaikan absensi susulan pada tanggal lampau dalam semester aktif ini. Klik tanggal di bawah untuk berpindah:
+              </p>
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                {incompleteDates.slice(0, 10).map((item) => (
+                  <button
+                    key={item.date}
+                    type="button"
+                    onClick={() => setSelectedDate(item.date)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                      selectedDate === item.date
+                        ? "bg-amber-600 text-white shadow-xs"
+                        : "bg-white dark:bg-zinc-800 border border-amber-200 dark:border-amber-800/80 text-amber-900 dark:text-amber-200 hover:bg-amber-100"
+                    }`}
+                  >
+                    <Calendar className="w-3.5 h-3.5" />
+                    {item.date} ({item.day}) — {item.missingCount}/{item.totalCount} Sesi Belum
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Controls Bar */}
           <div className="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-slate-200/80 dark:border-zinc-800 shadow-xs flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-4 flex-wrap">
@@ -621,6 +687,30 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                 <p className="text-xs text-amber-700 dark:text-amber-300">
                   Agenda Kalender Akademik: <span className="font-semibold underline">{dailyAttendanceData.lockReason}</span>. Input absensi dikunci secara otomatis oleh sistem.
                 </p>
+              </div>
+            </div>
+          )}
+
+          {/* Backdate Reason Banner if editing past dates */}
+          {selectedDate < todayStr && isWakakurOrAdmin && (
+            <div className="bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 p-4 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2 text-blue-900 dark:text-blue-200 font-bold">
+                <Clock className="w-4 h-4 text-blue-600 shrink-0" />
+                <div>
+                  <span>Pengisian / Perbaikan Susulan Tanggal Lampau ({selectedDate})</span>
+                  <p className="text-[11px] font-normal text-blue-700 dark:text-blue-300">
+                    Sistem mencatat tanggal ini sebagai Input Susulan. Seluruh perubahan akan terekam pada Audit Log.
+                  </p>
+                </div>
+              </div>
+              <div className="w-full sm:w-auto flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Alasan perbaikan (opsional)..."
+                  value={backdateReason}
+                  onChange={(e) => setBackdateReason(e.target.value)}
+                  className="px-3 py-1.5 text-xs bg-white dark:bg-zinc-900 border border-blue-200 dark:border-blue-800 rounded-xl text-slate-800 dark:text-zinc-100 w-full sm:w-64"
+                />
               </div>
             </div>
           )}
@@ -708,7 +798,14 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                         <td className="py-3.5 px-4 text-center font-bold text-slate-400">{displayIdx + 1}</td>
                         
                         <td className="py-3.5 px-4">
-                          <div className="font-bold text-slate-900 dark:text-zinc-100">{item.teacherName}</div>
+                          <div className="font-bold text-slate-900 dark:text-zinc-100 flex items-center gap-2">
+                            <span>{item.teacherName}</span>
+                            {(item.isInputSusulan || selectedDate < todayStr) && (
+                              <span className="px-1.5 py-0.5 bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 rounded text-[9px] font-black uppercase tracking-wider border border-amber-200/60">
+                                Susulan
+                              </span>
+                            )}
+                          </div>
                           <div className="text-[10px] text-slate-400">Jadwal Asli</div>
                         </td>
 
@@ -1058,6 +1155,74 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Audit Log Modal */}
+      {showAuditModal && (
+        <Dialog
+          isOpen={showAuditModal}
+          onClose={() => setShowAuditModal(false)}
+          title="Audit Log Perbaikan & Susulan Absensi Mengajar"
+          size="lg"
+        >
+          <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+            <p className="text-xs text-slate-500 dark:text-zinc-400">
+              Menampilkan seluruh rekam jejak audit log perubahan status absensi mengajar, perbaikan data, dan input susulan oleh Wakakur/Admin.
+            </p>
+
+            {auditLogs.length === 0 ? (
+              <div className="text-center py-12 text-xs text-slate-400">
+                Belum ada rekam jejak audit log perbaikan absensi.
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {auditLogs.map((log) => (
+                  <div
+                    key={log.id}
+                    className="p-3.5 bg-slate-50 dark:bg-zinc-800/80 rounded-2xl border border-slate-200/80 dark:border-zinc-700 space-y-2 text-xs shadow-2xs"
+                  >
+                    <div className="flex flex-wrap items-center justify-between text-[11px] font-bold text-slate-700 dark:text-zinc-300 border-b border-slate-200/60 dark:border-zinc-700/60 pb-2 gap-2">
+                      <div className="flex items-center gap-2">
+                        <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                        <span>Tgl Mengajar: {log.attendanceDate}</span>
+                      </div>
+                      <span className="text-slate-400 font-normal text-[10px]">
+                        {new Date(log.inputTimestamp).toLocaleString("id-ID", {
+                          dateStyle: "medium",
+                          timeStyle: "short"
+                        })}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                      <div className="font-extrabold text-slate-900 dark:text-zinc-100">
+                        {log.teacherName} — {log.subjectName} ({log.className})
+                      </div>
+                      <span className="px-2 py-0.5 bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 rounded text-[10px] font-bold w-fit">
+                        JP {log.jp}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 text-[11px] pt-0.5">
+                      <span className="px-2.5 py-1 bg-slate-200 dark:bg-zinc-700 rounded-lg text-slate-700 dark:text-zinc-300 font-semibold">
+                        {log.previousStatus || "Belum Diisi"}
+                      </span>
+                      <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+                      <span className="px-2.5 py-1 bg-blue-100 dark:bg-blue-950/80 text-blue-800 dark:text-blue-300 rounded-lg font-bold">
+                        {log.newStatus}
+                      </span>
+                    </div>
+
+                    <div className="text-[11px] text-slate-500 dark:text-zinc-400 flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-zinc-800">
+                      <span>Petugas: <strong className="text-slate-700 dark:text-zinc-200">{log.userName}</strong></span>
+                      <span className="italic">Catatan/Alasan: {log.reason || "Input Susulan / Perbaikan"}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </Dialog>
       )}
     </div>
   );

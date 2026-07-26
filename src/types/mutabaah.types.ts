@@ -15,13 +15,24 @@ export interface SdmMutabaahIndicator {
   updatedBy: string;
 
   // Smart Mutabaah Fields
-  frequency: "waktu" | "harian" | "mingguan" | "bulanan";
+  frequency: "waktu" | "harian" | "mingguan" | "bulanan" | "hari_tertentu" | "tanggal_tertentu" | "fleksibel";
   applicableDays?: string[]; // ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
+  specificDates?: string[]; // Array of YYYY-MM-DD
   startTime?: string; // "HH:MM" e.g., "04:30"
   endTime?: string; // "HH:MM" e.g., "06:00"
   appliesToMale?: boolean;
   appliesToFemale?: boolean;
   excludeDuringHaid?: boolean;
+}
+
+export interface SdmMutabaahPeriod {
+  id?: string;
+  name: string;
+  startDate: string; // YYYY-MM-DD
+  endDate: string; // YYYY-MM-DD
+  isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface SdmMutabaahTemplate {

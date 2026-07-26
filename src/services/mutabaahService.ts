@@ -11,12 +11,13 @@ import {
   orderBy
 } from "firebase/firestore";
 import { db, handleFirestoreError, OperationType } from "../firebase/config";
-import { SdmMutabaahIndicator, SdmMutabaahTemplate, SdmMutabaahEntry, SdmMutabaahChangeLog, SdmMutabaahEntryChange } from "../types";
+import { SdmMutabaahIndicator, SdmMutabaahTemplate, SdmMutabaahEntry, SdmMutabaahChangeLog, SdmMutabaahEntryChange, SdmMutabaahPeriod } from "../types";
 
 const INDICATORS_COLLECTION = "mutabaah_indicators";
 const TEMPLATES_COLLECTION = "mutabaah_templates";
 const ENTRIES_COLLECTION = "mutabaah_entries";
 const LOGS_COLLECTION = "mutabaah_logs";
+const PERIODS_COLLECTION = "mutabaah_periods";
 
 const DEFAULT_INDICATORS: Omit<SdmMutabaahIndicator, "createdAt" | "updatedAt" | "updatedBy">[] = [
   // --- IBADAH WAJIB ---
@@ -663,5 +664,124 @@ export const mutabaahService = {
     } catch (error) {
       return [];
     }
+  },
+
+  // Active Mutabaah Period
+  async getActivePeriod(): Promise<SdmMutabaahPeriod> {
+    const colRef = collection(db, PERIODS_COLLECTION);
+    try {
+      const snapshot = await getDocs(colRef);
+      if (!snapshot.empty) {
+        const active = snapshot.docs.find(d => d.data().isActive === true);
+        if (active) {
+          return { id: active.id, ...active.data() } as SdmMutabaahPeriod;
+        }
+      }
+      // Fallback default period: Semester Ganjil current year
+      const now = new Date();
+      const year = now.getFullYear();
+      return {
+        id: "default_period",
+        name: `Semester Ganjil ${year}/${year + 1}`,
+        startDate: `${year}-07-15`,
+        endDate: `${year}-12-20`,
+        isActive: true
+      };
+    } catch (error) {
+      const year = new Date().getFullYear();
+      return {
+        id: "default_period",
+        name: `Semester Ganjil ${year}/${year + 1}`,
+        startDate: `${year}-07-15`,
+        endDate: `${year}-12-20`,
+        isActive: true
+      };
+    }
+  },
+
+  async savePeriod(period: SdmMutabaahPeriod, operatorName: string, operatorId: string): Promise<void> {
+    const docId = period.id || "active_period";
+    const docRef = doc(db, PERIODS_COLLECTION, docId);
+    const now = new Date().toISOString();
+    try {
+      await setDoc(docRef, {
+        ...period,
+        id: docId,
+        isActive: true,
+        updatedAt: now,
+        createdAt: period.createdAt || now
+      }, { merge: true });
+
+      await this.logChange({
+        operatorId,
+        operatorName,
+        action: "Set Periode Mutabaah",
+        details: `Mengatur periode aktif Mutabaah: ${period.name} (${period.startDate} s.d. ${period.endDate})`
+      });
+    } catch (error) {
+      return handleFirestoreError(error, OperationType.WRITE, `${PERIODS_COLLECTION}/${docId}`);
+    }
   }
 };
+
+/**
+ * Calculates total target expected days for an indicator within a Mutabaah period.
+ */
+export function calculateMutabaahTargetDays(
+  period: SdmMutabaahPeriod,
+  indicator: SdmMutabaahIndicator,
+  asOfDateStr?: string
+): number {
+  if (!period?.startDate) return 30;
+
+  const start = new Date(period.startDate + "T00:00:00");
+  const periodEnd = new Date(period.endDate + "T00:00:00");
+  const today = asOfDateStr ? new Date(asOfDateStr + "T00:00:00") : new Date();
+
+  // The effective end date is min(periodEnd, today)
+  const effectiveEnd = today < periodEnd ? today : periodEnd;
+
+  if (effectiveEnd < start) return 0;
+
+  const freq = indicator.frequency || "harian";
+
+  if (freq === "harian" || freq === "waktu") {
+    const diffTime = effectiveEnd.getTime() - start.getTime();
+    return Math.floor(diffTime / (1000 * 3600 * 24)) + 1;
+  }
+
+  if (freq === "hari_tertentu") {
+    const targetDays = indicator.applicableDays || [];
+    if (targetDays.length === 0) return 1;
+    const dayNames = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+    let count = 0;
+    const current = new Date(start);
+    while (current <= effectiveEnd) {
+      const dayName = dayNames[current.getDay()];
+      if (targetDays.includes(dayName)) {
+        count++;
+      }
+      current.setDate(current.getDate() + 1);
+    }
+    return Math.max(1, count);
+  }
+
+  if (freq === "tanggal_tertentu") {
+    const dates = indicator.specificDates || [];
+    const validDates = dates.filter(d => d >= period.startDate && d <= (asOfDateStr || period.endDate));
+    return Math.max(1, validDates.length);
+  }
+
+  if (freq === "mingguan") {
+    const diffTime = effectiveEnd.getTime() - start.getTime();
+    const days = Math.floor(diffTime / (1000 * 3600 * 24)) + 1;
+    return Math.max(1, Math.ceil(days / 7));
+  }
+
+  if (freq === "bulanan") {
+    const months = (effectiveEnd.getFullYear() - start.getFullYear()) * 12 + (effectiveEnd.getMonth() - start.getMonth()) + 1;
+    return Math.max(1, months);
+  }
+
+  return Math.max(1, indicator.target || 1);
+}
