@@ -598,7 +598,6 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
       "Mata Pelajaran": item.subjectName,
       Kelas: item.className,
       "No. JP / Jam": `${item.jp} (${item.timeSlot || "-"})`,
-      Ruangan: item.roomName || "-",
       Status: item.status,
       "Guru Pengganti": item.substituteTeacherName || "-",
       Catatan: item.notes || "-"
@@ -1212,7 +1211,6 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                       <th className="py-3.5 px-4">Mata Pelajaran</th>
                       <th className="py-3.5 px-4">Kelas</th>
                       <th className="py-3.5 px-4">Jam / JP</th>
-                      <th className="py-3.5 px-4">Ruangan</th>
                       <th className="py-3.5 px-4 min-w-[180px]">Status Kehadiran</th>
                       <th className="py-3.5 px-4 min-w-[200px]">Catatan / Terlambat / Pengganti</th>
                       <th className="py-3.5 px-4 text-center min-w-[130px]">Aksi / Simpan Sesi</th>
@@ -1246,15 +1244,13 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                         </td>
 
                         <td className="py-3.5 px-4">
-                          <div className="font-bold text-slate-700 dark:text-zinc-300">{item.jp}</div>
-                          <div className="text-[10px] text-slate-400 flex items-center gap-1">
-                            <Clock className="w-3 h-3" />
-                            {item.timeSlot || "Sesuai Sesi"}
+                          <div className="font-bold text-slate-800 dark:text-zinc-200">
+                            {item.jp?.toUpperCase().startsWith("JP") ? item.jp : `JP ${item.jp}`}
                           </div>
-                        </td>
-
-                        <td className="py-3.5 px-4 text-slate-500 dark:text-zinc-400 font-mono text-[11px]">
-                          {item.roomName || "-"}
+                          <div className="text-[10px] text-slate-500 dark:text-zinc-400 flex items-center gap-1 font-medium mt-0.5">
+                            <Clock className="w-3 h-3 text-slate-400 shrink-0" />
+                            <span>{item.timeSlot ? `${item.timeSlot} WIB` : "Jam Pelajaran"}</span>
+                          </div>
                         </td>
 
                         <td className="py-3.5 px-4">
@@ -1807,7 +1803,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                     <option value="">-- Pilih Sesi Mengajar yang Akan Ditukar --</option>
                     {localAttendanceItems.map((item) => (
                       <option key={item.scheduleId} value={item.scheduleId}>
-                        {item.teacherName} — {item.subjectName} ({item.className}) [JP {item.jp}]
+                        {item.teacherName} — {item.subjectName} ({item.className}) [{item.jp?.toUpperCase().startsWith("JP") ? item.jp : `JP ${item.jp}`}]
                       </option>
                     ))}
                   </select>
@@ -1863,7 +1859,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                     <option value="">-- Tanpa Sesi Pengganti Sisi B (Penugasan Langsung Sesi A Saja) --</option>
                     {exchangeScheduleBItems.map((item) => (
                       <option key={item.scheduleId} value={item.scheduleId}>
-                        {item.teacherName} — {item.subjectName} ({item.className}) [JP {item.jp}]
+                        {item.teacherName} — {item.subjectName} ({item.className}) [{item.jp?.toUpperCase().startsWith("JP") ? item.jp : `JP ${item.jp}`}]
                       </option>
                     ))}
                   </select>

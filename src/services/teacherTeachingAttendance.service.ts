@@ -234,11 +234,43 @@ export const teacherTeachingAttendanceService = {
     // 4. Merge schedule items with existing attendance records
     const items: TeacherTeachingAttendance[] = activeSchedules.map(sch => {
       const existing = existingRecords.get(sch.id!);
-      const period = periodMap.get(sch.lessonPeriodId);
+
+      // Find period for dayName
+      const dayPeriods = lessonPeriods.filter(p => (p.day || "").trim().toLowerCase() === dayName.toLowerCase());
+      
+      let period = dayPeriods.find(p => p.id === sch.lessonPeriodId);
+      if (!period && sch.sequence) {
+        period = dayPeriods.find(p => p.sequence === sch.sequence);
+      }
+      if (!period && sch.jp) {
+        const cleanJp = sch.jp.replace(/^jp\s*/i, "").trim();
+        period = dayPeriods.find(p => p.title.toLowerCase() === sch.jp.trim().toLowerCase() || String(p.sequence) === cleanJp);
+      }
+      if (!period) {
+        period = periodMap.get(sch.lessonPeriodId);
+      }
+
       const cls = classMap.get(sch.classId);
 
+      const seq = period?.sequence || sch.sequence || 1;
       const timeSlot = period ? `${period.startTime} - ${period.endTime}` : "";
       const roomName = cls?.roomCode || cls?.name || "";
+
+      // Ensure JP naming conforms to Lesson Period structure (e.g. "JP 1", "JP 2")
+      let formattedJp = period?.title;
+      if (!formattedJp) {
+        if (sch.jp && sch.jp !== "JP" && sch.jp.trim()) {
+          formattedJp = sch.jp.trim();
+        } else {
+          formattedJp = `JP ${seq}`;
+        }
+      }
+
+      if (/^\d+$/.test(formattedJp)) {
+        formattedJp = `JP ${formattedJp}`;
+      } else if (/^jp\s*\d+/i.test(formattedJp)) {
+        formattedJp = formattedJp.replace(/^jp\s*/i, "JP ");
+      }
 
       if (existing) {
         return {
@@ -252,10 +284,10 @@ export const teacherTeachingAttendanceService = {
           className: sch.className,
           gradeLevel: cls?.gradeLevel || "",
           lessonPeriodId: sch.lessonPeriodId,
-          sequence: sch.sequence || 0,
-          jp: sch.jp || (period ? period.title : "JP"),
+          sequence: seq,
+          jp: formattedJp,
           roomName: existing.roomName || roomName,
-          timeSlot: existing.timeSlot || timeSlot,
+          timeSlot: timeSlot || existing.timeSlot,
           academicYearId: sch.academicYearId || academicYearId,
           semesterId: sch.semesterId || semesterId,
           day: dayName,
@@ -278,8 +310,8 @@ export const teacherTeachingAttendanceService = {
         className: sch.className,
         gradeLevel: cls?.gradeLevel || "",
         lessonPeriodId: sch.lessonPeriodId,
-        sequence: sch.sequence || 0,
-        jp: sch.jp || (period ? period.title : "JP"),
+        sequence: seq,
+        jp: formattedJp,
         roomName,
         timeSlot,
         status: kaldikInfo.isKbmDisabled ? "KBM Ditiadakan" : "Belum Diverifikasi",
