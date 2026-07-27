@@ -131,6 +131,19 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
   // Reason state for back-dating
   const [backdateReason, setBackdateReason] = useState("");
 
+  // Schedule Exchange ("Tukar Jadwal") modal state
+  const [showExchangeModal, setShowExchangeModal] = useState(false);
+  const [exchangeScheduleAId, setExchangeScheduleAId] = useState("");
+  const [exchangeTeacherBId, setExchangeTeacherBId] = useState("");
+  const [exchangeScheduleBId, setExchangeScheduleBId] = useState("");
+  const [exchangeReason, setExchangeReason] = useState("");
+
+  // Leadership Monitoring Query (for Headmaster / Yayasan / Wakakur)
+  const { data: leadershipStats } = useQuery({
+    queryKey: ["leadershipMonitoringStats", selectedAyId, selectedSemesterId],
+    queryFn: () => teacherTeachingAttendanceService.getLeadershipMonitoringStats(selectedAyId, selectedSemesterId)
+  });
+
   // --- TAB 1: INPUT ABSENSI ---
   const dayName = getIndonesianDayName(selectedDate);
 
@@ -152,6 +165,12 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
     }
   }, [dailyAttendanceData]);
 
+  const getOffsetDateStr = (daysAgo: number) => {
+    const d = new Date();
+    d.setDate(d.getDate() - daysAgo);
+    return d.toISOString().split("T")[0];
+  };
+
   // Handle local changes
   const handleStatusChange = (index: number, newStatus: AttendanceTeachingStatus) => {
     setLocalAttendanceItems(prev => {
@@ -159,8 +178,8 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
       copy[index] = {
         ...copy[index],
         status: newStatus,
-        substituteTeacherId: newStatus === "Diganti Guru Lain" ? copy[index].substituteTeacherId : "",
-        substituteTeacherName: newStatus === "Diganti Guru Lain" ? copy[index].substituteTeacherName : ""
+        substituteTeacherId: newStatus === "Digantikan Guru Lain" ? copy[index].substituteTeacherId : "",
+        substituteTeacherName: newStatus === "Digantikan Guru Lain" ? copy[index].substituteTeacherName : ""
       };
       return copy;
     });
@@ -193,7 +212,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
     setIsDirty(true);
   };
 
-  // Mutation to save attendance
+  // Mutation to save attendance (batch)
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!user) throw new Error("Pengguna belum diautentikasi");
@@ -209,7 +228,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
       );
     },
     onSuccess: () => {
-      toast("Absensi mengajar guru berhasil disimpan!", "success");
+      toast("Monitoring pelaksanaan jam mengajar berhasil disimpan!", "success");
       setIsDirty(false);
       setBackdateReason("");
       queryClient.invalidateQueries({ queryKey: ["teacherTeachingAttendance"] });
@@ -217,9 +236,91 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["teacherDailyStats"] });
       queryClient.invalidateQueries({ queryKey: ["incompleteAttendanceDates"] });
       queryClient.invalidateQueries({ queryKey: ["teacherAttendanceAuditLogs"] });
+      queryClient.invalidateQueries({ queryKey: ["leadershipMonitoringStats"] });
     },
     onError: (err: any) => {
-      toast("Gagal menyimpan absensi: " + err.message, "error");
+      toast("Gagal menyimpan monitoring: " + err.message, "error");
+    }
+  });
+
+  // Mutation to save a single session attendance independently
+  const [savingSessionId, setSavingSessionId] = useState<string | null>(null);
+
+  const saveSingleSessionMutation = useMutation({
+    mutationFn: async (item: TeacherTeachingAttendance) => {
+      if (!user) throw new Error("Pengguna belum diautentikasi");
+      setSavingSessionId(item.scheduleId);
+      const isPastDate = selectedDate < todayStr;
+      const reason = isPastDate ? (backdateReason || "Input Susulan Sesi Tanggal Lampau oleh Wakakur") : undefined;
+
+      await teacherTeachingAttendanceService.saveSingleSessionAttendance(
+        selectedDate,
+        item,
+        user.uid,
+        user.displayName || user.name || "Wakakur",
+        reason
+      );
+    },
+    onSuccess: (_, item) => {
+      toast(`Absensi sesi ${item.teacherName} (${item.className} - ${item.jp}) berhasil disimpan!`, "success");
+      setSavingSessionId(null);
+      queryClient.invalidateQueries({ queryKey: ["teacherTeachingAttendance"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherAttendanceRecap"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherDailyStats"] });
+      queryClient.invalidateQueries({ queryKey: ["incompleteAttendanceDates"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherAttendanceAuditLogs"] });
+      queryClient.invalidateQueries({ queryKey: ["leadershipMonitoringStats"] });
+    },
+    onError: (err: any) => {
+      setSavingSessionId(null);
+      toast("Gagal menyimpan sesi: " + err.message, "error");
+    }
+  });
+
+  const saveExchangeMutation = useMutation({
+    mutationFn: async () => {
+      if (!user) throw new Error("Pengguna belum diautentikasi");
+      const itemA = localAttendanceItems.find(i => i.scheduleId === exchangeScheduleAId);
+      if (!itemA) throw new Error("Pilih Sesi A yang ingin ditukar");
+      const teacherB = teachers.find(t => t.id === exchangeTeacherBId);
+      if (!teacherB) throw new Error("Pilih Guru B (Penukar)");
+      const itemB = localAttendanceItems.find(i => i.scheduleId === exchangeScheduleBId);
+
+      await teacherTeachingAttendanceService.saveScheduleExchange(
+        {
+          date: selectedDate,
+          teacherAId: itemA.teacherId,
+          teacherAName: itemA.teacherName,
+          scheduleAId: itemA.scheduleId,
+          subjectAName: itemA.subjectName,
+          classAName: itemA.className,
+          jpA: itemA.jp,
+          teacherBId: teacherB.id,
+          teacherBName: teacherB.name,
+          scheduleBId: itemB?.scheduleId || "",
+          subjectBName: itemB?.subjectName || "",
+          classBName: itemB?.className || "",
+          jpB: itemB?.jp || "",
+          reason: exchangeReason || "Penyesuaian Jadwal Mengajar Sesi"
+        },
+        user.uid,
+        user.displayName || user.name || "Wakakur"
+      );
+    },
+    onSuccess: () => {
+      toast("Pertukaran jadwal mengajar berhasil diproses!", "success");
+      setShowExchangeModal(false);
+      setExchangeScheduleAId("");
+      setExchangeTeacherBId("");
+      setExchangeScheduleBId("");
+      setExchangeReason("");
+      queryClient.invalidateQueries({ queryKey: ["teacherTeachingAttendance"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherAttendanceRecap"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherDailyStats"] });
+      queryClient.invalidateQueries({ queryKey: ["leadershipMonitoringStats"] });
+    },
+    onError: (err: any) => {
+      toast("Gagal memproses tukar jadwal: " + err.message, "error");
     }
   });
 
@@ -227,37 +328,49 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
   const stats = useMemo(() => {
     const total = localAttendanceItems.length;
     let hadir = 0;
+    let terlambat = 0;
     let izin = 0;
     let sakit = 0;
     let tugas = 0;
     let tidakHadir = 0;
     let diganti = 0;
+    let tukarJadwal = 0;
     let kbmDitiadakan = 0;
+    let belumDiverifikasi = 0;
 
     localAttendanceItems.forEach(item => {
       switch (item.status) {
         case "Hadir Mengajar": hadir++; break;
+        case "Terlambat": terlambat++; break;
         case "Izin": izin++; break;
         case "Sakit": sakit++; break;
         case "Tugas Dinas": tugas++; break;
         case "Tidak Hadir": tidakHadir++; break;
-        case "Diganti Guru Lain": diganti++; break;
+        case "Digantikan Guru Lain": diganti++; break;
+        case "Tukar Jadwal": tukarJadwal++; break;
         case "KBM Ditiadakan": kbmDitiadakan++; break;
+        case "Belum Diverifikasi":
+        default:
+          belumDiverifikasi++;
+          break;
       }
     });
 
     const effectiveTotal = total - kbmDitiadakan;
-    const percentage = effectiveTotal > 0 ? Math.round(((hadir + diganti) / effectiveTotal) * 100) : (total > 0 && dailyAttendanceData?.isKbmDisabled ? 100 : 0);
+    const percentage = effectiveTotal > 0 ? Math.round(((hadir + terlambat + diganti + tukarJadwal) / effectiveTotal) * 100) : (total > 0 && dailyAttendanceData?.isKbmDisabled ? 100 : 0);
 
     return {
       total,
       hadir,
+      terlambat,
       izin,
       sakit,
       tugas,
       tidakHadir,
       diganti,
+      tukarJadwal,
       kbmDitiadakan,
+      belumDiverifikasi,
       percentage
     };
   }, [localAttendanceItems, dailyAttendanceData]);
@@ -439,17 +552,17 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
           <div className="flex items-center gap-2">
             <span className="px-2.5 py-1 bg-blue-500/20 text-blue-300 rounded-md text-xs font-semibold tracking-wide border border-blue-400/30 flex items-center gap-1.5">
               <ClipboardList className="w-3.5 h-3.5" />
-              Monitoring Pembelajaran
+              Monitoring Sesi KBM
             </span>
             <span className="px-2.5 py-1 bg-emerald-500/20 text-emerald-300 rounded-md text-xs font-semibold tracking-wide border border-emerald-400/30">
-              Wakakur
+              Akses Kurikulum / Wakakur
             </span>
           </div>
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-white">
-            Absensi Mengajar Guru
+            Monitoring Pelaksanaan Jam Mengajar (Per Sesi / Per JP)
           </h1>
           <p className="text-sm text-blue-100/80 max-w-2xl">
-            Sistem pencatatan dan rekapitilasi kehadiran guru berbasis Jadwal Pelajaran dan Kalender Akademik secara real-time.
+            Sistem pemantauan dan pencatatan kehadiran guru berbasis Sesi/JP mengajar real-time, penggantian guru, pertukaran jadwal, dan terintegrasi Kalender Akademik.
           </p>
         </div>
 
@@ -457,6 +570,16 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
         <div className="flex items-center gap-2 flex-wrap">
           {activeTab === "input" && (
             <>
+              {isWakakurOrAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setShowExchangeModal(true)}
+                  className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl text-xs transition-all flex items-center gap-1.5 cursor-pointer shadow-md"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  Tukar Jadwal Sesi
+                </button>
+              )}
               <button
                 onClick={handleExportInputExcel}
                 className="px-3.5 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-medium backdrop-blur-xs border border-white/20 transition-all flex items-center gap-1.5 cursor-pointer"
@@ -482,7 +605,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                   } disabled:opacity-50 disabled:cursor-not-allowed`}
                 >
                   <Save className="w-4 h-4" />
-                  {saveMutation.isPending ? "Memproses..." : isDirty ? "Simpan Perubahan *" : "Simpan Absensi"}
+                  {saveMutation.isPending ? "Memproses..." : isDirty ? "Simpan Perubahan *" : "Simpan Monitoring"}
                 </button>
               )}
             </>
@@ -509,6 +632,51 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
         </div>
       </div>
 
+      {/* Leadership Monitoring Widget (for Kepala Sekolah, Yayasan & Wakakur) */}
+      {leadershipStats && (
+        <div className="bg-slate-900 text-white p-5 rounded-2xl border border-slate-800 shadow-md space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-amber-400" />
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-200">
+                Dashboard Monitoring Kepala Sekolah & Pimpinan Semester Ini
+              </h3>
+            </div>
+            <span className="text-[10px] text-slate-400 font-semibold">T.A: {activeAy?.name} - {activeSem?.name}</span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/60 space-y-1">
+              <span className="text-[10px] font-bold text-slate-400 uppercase">Persentase KBM Terlaksana</span>
+              <div className="text-2xl font-black text-emerald-400">{leadershipStats.kbmExecutionPercentage}%</div>
+              <p className="text-[10px] text-slate-400">Total Sesi Terlaksana / Sesi Wajib</p>
+            </div>
+
+            <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/60 space-y-1">
+              <span className="text-[10px] font-bold text-slate-400 uppercase">Total Penggantian Guru</span>
+              <div className="text-2xl font-black text-purple-400">{leadershipStats.totalSubstitutionsSemester} Sesi</div>
+              <p className="text-[10px] text-slate-400">Digantikan Guru Lain Semester Ini</p>
+            </div>
+
+            <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/60 space-y-1">
+              <span className="text-[10px] font-bold text-slate-400 uppercase">Total Tukar Jadwal</span>
+              <div className="text-2xl font-black text-amber-400">{leadershipStats.totalExchangesSemester} Sesi</div>
+              <p className="text-[10px] text-slate-400">Pertukaran Sesi Mengajar</p>
+            </div>
+
+            <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/60 space-y-1">
+              <span className="text-[10px] font-bold text-slate-400 uppercase">Sering Berhalangan</span>
+              <div className="text-xs font-bold text-rose-300 truncate">
+                {leadershipStats.topAbsentTeachers.length > 0
+                  ? `${leadershipStats.topAbsentTeachers[0].teacherName} (${leadershipStats.topAbsentTeachers[0].count} Sesi)`
+                  : "Nihil"}
+              </div>
+              <p className="text-[10px] text-slate-400">Tingkat Ketidakhadiran Tertinggi</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Main Tabs Navigation */}
       <div className="flex items-center justify-between border-b border-slate-200 dark:border-zinc-800 pb-2">
         <div className="flex items-center gap-2">
@@ -521,7 +689,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
             }`}
           >
             <CalendarDays className="w-4 h-4" />
-            Input Absensi Mengajar
+            Monitoring Sesi Mengajar Hari Ini
           </button>
           <button
             onClick={() => setActiveTab("rekap")}
@@ -532,7 +700,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
             }`}
           >
             <BarChart2 className="w-4 h-4" />
-            Rekap Absensi Mengajar
+            Rekapitilasi Kehadiran Guru
           </button>
         </div>
 
@@ -581,7 +749,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 text-amber-900 dark:text-amber-200 font-bold text-xs uppercase tracking-wider">
                   <AlertTriangle className="w-4 h-4 text-amber-600" />
-                  Absensi Mengajar Belum Lengkap ({incompleteDates.length} Tanggal)
+                  Sesi Mengajar Belum Diverifikasi ({incompleteDates.length} Tanggal)
                 </div>
                 <button
                   type="button"
@@ -593,7 +761,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                 </button>
               </div>
               <p className="text-xs text-amber-800 dark:text-amber-300">
-                Wakakur dapat melakukan pengisian atau perbaikan absensi susulan pada tanggal lampau dalam semester aktif ini. Klik tanggal di bawah untuk berpindah:
+                Wakakur dapat melakukan pengisian atau verifikasi susulan pada tanggal lampau dalam semester aktif ini. Klik tanggal di bawah untuk berpindah:
               </p>
               <div className="flex flex-wrap items-center gap-2 pt-1">
                 {incompleteDates.slice(0, 10).map((item) => (
@@ -622,14 +790,64 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                 <label className="block text-[11px] font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider mb-1">
                   Pilih Tanggal Mengajar
                 </label>
-                <div className="relative">
-                  <input
-                    type="date"
-                    value={selectedDate}
-                    onChange={(e) => setSelectedDate(e.target.value)}
-                    className="px-3.5 py-2 pl-9 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-xl text-sm font-semibold text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-blue-500 cursor-pointer"
-                  />
-                  <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="relative">
+                    <input
+                      type="date"
+                      value={selectedDate}
+                      onChange={(e) => setSelectedDate(e.target.value)}
+                      className="px-3.5 py-2 pl-9 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-xl text-sm font-semibold text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                    />
+                    <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  </div>
+
+                  {/* Quick Date Selectors for Flexible Past Date Picking */}
+                  <div className="flex items-center gap-1 bg-slate-100 dark:bg-zinc-800 p-1 rounded-xl text-xs font-bold">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDate(todayStr)}
+                      className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                        selectedDate === todayStr
+                          ? "bg-blue-600 text-white shadow-xs"
+                          : "text-slate-600 dark:text-zinc-300 hover:bg-slate-200 dark:hover:bg-zinc-700"
+                      }`}
+                    >
+                      Hari Ini
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDate(getOffsetDateStr(1))}
+                      className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                        selectedDate === getOffsetDateStr(1)
+                          ? "bg-blue-600 text-white shadow-xs"
+                          : "text-slate-600 dark:text-zinc-300 hover:bg-slate-200 dark:hover:bg-zinc-700"
+                      }`}
+                    >
+                      Kemarin
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDate(getOffsetDateStr(3))}
+                      className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                        selectedDate === getOffsetDateStr(3)
+                          ? "bg-blue-600 text-white shadow-xs"
+                          : "text-slate-600 dark:text-zinc-300 hover:bg-slate-200 dark:hover:bg-zinc-700"
+                      }`}
+                    >
+                      3 H. Lalu
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDate(getOffsetDateStr(7))}
+                      className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                        selectedDate === getOffsetDateStr(7)
+                          ? "bg-blue-600 text-white shadow-xs"
+                          : "text-slate-600 dark:text-zinc-300 hover:bg-slate-200 dark:hover:bg-zinc-700"
+                      }`}
+                    >
+                      7 H. Lalu
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -666,12 +884,15 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
               >
                 <option value="ALL">Semua Status</option>
                 <option value="Hadir Mengajar">Hadir Mengajar</option>
+                <option value="Terlambat">Terlambat</option>
                 <option value="Izin">Izin</option>
                 <option value="Sakit">Sakit</option>
                 <option value="Tugas Dinas">Tugas Dinas</option>
                 <option value="Tidak Hadir">Tidak Hadir</option>
-                <option value="Diganti Guru Lain">Diganti Guru Lain</option>
+                <option value="Digantikan Guru Lain">Digantikan Guru Lain</option>
+                <option value="Tukar Jadwal">Tukar Jadwal</option>
                 <option value="KBM Ditiadakan">KBM Ditiadakan</option>
+                <option value="Belum Diverifikasi">Belum Diverifikasi</option>
               </select>
             </div>
           </div>
@@ -790,6 +1011,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                       <th className="py-3.5 px-4">Ruangan</th>
                       <th className="py-3.5 px-4 min-w-[180px]">Status Kehadiran</th>
                       <th className="py-3.5 px-4 min-w-[200px]">Catatan / Terlambat / Pengganti</th>
+                      <th className="py-3.5 px-4 text-center min-w-[130px]">Aksi / Simpan Sesi</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-150 dark:divide-zinc-800/60 font-medium text-slate-800 dark:text-zinc-200">
@@ -839,27 +1061,36 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                             className={`w-full px-2.5 py-1.5 rounded-xl text-xs font-bold border focus:ring-2 focus:outline-hidden cursor-pointer ${
                               item.status === "Hadir Mengajar"
                                 ? "bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800"
-                                : item.status === "Diganti Guru Lain"
+                                : item.status === "Terlambat"
+                                ? "bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800"
+                                : item.status === "Digantikan Guru Lain"
                                 ? "bg-purple-50 text-purple-800 border-purple-300 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800"
+                                : item.status === "Tukar Jadwal"
+                                ? "bg-indigo-50 text-indigo-800 border-indigo-300 dark:bg-indigo-950/40 dark:text-indigo-300 dark:border-indigo-800"
                                 : item.status === "Tidak Hadir"
                                 ? "bg-rose-50 text-rose-800 border-rose-300 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800"
                                 : item.status === "KBM Ditiadakan"
                                 ? "bg-slate-100 text-slate-700 border-slate-300 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-700"
+                                : item.status === "Belum Diverifikasi"
+                                ? "bg-slate-50 text-slate-500 border-slate-200 dark:bg-zinc-900 dark:text-zinc-400 dark:border-zinc-800"
                                 : "bg-blue-50 text-blue-800 border-blue-300 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800"
                             }`}
                           >
                             <option value="Hadir Mengajar">Hadir Mengajar</option>
+                            <option value="Terlambat">Terlambat</option>
                             <option value="Izin">Izin</option>
                             <option value="Sakit">Sakit</option>
                             <option value="Tugas Dinas">Tugas Dinas</option>
+                            <option value="Digantikan Guru Lain">Digantikan Guru Lain</option>
+                            <option value="Tukar Jadwal">Tukar Jadwal</option>
                             <option value="Tidak Hadir">Tidak Hadir</option>
-                            <option value="Diganti Guru Lain">Diganti Guru Lain</option>
                             <option value="KBM Ditiadakan">KBM Ditiadakan</option>
+                            <option value="Belum Diverifikasi">Belum Diverifikasi</option>
                           </select>
                         </td>
 
                         <td className="py-3.5 px-4 space-y-1.5">
-                          {item.status === "Diganti Guru Lain" && (
+                          {item.status === "Digantikan Guru Lain" && (
                             <div className="space-y-1">
                               <label className="text-[10px] font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider block">
                                 Pilih Guru Pengganti:
@@ -885,6 +1116,28 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                             onChange={(e) => handleNotesChange(originalIndex, e.target.value)}
                             className="w-full px-2.5 py-1 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-lg text-xs text-slate-800 dark:text-zinc-100 focus:ring-1 focus:ring-blue-500"
                           />
+                        </td>
+
+                        <td className="py-3.5 px-4 text-center">
+                          <button
+                            type="button"
+                            disabled={!isWakakurOrAdmin || dailyAttendanceData?.isKbmDisabled || savingSessionId === item.scheduleId}
+                            onClick={() => saveSingleSessionMutation.mutate(item)}
+                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 text-white font-bold text-[11px] rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 mx-auto cursor-pointer"
+                            title="Simpan absensi sesi mengajar ini secara langsung"
+                          >
+                            {savingSessionId === item.scheduleId ? (
+                              <>
+                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                <span>Menyimpan...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Save className="w-3.5 h-3.5" />
+                                <span>Simpan Sesi</span>
+                              </>
+                            )}
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -1127,7 +1380,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                             <span className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
                               item.status === "Hadir Mengajar"
                                 ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
-                                : item.status === "Diganti Guru Lain"
+                                : item.status === "Digantikan Guru Lain"
                                 ? "bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300"
                                 : "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300"
                             }`}>
@@ -1221,6 +1474,104 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                 ))}
               </div>
             )}
+          </div>
+        </Dialog>
+      )}
+
+      {/* Tukar Jadwal Modal */}
+      {showExchangeModal && (
+        <Dialog
+          isOpen={showExchangeModal}
+          onClose={() => setShowExchangeModal(false)}
+          title="Tukar Jadwal Mengajar (Per Sesi)"
+          size="lg"
+        >
+          <div className="space-y-4">
+            <p className="text-xs text-slate-500 dark:text-zinc-400">
+              Wakakur dapat memproses pertukaran jadwal mengajar antara dua guru atau menugaskan Sesi/JP kepada guru penukar tanpa mengubah struktur jadwal tetap sekolah.
+            </p>
+
+            <div className="space-y-3 bg-slate-50 dark:bg-zinc-800/80 p-4 rounded-2xl border border-slate-200/80 dark:border-zinc-700">
+              <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 block uppercase tracking-wider">
+                1. Pilih Sesi Mengajar Utama (Sesi A) - Tanggal {selectedDate}:
+              </label>
+              <select
+                value={exchangeScheduleAId}
+                onChange={(e) => setExchangeScheduleAId(e.target.value)}
+                className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs font-semibold text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-amber-500"
+              >
+                <option value="">-- Pilih Sesi Mengajar yang Akan Ditukar --</option>
+                {localAttendanceItems.map((item) => (
+                  <option key={item.scheduleId} value={item.scheduleId}>
+                    {item.teacherName} — {item.subjectName} ({item.className}) [JP {item.jp}]
+                  </option>
+                ))}
+              </select>
+
+              <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 block uppercase tracking-wider pt-2">
+                2. Pilih Guru Penukar (Guru B):
+              </label>
+              <select
+                value={exchangeTeacherBId}
+                onChange={(e) => setExchangeTeacherBId(e.target.value)}
+                className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs font-semibold text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-amber-500"
+              >
+                <option value="">-- Pilih Guru Penukar --</option>
+                {teachers.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name} ({t.nip || "Guru"})
+                  </option>
+                ))}
+              </select>
+
+              <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 block uppercase tracking-wider pt-2">
+                3. Pilih Sesi Guru B yang Ditukar (Opsional jika Tukar Silang Sesi Hari Ini):
+              </label>
+              <select
+                value={exchangeScheduleBId}
+                onChange={(e) => setExchangeScheduleBId(e.target.value)}
+                className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs font-semibold text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-amber-500"
+              >
+                <option value="">-- Tanpa Sesi Pengganti Sisi B (Penugasan Langsung Sesi A saja) --</option>
+                {localAttendanceItems
+                  .filter((item) => item.teacherId === exchangeTeacherBId)
+                  .map((item) => (
+                    <option key={item.scheduleId} value={item.scheduleId}>
+                      {item.teacherName} — {item.subjectName} ({item.className}) [JP {item.jp}]
+                    </option>
+                  ))}
+              </select>
+
+              <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 block uppercase tracking-wider pt-2">
+                4. Alasan / Catatan Pertukaran Sesi:
+              </label>
+              <input
+                type="text"
+                placeholder="Misal: Saling tukar JP 2 dan JP 5 karena keperluan dinas..."
+                value={exchangeReason}
+                onChange={(e) => setExchangeReason(e.target.value)}
+                className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs text-slate-800 dark:text-zinc-100"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 dark:border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setShowExchangeModal(false)}
+                className="px-4 py-2 bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 text-slate-700 dark:text-zinc-300 font-bold rounded-xl text-xs transition-colors cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={() => saveExchangeMutation.mutate()}
+                disabled={saveExchangeMutation.isPending || !exchangeScheduleAId || !exchangeTeacherBId}
+                className="px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 font-bold rounded-xl text-xs transition-all flex items-center gap-1.5 cursor-pointer shadow-md"
+              >
+                <RefreshCw className="w-4 h-4" />
+                {saveExchangeMutation.isPending ? "Memproses..." : "Proses Tukar Jadwal"}
+              </button>
+            </div>
           </div>
         </Dialog>
       )}

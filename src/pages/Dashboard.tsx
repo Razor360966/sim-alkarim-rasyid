@@ -997,10 +997,10 @@ export const Dashboard: React.FC = () => {
             </div>
             <div>
               <p className="text-[10px] text-slate-400 dark:text-zinc-500 font-bold uppercase tracking-wider">Jurnal Mengajar</p>
-              <h3 className="text-lg font-extrabold text-slate-800 dark:text-white mt-0.5">{myTeacherJournals.length} Entri</h3>
+              <h3 className="text-lg font-extrabold text-slate-800 dark:text-white mt-0.5">{myTeacherJournals.length} Pertemuan</h3>
               <span className="text-[9px] text-emerald-600 font-bold bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded mt-1 inline-block">
                 {myTeacherJournals.length > 0
-                  ? `${Array.from(new Set(myTeacherJournals.map((j: any) => j.className))).length} Kelas Terisi`
+                  ? `Total ${myTeacherJournals.reduce((sum: number, j: any) => sum + (j.totalJP || 1), 0)} JP Terlaksana`
                   : "Belum ada entri"}
               </span>
             </div>
@@ -2123,7 +2123,7 @@ export const Dashboard: React.FC = () => {
               <span className="text-xs font-bold text-slate-500">Persentase Kehadiran Rata-Rata:</span>
               <span className="px-3 py-1 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 font-black text-xs rounded-xl border border-emerald-200/60 dark:border-emerald-800">
                 {todayTeachingAttendance?.items && todayTeachingAttendance.items.length > 0 
-                  ? `${Math.round((todayTeachingAttendance.items.filter(i => i.status === "Hadir Mengajar" || i.status === "Diganti Guru Lain").length / todayTeachingAttendance.items.length) * 100)}%`
+                  ? `${Math.round((todayTeachingAttendance.items.filter(i => i.status === "Hadir Mengajar" || i.status === "Digantikan Guru Lain" || i.status === "Tukar Jadwal").length / todayTeachingAttendance.items.length) * 100)}%`
                   : "96%"}
               </span>
             </div>
@@ -2592,7 +2592,7 @@ export const Dashboard: React.FC = () => {
               const hadirItems = items.filter(i => i.status === "Hadir Mengajar");
               const izinItems = items.filter(i => i.status === "Izin" || i.status === "Sakit" || i.status === "Tugas Dinas");
               const tidakHadirItems = items.filter(i => i.status === "Tidak Hadir");
-              const digantiItems = items.filter(i => i.status === "Diganti Guru Lain");
+              const digantiItems = items.filter(i => i.status === "Digantikan Guru Lain");
               const kbmDitiadakanItems = items.filter(i => i.status === "KBM Ditiadakan");
 
               const effectiveTotal = totalSesi - kbmDitiadakanItems.length;

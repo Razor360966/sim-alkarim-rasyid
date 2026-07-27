@@ -16,7 +16,9 @@ import {
   AttendanceDailyStats, 
   TeacherAttendanceSummary,
   AttendanceTeachingStatus,
-  TeacherAttendanceAuditLog
+  TeacherAttendanceAuditLog,
+  ScheduleExchangeRecord,
+  LeadershipMonitoringStats
 } from "../types/teacherTeachingAttendance.types";
 import { scheduleService } from "./schedule.service";
 import { academicPlanningService } from "./academicPlanning.service";
@@ -25,6 +27,7 @@ import { classService } from "./classService";
 
 const COLLECTION_NAME = "teacher_teaching_attendances";
 const AUDIT_LOGS_COLLECTION = "teacher_attendance_audit_logs";
+const SCHEDULE_EXCHANGES_COLLECTION = "schedule_exchanges";
 
 export function getIndonesianDayName(dateStr: string): string {
   if (!dateStr) return "Senin";
@@ -193,14 +196,26 @@ export const teacherTeachingAttendanceService = {
         jp: sch.jp || (period ? period.title : "JP"),
         roomName,
         timeSlot,
-        status: kaldikInfo.isKbmDisabled ? "KBM Ditiadakan" : "Hadir Mengajar",
+        status: kaldikInfo.isKbmDisabled ? "KBM Ditiadakan" : "Belum Diverifikasi",
         notes: kaldikInfo.isKbmDisabled ? (kaldikInfo.lockReason || "KBM Ditiadakan") : ""
       };
     });
 
-    // Sort by class and sequence
+    // Sort by Grade Level VII -> VIII -> IX, then Class Name, then Sequence
+    const gradeOrder: Record<string, number> = { "VII": 7, "VIII": 8, "IX": 9 };
+    const getGradeWeight = (className: string, gradeLevel?: string) => {
+      if (gradeLevel && gradeOrder[gradeLevel]) return gradeOrder[gradeLevel];
+      if (className.startsWith("VII") || className.startsWith("7")) return 7;
+      if (className.startsWith("VIII") || className.startsWith("8")) return 8;
+      if (className.startsWith("IX") || className.startsWith("9")) return 9;
+      return 99;
+    };
+
     items.sort((a, b) => {
-      const clsComp = a.className.localeCompare(b.className);
+      const gA = getGradeWeight(a.className, a.gradeLevel);
+      const gB = getGradeWeight(b.className, b.gradeLevel);
+      if (gA !== gB) return gA - gB;
+      const clsComp = a.className.localeCompare(b.className, "id", { numeric: true });
       if (clsComp !== 0) return clsComp;
       return a.sequence - b.sequence;
     });
@@ -212,6 +227,169 @@ export const teacherTeachingAttendanceService = {
       isKbmDisabled: kaldikInfo.isKbmDisabled,
       lockReason: kaldikInfo.lockReason
     };
+  },
+
+  // Save Schedule Exchange ("Tukar Jadwal") for a specific date
+  async saveScheduleExchange(
+    record: Omit<ScheduleExchangeRecord, "id" | "createdAt" | "createdByUserId" | "createdByUserName">,
+    userId: string,
+    userName: string
+  ): Promise<void> {
+    try {
+      const now = new Date().toISOString();
+      const colRef = collection(db, SCHEDULE_EXCHANGES_COLLECTION);
+      const newExchange: ScheduleExchangeRecord = {
+        date: record.date || "",
+        teacherAId: record.teacherAId || "",
+        teacherAName: record.teacherAName || "",
+        scheduleAId: record.scheduleAId || "",
+        subjectAName: record.subjectAName || "",
+        classAName: record.classAName || "",
+        jpA: record.jpA || "",
+        teacherBId: record.teacherBId || "",
+        teacherBName: record.teacherBName || "",
+        scheduleBId: record.scheduleBId || "",
+        subjectBName: record.subjectBName || "",
+        classBName: record.classBName || "",
+        jpB: record.jpB || "",
+        reason: record.reason || "",
+        createdAt: now,
+        createdByUserId: userId || "",
+        createdByUserName: userName || ""
+      };
+      await addDoc(colRef, newExchange);
+
+      // Fetch existing attendances for target date to apply swapped status
+      const { items } = await this.getAttendanceForDate(record.date, "", "");
+      
+      const itemA = items.find(i => i.scheduleId === record.scheduleAId);
+      if (itemA) {
+        itemA.status = "Tukar Jadwal";
+        itemA.exchangedWithTeacherId = record.teacherBId;
+        itemA.exchangedWithTeacherName = record.teacherBName;
+        itemA.notes = `Tukar Jadwal dengan ${record.teacherBName}: ${record.reason}`;
+      }
+
+      if (record.scheduleBId) {
+        const itemB = items.find(i => i.scheduleId === record.scheduleBId);
+        if (itemB) {
+          itemB.status = "Tukar Jadwal";
+          itemB.exchangedWithTeacherId = record.teacherAId;
+          itemB.exchangedWithTeacherName = record.teacherAName;
+          itemB.notes = `Tukar Jadwal dengan ${record.teacherAName}: ${record.reason}`;
+        }
+      }
+
+      await this.saveAttendanceForDate(
+        record.date,
+        items,
+        userId,
+        userName,
+        `Tukar Jadwal: ${record.reason}`
+      );
+
+      await logActivity(
+        userId,
+        userName,
+        "Schedule Exchange",
+        `Pertukaran jadwal antara ${record.teacherAName} dan ${record.teacherBName} tanggal ${record.date}`
+      );
+    } catch (error) {
+      return handleFirestoreError(error, OperationType.WRITE, SCHEDULE_EXCHANGES_COLLECTION);
+    }
+  },
+
+  // Get Schedule Exchanges
+  async getScheduleExchanges(startDate?: string, endDate?: string): Promise<ScheduleExchangeRecord[]> {
+    try {
+      const colRef = collection(db, SCHEDULE_EXCHANGES_COLLECTION);
+      const snap = await getDocs(colRef);
+      const items: ScheduleExchangeRecord[] = [];
+      snap.forEach(d => {
+        const data = d.data() as ScheduleExchangeRecord;
+        if (startDate && data.date < startDate) return;
+        if (endDate && data.date > endDate) return;
+        items.push({ id: d.id, ...data });
+      });
+      items.sort((a, b) => b.date.localeCompare(a.date));
+      return items;
+    } catch (error) {
+      console.error("Failed to fetch schedule exchanges:", error);
+      return [];
+    }
+  },
+
+  // Save/Update single session attendance with Audit Logging
+  async saveSingleSessionAttendance(
+    dateStr: string,
+    item: TeacherTeachingAttendance,
+    userId: string,
+    userName: string,
+    reason?: string
+  ): Promise<void> {
+    try {
+      const timestamp = new Date().toISOString();
+      const todayStr = new Date().toISOString().split("T")[0];
+      const isPastDate = dateStr < todayStr;
+
+      const docId = item.id || `${dateStr}_${item.scheduleId}`;
+      const ref = doc(db, COLLECTION_NAME, docId);
+
+      const existingSnap = await getDoc(ref);
+      const existingData = existingSnap.exists() ? existingSnap.data() : null;
+
+      const isSusulan = isPastDate || (existingData && existingData.recordedByUserId !== userId);
+      const previousStatus = existingData ? existingData.status : "Belum Diverifikasi";
+
+      const payload: any = {};
+      Object.keys({
+        ...item,
+        id: docId,
+        date: dateStr,
+        isInputSusulan: isSusulan ? true : (item.isInputSusulan || false),
+        recordedByUserId: userId,
+        recordedByUserName: userName,
+        updatedAt: timestamp,
+        createdAt: item.createdAt || timestamp
+      }).forEach(key => {
+        const val = (item as any)[key];
+        if (val !== undefined) payload[key] = val;
+      });
+      payload.id = docId;
+      payload.date = dateStr;
+      payload.isInputSusulan = isSusulan ? true : (item.isInputSusulan || false);
+      payload.recordedByUserId = userId;
+      payload.recordedByUserName = userName;
+      payload.updatedAt = timestamp;
+      payload.createdAt = item.createdAt || timestamp;
+
+      await setDoc(ref, payload, { merge: true });
+
+      // Record audit log if past date or status changed
+      if (isPastDate || (existingData && previousStatus !== item.status)) {
+        const auditColRef = collection(db, AUDIT_LOGS_COLLECTION);
+        const auditLog: TeacherAttendanceAuditLog = {
+          attendanceDate: dateStr,
+          inputTimestamp: timestamp,
+          userId,
+          userName,
+          scheduleId: item.scheduleId,
+          teacherName: item.teacherName,
+          className: item.className,
+          subjectName: item.subjectName,
+          jp: item.jp,
+          previousStatus,
+          newStatus: item.status,
+          reason: reason || (isPastDate ? "Input / Koreksi Susulan Sesi Tanggal Lampau" : "Perubahan Status Absensi Sesi"),
+          isLateInput: isPastDate
+        };
+        await addDoc(auditColRef, auditLog);
+      }
+
+      await logActivity(userId, userName, "Save Single Session Attendance", `Menyimpan absensi sesi ${item.teacherName} - ${item.subjectName} (${item.className}) tanggal ${dateStr}`);
+    } catch (error) {
+      return handleFirestoreError(error, OperationType.WRITE, COLLECTION_NAME);
+    }
   },
 
   // Save/Update daily attendance batch with Audit Logging for Back-dating
@@ -243,9 +421,10 @@ export const teacherTeachingAttendanceService = {
         const existingData = existingMap.get(docId);
 
         const isSusulan = isPastDate || (existingData && existingData.recordedByUserId !== userId);
-        const previousStatus = existingData ? existingData.status : "Belum Diisi";
+        const previousStatus = existingData ? existingData.status : "Belum Diverifikasi";
 
-        const payload: TeacherTeachingAttendance = {
+        const payload: any = {};
+        Object.keys({
           ...item,
           id: docId,
           date: dateStr,
@@ -254,7 +433,17 @@ export const teacherTeachingAttendanceService = {
           recordedByUserName: userName,
           updatedAt: timestamp,
           createdAt: item.createdAt || timestamp
-        };
+        }).forEach(key => {
+          const val = (item as any)[key];
+          if (val !== undefined) payload[key] = val;
+        });
+        payload.id = docId;
+        payload.date = dateStr;
+        payload.isInputSusulan = isSusulan ? true : (item.isInputSusulan || false);
+        payload.recordedByUserId = userId;
+        payload.recordedByUserName = userName;
+        payload.updatedAt = timestamp;
+        payload.createdAt = item.createdAt || timestamp;
 
         batch.set(ref, payload, { merge: true });
 
@@ -334,7 +523,7 @@ export const teacherTeachingAttendanceService = {
         const { items } = await this.getAttendanceForDate(dateStr, academicYearId, semesterId);
         if (items.length === 0) continue;
 
-        const unsubmitted = items.filter(item => !item.recordedByUserId).length;
+        const unsubmitted = items.filter(item => !item.recordedByUserId || item.status === "Belum Diverifikasi").length;
         if (unsubmitted > 0) {
           results.push({
             date: dateStr,
@@ -361,21 +550,23 @@ export const teacherTeachingAttendanceService = {
     const uniqueTeachers = new Set(items.map(i => i.teacherId));
 
     let hadirCount = 0;
+    let terlambatCount = 0;
     let izinCount = 0;
     let sakitCount = 0;
     let tugasCount = 0;
     let tidakHadirCount = 0;
     let digantiCount = 0;
+    let tukarJadwalCount = 0;
     let kbmDitiadakanCount = 0;
-    let pendingCount = 0;
+    let belumDiverifikasiCount = 0;
 
     items.forEach(i => {
-      if (!i.id) {
-        pendingCount++;
-      }
       switch (i.status) {
         case "Hadir Mengajar":
           hadirCount++;
+          break;
+        case "Terlambat":
+          terlambatCount++;
           break;
         case "Izin":
           izinCount++;
@@ -389,18 +580,25 @@ export const teacherTeachingAttendanceService = {
         case "Tidak Hadir":
           tidakHadirCount++;
           break;
-        case "Diganti Guru Lain":
+        case "Digantikan Guru Lain":
           digantiCount++;
+          break;
+        case "Tukar Jadwal":
+          tukarJadwalCount++;
           break;
         case "KBM Ditiadakan":
           kbmDitiadakanCount++;
+          break;
+        case "Belum Diverifikasi":
+        default:
+          belumDiverifikasiCount++;
           break;
       }
     });
 
     const effectiveTotal = totalScheduledEncounters - kbmDitiadakanCount;
     const attendancePercentage = effectiveTotal > 0 
-      ? Math.round(((hadirCount + digantiCount) / effectiveTotal) * 100) 
+      ? Math.round(((hadirCount + terlambatCount + digantiCount + tukarJadwalCount) / effectiveTotal) * 100) 
       : (totalScheduledEncounters > 0 && isKbmDisabled ? 100 : 0);
 
     return {
@@ -409,15 +607,89 @@ export const teacherTeachingAttendanceService = {
       totalScheduledEncounters,
       totalUniqueTeachersScheduled: uniqueTeachers.size,
       hadirCount,
+      terlambatCount,
       izinCount,
       sakitCount,
       tugasCount,
       tidakHadirCount,
       digantiCount,
+      tukarJadwalCount,
       kbmDitiadakanCount,
-      pendingCount,
+      belumDiverifikasiCount,
       attendancePercentage
     };
+  },
+
+  // Leadership Monitoring Metrics for Headmaster/Yayasan Dashboard
+  async getLeadershipMonitoringStats(academicYearId?: string, semesterId?: string): Promise<LeadershipMonitoringStats> {
+    try {
+      const { rawRecords } = await this.getAttendanceRecap({ academicYearId, semesterId });
+      
+      let totalSubstitutionsSemester = 0;
+      let totalExchangesSemester = 0;
+      let totalValid = 0;
+      let totalExecuted = 0;
+
+      const subCountMap = new Map<string, { teacherName: string; count: number }>();
+      const absentCountMap = new Map<string, { teacherName: string; count: number }>();
+
+      rawRecords.forEach(rec => {
+        if (rec.status === "KBM Ditiadakan") return;
+
+        totalValid++;
+
+        if (rec.status === "Digantikan Guru Lain") {
+          totalSubstitutionsSemester++;
+          totalExecuted++;
+          if (rec.substituteTeacherId && rec.substituteTeacherName) {
+            const existing = subCountMap.get(rec.substituteTeacherId) || { teacherName: rec.substituteTeacherName, count: 0 };
+            existing.count++;
+            subCountMap.set(rec.substituteTeacherId, existing);
+          }
+          const absent = absentCountMap.get(rec.teacherId) || { teacherName: rec.teacherName, count: 0 };
+          absent.count++;
+          absentCountMap.set(rec.teacherId, absent);
+        } else if (rec.status === "Tukar Jadwal") {
+          totalExchangesSemester++;
+          totalExecuted++;
+        } else if (rec.status === "Hadir Mengajar" || rec.status === "Terlambat") {
+          totalExecuted++;
+        } else if (rec.status === "Izin" || rec.status === "Sakit" || rec.status === "Tugas Dinas" || rec.status === "Tidak Hadir") {
+          const absent = absentCountMap.get(rec.teacherId) || { teacherName: rec.teacherName, count: 0 };
+          absent.count++;
+          absentCountMap.set(rec.teacherId, absent);
+        }
+      });
+
+      const kbmExecutionPercentage = totalValid > 0 ? Math.round((totalExecuted / totalValid) * 100) : 100;
+
+      const topSubstituteTeachers = Array.from(subCountMap.entries())
+        .map(([teacherId, val]) => ({ teacherId, teacherName: val.teacherName, count: val.count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5);
+
+      const topAbsentTeachers = Array.from(absentCountMap.entries())
+        .map(([teacherId, val]) => ({ teacherId, teacherName: val.teacherName, count: val.count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5);
+
+      return {
+        totalSubstitutionsSemester,
+        totalExchangesSemester,
+        kbmExecutionPercentage,
+        topSubstituteTeachers,
+        topAbsentTeachers
+      };
+    } catch (error) {
+      console.error("Error calculating leadership monitoring stats:", error);
+      return {
+        totalSubstitutionsSemester: 0,
+        totalExchangesSemester: 0,
+        kbmExecutionPercentage: 100,
+        topSubstituteTeachers: [],
+        topAbsentTeachers: []
+      };
+    }
   },
 
   // Get aggregated attendance summary for Rekap
@@ -475,11 +747,13 @@ export const teacherTeachingAttendanceService = {
             teacherName: tName,
             totalEncounters: 0,
             hadir: 0,
+            terlambat: 0,
             izin: 0,
             sakit: 0,
             tugas: 0,
             tidakHadir: 0,
             diganti: 0,
+            tukarJadwal: 0,
             kbmDitiadakan: 0,
             percentage: 0
           });
@@ -491,6 +765,9 @@ export const teacherTeachingAttendanceService = {
         switch (rec.status) {
           case "Hadir Mengajar":
             sum.hadir++;
+            break;
+          case "Terlambat":
+            sum.terlambat++;
             break;
           case "Izin":
             sum.izin++;
@@ -504,19 +781,48 @@ export const teacherTeachingAttendanceService = {
           case "Tidak Hadir":
             sum.tidakHadir++;
             break;
-          case "Diganti Guru Lain":
+          case "Digantikan Guru Lain":
             sum.diganti++;
+            break;
+          case "Tukar Jadwal":
+            sum.tukarJadwal++;
             break;
           case "KBM Ditiadakan":
             sum.kbmDitiadakan++;
             break;
+        }
+
+        // Credit substitute teacher as well
+        if (rec.status === "Digantikan Guru Lain" && rec.substituteTeacherId) {
+          const subId = rec.substituteTeacherId;
+          const subName = rec.substituteTeacherName || "Guru Pengganti";
+          if (!map.has(subId)) {
+            map.set(subId, {
+              teacherId: subId,
+              teacherName: subName,
+              totalEncounters: 0,
+              hadir: 0,
+              terlambat: 0,
+              izin: 0,
+              sakit: 0,
+              tugas: 0,
+              tidakHadir: 0,
+              diganti: 0,
+              tukarJadwal: 0,
+              kbmDitiadakan: 0,
+              percentage: 0
+            });
+          }
+          const subSum = map.get(subId)!;
+          subSum.totalEncounters++;
+          subSum.hadir++; // Credit substitute teacher with an executed encounter
         }
       });
 
       // Calculate percentage for each teacher
       const summaries: TeacherAttendanceSummary[] = Array.from(map.values()).map(sum => {
         const effective = sum.totalEncounters - sum.kbmDitiadakan;
-        const percentage = effective > 0 ? Math.round(((sum.hadir + sum.diganti) / effective) * 100) : 0;
+        const percentage = effective > 0 ? Math.round(((sum.hadir + sum.terlambat + sum.diganti + sum.tukarJadwal) / effective) * 100) : 0;
         return { ...sum, percentage };
       });
 

@@ -49,6 +49,7 @@ import {
   Subject, 
   Teacher 
 } from "../types";
+import { consolidateSchedulesToMeetings, ScheduleMeeting } from "../utils/meetingConsolidator";
 import { 
   BookOpen, 
   Plus, 
@@ -263,7 +264,11 @@ export const TeachingJournals: React.FC = () => {
     }
   }, [searchParams]);
 
-  // Determine active schedules on Date change
+  // Determine active schedules and meetings on Date change
+  const meetingsForDate = useMemo(() => {
+    return consolidateSchedulesToMeetings(schedulesForDate);
+  }, [schedulesForDate]);
+
   useEffect(() => {
     if (!selectedDate || !activeYear?.id || !activeSemester?.id) return;
 
@@ -278,15 +283,33 @@ export const TeachingJournals: React.FC = () => {
           s.day.toLowerCase() === dayName.toLowerCase()
         );
         setSchedulesForDate(filtered);
+
+        const consolidated = consolidateSchedulesToMeetings(filtered);
         
         const prefillScheduleId = searchParams.get("prefillScheduleId");
-        if (prefillScheduleId && filtered.some(s => s.id === prefillScheduleId)) {
-          setSelectedScheduleId(prefillScheduleId);
-          const matchedSched = filtered.find(s => s.id === prefillScheduleId) || null;
-          setSelectedSchedule(matchedSched);
+        if (prefillScheduleId) {
+          const matchedMeeting = consolidated.find(m => m.scheduleIds.includes(prefillScheduleId) || m.id === prefillScheduleId);
+          if (matchedMeeting) {
+            setSelectedScheduleId(matchedMeeting.id);
+            const schedObj: any = {
+              id: matchedMeeting.id,
+              classId: matchedMeeting.classId,
+              className: matchedMeeting.className,
+              subjectId: matchedMeeting.subjectId,
+              subjectName: matchedMeeting.subjectName,
+              teacherId: matchedMeeting.teacherId,
+              teacherName: matchedMeeting.teacherName,
+              lessonPeriodIds: matchedMeeting.lessonPeriodIds,
+              lessonPeriods: matchedMeeting.jpRangeStr,
+              jpRangeStr: matchedMeeting.jpRangeStr,
+              jp: matchedMeeting.jpLabel,
+              totalJP: matchedMeeting.totalJP,
+              startTime: matchedMeeting.startTime,
+              endTime: matchedMeeting.endTime
+            };
+            setSelectedSchedule(schedObj);
 
-          if (matchedSched) {
-            const classStudents = students.filter(s => s.classId === matchedSched.classId && s.status === "Aktif");
+            const classStudents = students.filter(s => s.classId === matchedMeeting.classId && s.status === "Aktif");
             const count = classStudents.length;
             setAttendance({
               hadir: count,
@@ -296,7 +319,7 @@ export const TeachingJournals: React.FC = () => {
               total: count
             });
 
-            await checkCurriculumStatus(matchedSched.classId, matchedSched.subjectId);
+            await checkCurriculumStatus(matchedMeeting.classId, matchedMeeting.subjectId);
           }
         } else {
           setSelectedScheduleId("");
@@ -329,15 +352,32 @@ export const TeachingJournals: React.FC = () => {
     checkEffectiveness();
   }, [selectedDate, activeYear, activeSemester, isGuru, user, searchParams, students, subjects]);
 
-  // Handle schedule selection
-  const handleScheduleChange = async (scheduleId: string) => {
-    setSelectedScheduleId(scheduleId);
-    const sched = schedulesForDate.find(s => s.id === scheduleId) || null;
-    setSelectedSchedule(sched);
+  // Handle schedule/meeting selection
+  const handleScheduleChange = async (meetingId: string) => {
+    setSelectedScheduleId(meetingId);
+    const meeting = meetingsForDate.find(m => m.id === meetingId) || null;
+    
+    if (meeting) {
+      const schedObj: any = {
+        id: meeting.id,
+        classId: meeting.classId,
+        className: meeting.className,
+        subjectId: meeting.subjectId,
+        subjectName: meeting.subjectName,
+        teacherId: meeting.teacherId,
+        teacherName: meeting.teacherName,
+        lessonPeriodIds: meeting.lessonPeriodIds,
+        lessonPeriods: meeting.jpRangeStr,
+        jpRangeStr: meeting.jpRangeStr,
+        jp: meeting.jpLabel,
+        totalJP: meeting.totalJP,
+        startTime: meeting.startTime,
+        endTime: meeting.endTime
+      };
+      setSelectedSchedule(schedObj);
 
-    if (sched) {
       // Find exact student count in class
-      const classStudents = students.filter(s => s.classId === sched.classId && s.status === "Aktif");
+      const classStudents = students.filter(s => s.classId === meeting.classId && s.status === "Aktif");
       const count = classStudents.length;
 
       setAttendance({
@@ -348,8 +388,9 @@ export const TeachingJournals: React.FC = () => {
         total: count
       });
 
-      await checkCurriculumStatus(sched.classId, sched.subjectId);
+      await checkCurriculumStatus(meeting.classId, meeting.subjectId);
     } else {
+      setSelectedSchedule(null);
       setProtaTopics([]);
       setSelectedProtaTopicId("");
       setHasProta(true);
@@ -507,11 +548,11 @@ export const TeachingJournals: React.FC = () => {
       className: targetSched.className,
       subjectId: targetSched.subjectId,
       subjectName: targetSched.subjectName,
-      lessonPeriodIds: targetSched.lessonPeriodId ? [targetSched.lessonPeriodId] : (targetSched.lessonPeriodIds || []),
-      lessonPeriods: targetSched.jp || targetSched.lessonPeriods || "JP",
-      startTime: targetSched.startTime || "",
-      endTime: targetSched.endTime || "",
-      totalJP: Number(formFields.supportingLink ? 2 : 1), // default logic or let editable
+      lessonPeriodIds: targetSched.lessonPeriodIds || (targetSched.lessonPeriodId ? [targetSched.lessonPeriodId] : []),
+      lessonPeriods: targetSched.jpRangeStr || targetSched.lessonPeriods || targetSched.jp || "JP",
+      startTime: targetSched.startTime || "07:00",
+      endTime: targetSched.endTime || "08:20",
+      totalJP: Number(targetSched.totalJP || selectedJournal?.totalJP || 1),
       ...formFields,
       studentAttendance: attendance,
       status,
@@ -569,24 +610,24 @@ export const TeachingJournals: React.FC = () => {
   const metrics: Record<string, { title: string; value: number | string; icon: any; color: "blue" | "emerald" | "green" | "rose" | "amber" }> = useMemo(() => {
     if (isGuru) {
       const myJournals = journals.filter(j => j.teacherId === user?.teacherId);
-      const totalJP = myJournals.reduce((sum, j) => sum + (j.totalJP || 0), 0);
+      const totalJP = myJournals.reduce((sum, j) => sum + (j.totalJP || 1), 0);
       const approved = myJournals.filter(j => j.status === "Disetujui").length;
       const pending = myJournals.filter(j => j.status === "Diajukan").length;
       return {
-        card1: { title: "Total Jurnal Semester Ini", value: myJournals.length, icon: FileText, color: "blue" },
-        card2: { title: "Total JP Mengajar", value: totalJP, icon: Clock, color: "emerald" },
+        card1: { title: "Pertemuan Terlaksana", value: `${myJournals.length} Pertemuan`, icon: FileText, color: "blue" },
+        card2: { title: "Total JP Terlaksana", value: `${totalJP} JP`, icon: Clock, color: "emerald" },
         card3: { title: "Jurnal Disetujui", value: approved, icon: CheckCircle, color: "green" },
         card4: { title: "Menunggu Verifikasi", value: pending, icon: AlertCircle, color: "amber" }
       };
     } else {
       const pending = journals.filter(j => j.status === "Diajukan").length;
       const approved = journals.filter(j => j.status === "Disetujui").length;
-      const rejected = journals.filter(j => j.status === "Ditolak").length;
+      const totalJP = journals.reduce((sum, j) => sum + (j.totalJP || 1), 0);
       return {
-        card1: { title: "Total Jurnal Diajukan", value: journals.length, icon: FileText, color: "blue" },
-        card2: { title: "Verifikasi Tertunda", value: pending, icon: AlertCircle, color: "amber" },
+        card1: { title: "Total Pertemuan Diajukan", value: `${journals.length} Pertemuan`, icon: FileText, color: "blue" },
+        card2: { title: "Total JP Terlaksana", value: `${totalJP} JP`, icon: Clock, color: "emerald" },
         card3: { title: "Disetujui", value: approved, icon: CheckCircle, color: "green" },
-        card4: { title: "Ditolak", value: rejected, icon: XCircle, color: "rose" }
+        card4: { title: "Verifikasi Tertunda", value: pending, icon: AlertCircle, color: "amber" }
       };
     }
   }, [journals, isGuru, user]);
@@ -648,6 +689,19 @@ export const TeachingJournals: React.FC = () => {
       accessor: (j: TeachingJournal) => j.subjectName,
       sortable: true,
       sortKey: "subjectName" as keyof TeachingJournal
+    },
+    {
+      header: "Pertemuan & Durasi",
+      accessor: (j: TeachingJournal) => (
+        <div className="flex flex-col text-xs">
+          <span className="font-bold text-slate-800 dark:text-zinc-200">
+            {j.lessonPeriods ? (j.lessonPeriods.startsWith("JP") ? j.lessonPeriods : `JP ${j.lessonPeriods}`) : "Pertemuan"}
+          </span>
+          <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+            {j.totalJP || 1} JP ({j.startTime || "07:00"} - {j.endTime || "08:20"})
+          </span>
+        </div>
+      )
     },
     {
       header: "Materi & Objectives",
@@ -1019,15 +1073,15 @@ export const TeachingJournals: React.FC = () => {
 
             {!selectedJournal && (
               <FormSelect
-                label="Pilih Jadwal Mengajar Anda Pada Tanggal Ini"
+                label="Pilih Pertemuan Mengajar Pada Tanggal Ini"
                 value={selectedScheduleId}
                 onChange={(e) => handleScheduleChange(e.target.value)}
                 required
                 options={[
-                  { value: "", label: "-- Pilih Jadwal --" },
-                  ...schedulesForDate.map(s => ({
-                    value: s.id,
-                    label: `${s.jp} - ${s.subjectName} (${s.className})`
+                  { value: "", label: "-- Pilih Pertemuan Mengajar --" },
+                  ...meetingsForDate.map(m => ({
+                    value: m.id,
+                    label: `${m.subjectName} (${m.className}) — ${m.jpRangeStr} (${m.totalJP} JP)`
                   }))
                 ]}
               />
@@ -1066,15 +1120,15 @@ export const TeachingJournals: React.FC = () => {
                 </span>
               </div>
               <div>
-                <span className="font-semibold text-slate-500 uppercase block">Jam Mengajar</span>
-                <span className="font-bold text-slate-800 dark:text-zinc-200 text-sm mt-0.5 block">
-                  {selectedSchedule?.jp || selectedJournal?.lessonPeriods}
+                <span className="font-semibold text-slate-500 uppercase block">Rentang JP & Durasi</span>
+                <span className="font-bold text-emerald-700 dark:text-emerald-400 text-sm mt-0.5 block">
+                  {selectedSchedule?.jp || (selectedJournal?.lessonPeriods ? `${selectedJournal.lessonPeriods} (${selectedJournal.totalJP || 1} JP)` : "1 JP")}
                 </span>
               </div>
               <div>
-                <span className="font-semibold text-slate-500 uppercase block">Waktu</span>
+                <span className="font-semibold text-slate-500 uppercase block">Waktu Pertemuan</span>
                 <span className="font-bold text-slate-800 dark:text-zinc-200 text-sm mt-0.5 block">
-                  {selectedSchedule ? `${selectedSchedule.startTime || "07:00"} - ${selectedSchedule.endTime || "07:40"}` : `${selectedJournal?.startTime || "07:00"} - ${selectedJournal?.endTime || "07:40"}`}
+                  {selectedSchedule ? `${selectedSchedule.startTime || "07:00"} - ${selectedSchedule.endTime || "08:20"}` : `${selectedJournal?.startTime || "07:00"} - ${selectedJournal?.endTime || "08:20"}`}
                 </span>
               </div>
             </div>
