@@ -4,6 +4,8 @@ import {
   getDocs, 
   getDoc,
   setDoc, 
+  deleteDoc,
+  updateDoc,
   writeBatch, 
   query, 
   where,
@@ -24,6 +26,7 @@ import { scheduleService } from "./schedule.service";
 import { academicPlanningService } from "./academicPlanning.service";
 import { lessonPeriodService } from "./lessonPeriod.service";
 import { classService } from "./classService";
+import { schoolSettingsService } from "./schoolSettings.service";
 
 const COLLECTION_NAME = "teacher_teaching_attendances";
 const AUDIT_LOGS_COLLECTION = "teacher_attendance_audit_logs";
@@ -109,8 +112,29 @@ export const teacherTeachingAttendanceService = {
   // Check Kaldik to see if date is blocked for KBM
   async checkKaldikStatus(dateStr: string, academicYearId?: string, semesterId?: string): Promise<{ isKbmDisabled: boolean; lockReason?: string }> {
     try {
+      const dayName = getIndonesianDayName(dateStr);
+      let activeDays = ["Sabtu", "Minggu", "Senin", "Selasa", "Rabu", "Kamis"];
+      try {
+        const settings = await schoolSettingsService.getSettings();
+        if (settings && settings.activeDays && settings.activeDays.length > 0) {
+          activeDays = settings.activeDays;
+        }
+      } catch (err) {
+        // Fallback
+      }
+
+      const isWeekendOff = !activeDays.some(ad => ad.toLowerCase() === dayName.toLowerCase());
+
       const calendarDays = await academicPlanningService.getCalendarDays(academicYearId, semesterId);
       const dayData = calendarDays.find(d => d.date === dateStr);
+
+      if (isWeekendOff) {
+        const hasEffectiveOverride = dayData?.events?.some(e => e.isEffectiveDay === true || e.categoryName?.toLowerCase().includes("kbm"));
+        if (!hasEffectiveOverride) {
+          return { isKbmDisabled: true, lockReason: `Hari Libur Akhir Pekan (${dayName})` };
+        }
+      }
+
       if (!dayData || !dayData.events || dayData.events.length === 0) {
         return { isKbmDisabled: false };
       }
@@ -389,6 +413,142 @@ export const teacherTeachingAttendanceService = {
     } catch (error) {
       console.error("Failed to fetch schedule exchanges:", error);
       return [];
+    }
+  },
+
+  // Delete / Cancel Schedule Exchange and restore original schedules
+  async deleteScheduleExchange(exchangeId: string, userId: string, userName: string): Promise<void> {
+    try {
+      const exchangeRef = doc(db, SCHEDULE_EXCHANGES_COLLECTION, exchangeId);
+      const exchangeSnap = await getDoc(exchangeRef);
+      if (!exchangeSnap.exists()) {
+        throw new Error("Data tukar jadwal tidak ditemukan");
+      }
+
+      const exchange = exchangeSnap.data() as ScheduleExchangeRecord;
+      const targetDateA = exchange.date;
+      const targetDateB = exchange.dateB || exchange.date;
+
+      // Revert Sesi A on Date A
+      if (targetDateA && exchange.scheduleAId) {
+        const { items: itemsA } = await this.getAttendanceForDate(targetDateA, "", "");
+        const itemA = itemsA.find(i => i.scheduleId === exchange.scheduleAId);
+        if (itemA) {
+          itemA.status = "Hadir Mengajar";
+          delete itemA.exchangedWithTeacherId;
+          delete itemA.exchangedWithTeacherName;
+          delete itemA.exchangedScheduleId;
+          if (itemA.notes && itemA.notes.includes("Tukar Jadwal")) {
+            itemA.notes = "";
+          }
+          await this.saveAttendanceForDate(
+            targetDateA,
+            itemsA,
+            userId,
+            userName,
+            `Pembatalan Tukar Jadwal (Dikembalikan ke semula)`
+          );
+        }
+      }
+
+      // Revert Sesi B on Date B (if exists)
+      if (targetDateB && exchange.scheduleBId) {
+        const { items: itemsB } = await this.getAttendanceForDate(targetDateB, "", "");
+        const itemB = itemsB.find(i => i.scheduleId === exchange.scheduleBId);
+        if (itemB) {
+          itemB.status = "Hadir Mengajar";
+          delete itemB.exchangedWithTeacherId;
+          delete itemB.exchangedWithTeacherName;
+          delete itemB.exchangedScheduleId;
+          if (itemB.notes && itemB.notes.includes("Tukar Jadwal")) {
+            itemB.notes = "";
+          }
+          await this.saveAttendanceForDate(
+            targetDateB,
+            itemsB,
+            userId,
+            userName,
+            `Pembatalan Tukar Jadwal (Dikembalikan ke semula)`
+          );
+        }
+      }
+
+      // Delete exchange document
+      await deleteDoc(exchangeRef);
+
+      await logActivity(
+        userId,
+        userName,
+        "Cancel Schedule Exchange",
+        `Membatalkan/Menghapus tukar jadwal antara ${exchange.teacherAName} (${targetDateA}) dan ${exchange.teacherBName} (${targetDateB})`
+      );
+    } catch (error) {
+      return handleFirestoreError(error, OperationType.DELETE, SCHEDULE_EXCHANGES_COLLECTION);
+    }
+  },
+
+  // Update Schedule Exchange reason / notes
+  async updateScheduleExchange(
+    exchangeId: string,
+    newReason: string,
+    userId: string,
+    userName: string
+  ): Promise<void> {
+    try {
+      const exchangeRef = doc(db, SCHEDULE_EXCHANGES_COLLECTION, exchangeId);
+      const exchangeSnap = await getDoc(exchangeRef);
+      if (!exchangeSnap.exists()) {
+        throw new Error("Data tukar jadwal tidak ditemukan");
+      }
+
+      const exchange = exchangeSnap.data() as ScheduleExchangeRecord;
+      const targetDateA = exchange.date;
+      const targetDateB = exchange.dateB || exchange.date;
+
+      await updateDoc(exchangeRef, {
+        reason: newReason
+      });
+
+      // Update notes on Attendance A
+      if (targetDateA && exchange.scheduleAId) {
+        const { items: itemsA } = await this.getAttendanceForDate(targetDateA, "", "");
+        const itemA = itemsA.find(i => i.scheduleId === exchange.scheduleAId);
+        if (itemA) {
+          itemA.notes = `Tukar Jadwal dengan ${exchange.teacherBName}${targetDateA !== targetDateB ? ` (Tgl ${targetDateB})` : ''}: ${newReason}`;
+          await this.saveAttendanceForDate(
+            targetDateA,
+            itemsA,
+            userId,
+            userName,
+            `Edit Alasan Tukar Jadwal: ${newReason}`
+          );
+        }
+      }
+
+      // Update notes on Attendance B
+      if (targetDateB && exchange.scheduleBId) {
+        const { items: itemsB } = await this.getAttendanceForDate(targetDateB, "", "");
+        const itemB = itemsB.find(i => i.scheduleId === exchange.scheduleBId);
+        if (itemB) {
+          itemB.notes = `Tukar Jadwal dengan ${exchange.teacherAName}${targetDateA !== targetDateB ? ` (Tgl ${targetDateA})` : ''}: ${newReason}`;
+          await this.saveAttendanceForDate(
+            targetDateB,
+            itemsB,
+            userId,
+            userName,
+            `Edit Alasan Tukar Jadwal: ${newReason}`
+          );
+        }
+      }
+
+      await logActivity(
+        userId,
+        userName,
+        "Update Schedule Exchange",
+        `Memperbarui catatan/alasan tukar jadwal ID ${exchangeId}`
+      );
+    } catch (error) {
+      return handleFirestoreError(error, OperationType.WRITE, SCHEDULE_EXCHANGES_COLLECTION);
     }
   },
 

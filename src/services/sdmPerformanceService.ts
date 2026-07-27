@@ -17,6 +17,7 @@ import { teachingJournalService } from "./teachingJournalService";
 import { musrifJournalService } from "./musrifJournalService";
 import { gtkDevelopmentService } from "./gtkDevelopmentService";
 import { academicPlanningService } from "./academicPlanning.service";
+import { schoolSettingsService } from "./schoolSettings.service";
 
 export interface MasterJabatan {
   id: string; // e.g., "guru", "musrif"
@@ -435,6 +436,9 @@ export const sdmPerformanceService = {
               }
             });
 
+            const schoolSettings = await schoolSettingsService.getSettings();
+            const activeDays = schoolSettings?.activeDays || ["Sabtu", "Minggu", "Senin", "Selasa", "Rabu", "Kamis"];
+
             const indonesianDays = ["minggu", "senin", "selasa", "rabu", "kamis", "jumat", "sabtu"];
             let totalExpectedSessions = 0;
 
@@ -444,9 +448,11 @@ export const sdmPerformanceService = {
               const dateIso = current.toISOString().split("T")[0];
               const dayName = indonesianDays[dayIndex];
 
-              // Skip Sundays and explicit holidays
-              if (dayIndex !== 0 && !holidayDates.has(dateIso)) {
-                const daySchedules = teacherSchedules.filter(s => (s.day || "").toLowerCase() === dayName);
+              const isWeekend = !activeDays.some(ad => ad.toLowerCase() === dayName.toLowerCase());
+
+              // Skip weekends (off days) and explicit holidays
+              if (!isWeekend && !holidayDates.has(dateIso)) {
+                const daySchedules = teacherSchedules.filter(s => (s.day || "").toLowerCase() === dayName.toLowerCase());
                 totalExpectedSessions += daySchedules.length;
               }
               current.setDate(current.getDate() + 1);

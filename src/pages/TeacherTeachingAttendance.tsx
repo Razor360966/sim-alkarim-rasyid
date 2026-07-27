@@ -37,7 +37,13 @@ import {
   BarChart2,
   CalendarDays,
   Sparkles,
-  ShieldAlert
+  ShieldAlert,
+  ArrowRightLeft,
+  RotateCcw,
+  Trash2,
+  Edit2,
+  PlusCircle,
+  History
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
@@ -138,6 +144,11 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
 
   // Schedule Exchange ("Tukar Jadwal") modal state
   const [showExchangeModal, setShowExchangeModal] = useState(false);
+  const [exchangeModalSubTab, setExchangeModalSubTab] = useState<"create" | "list">("create");
+  const [exchangeSearchQuery, setExchangeSearchQuery] = useState("");
+  const [editingExchangeId, setEditingExchangeId] = useState<string | null>(null);
+  const [editingExchangeReason, setEditingExchangeReason] = useState("");
+
   const [exchangeScheduleAId, setExchangeScheduleAId] = useState("");
   const [exchangeTeacherBId, setExchangeTeacherBId] = useState("");
   const [exchangeDateB, setExchangeDateB] = useState(selectedDate);
@@ -147,6 +158,29 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
   useEffect(() => {
     setExchangeDateB(selectedDate);
   }, [selectedDate, showExchangeModal]);
+
+  // Fetch Schedule Exchanges List
+  const { data: scheduleExchangesList = [], isLoading: isLoadingExchanges } = useQuery({
+    queryKey: ["scheduleExchangesList"],
+    queryFn: () => teacherTeachingAttendanceService.getScheduleExchanges(),
+    enabled: showExchangeModal || activeTab === "input"
+  });
+
+  const filteredScheduleExchanges = useMemo(() => {
+    if (!exchangeSearchQuery.trim()) return scheduleExchangesList;
+    const q = exchangeSearchQuery.toLowerCase();
+    return scheduleExchangesList.filter(ex => 
+      ex.teacherAName?.toLowerCase().includes(q) ||
+      ex.teacherBName?.toLowerCase().includes(q) ||
+      ex.subjectAName?.toLowerCase().includes(q) ||
+      ex.subjectBName?.toLowerCase().includes(q) ||
+      ex.classAName?.toLowerCase().includes(q) ||
+      ex.classBName?.toLowerCase().includes(q) ||
+      ex.reason?.toLowerCase().includes(q) ||
+      ex.date?.includes(q) ||
+      ex.dateB?.includes(q)
+    );
+  }, [scheduleExchangesList, exchangeSearchQuery]);
 
   // Fetch Guru B's schedule/attendance for exchangeDateB
   const { data: scheduleBData, isLoading: isLoadingScheduleB } = useQuery({
@@ -350,6 +384,79 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
     }
   });
 
+  const deleteExchangeMutation = useMutation({
+    mutationFn: async (exchangeId: string) => {
+      if (!user) throw new Error("Pengguna belum diautentikasi");
+      await teacherTeachingAttendanceService.deleteScheduleExchange(
+        exchangeId,
+        user.uid,
+        user.displayName || user.name || "Wakakur"
+      );
+    },
+    onSuccess: () => {
+      toast("Tukar jadwal berhasil dibatalkan & jadwal dikembalikan ke semula!", "success");
+      queryClient.invalidateQueries({ queryKey: ["scheduleExchangesList"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherTeachingAttendance"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherTeachingAttendanceB"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherAttendanceRecap"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherDailyStats"] });
+      queryClient.invalidateQueries({ queryKey: ["leadershipMonitoringStats"] });
+    },
+    onError: (err: any) => {
+      toast("Gagal membatalkan tukar jadwal: " + err.message, "error");
+    }
+  });
+
+  const updateExchangeMutation = useMutation({
+    mutationFn: async ({ exchangeId, reason }: { exchangeId: string; reason: string }) => {
+      if (!user) throw new Error("Pengguna belum diautentikasi");
+      await teacherTeachingAttendanceService.updateScheduleExchange(
+        exchangeId,
+        reason,
+        user.uid,
+        user.displayName || user.name || "Wakakur"
+      );
+    },
+    onSuccess: () => {
+      toast("Alasan tukar jadwal berhasil diperbarui!", "success");
+      setEditingExchangeId(null);
+      setEditingExchangeReason("");
+      queryClient.invalidateQueries({ queryKey: ["scheduleExchangesList"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherTeachingAttendance"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherAttendanceRecap"] });
+    },
+    onError: (err: any) => {
+      toast("Gagal memperbarui tukar jadwal: " + err.message, "error");
+    }
+  });
+
+  const handleResetOrManageExchange = (item: TeacherTeachingAttendance) => {
+    const matched = scheduleExchangesList.find(
+      ex => ex.scheduleAId === item.scheduleId || ex.scheduleBId === item.scheduleId
+    );
+    if (matched && matched.id) {
+      if (confirm(`Batalkan pertukaran jadwal antara ${matched.teacherAName} dan ${matched.teacherBName}?\nStatus kedua jadwal akan otomatis dikembalikan ke status semula.`)) {
+        deleteExchangeMutation.mutate(matched.id);
+      }
+    } else {
+      const itemIdx = localAttendanceItems.findIndex(i => i.scheduleId === item.scheduleId);
+      if (itemIdx !== -1) {
+        const updated = [...localAttendanceItems];
+        updated[itemIdx] = {
+          ...updated[itemIdx],
+          status: "Hadir Mengajar",
+          exchangedWithTeacherId: undefined,
+          exchangedWithTeacherName: undefined,
+          exchangedScheduleId: undefined,
+          notes: updated[itemIdx].notes?.replace(/Tukar Jadwal.*$/i, "").trim() || ""
+        };
+        setLocalAttendanceItems(updated);
+        setIsDirty(true);
+        toast("Status sesi dikembalikan ke Hadir Mengajar di tampilan. Klik 'Simpan Monitoring' untuk menyimpannya.", "info");
+      }
+    }
+  };
+
   // Calculate local daily summary stats
   const stats = useMemo(() => {
     const total = localAttendanceItems.length;
@@ -428,7 +535,10 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
   // Update date range defaults when period type changes
   useEffect(() => {
     const now = new Date();
-    if (rekapPeriodType === "mingguan") {
+    if (rekapPeriodType === "harian") {
+      setRekapStartDate(selectedDate || todayStr);
+      setRekapEndDate(selectedDate || todayStr);
+    } else if (rekapPeriodType === "mingguan") {
       const first = now.getDate() - now.getDay() + 1; // Monday
       const last = first + 6;
       const monday = new Date(now.setDate(first)).toISOString().split("T")[0];
@@ -445,7 +555,12 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
       setRekapStartDate("");
       setRekapEndDate("");
     }
-  }, [rekapPeriodType]);
+  }, [rekapPeriodType, selectedDate]);
+
+  // Pending replacement check
+  const pendingReplacementExchanges = useMemo(() => {
+    return scheduleExchangesList.filter(ex => !ex.scheduleBId || (ex.reason && ex.reason.toLowerCase().includes("belum diganti")));
+  }, [scheduleExchangesList]);
 
   const { data: rekapData, isLoading: isLoadingRekap } = useQuery({
     queryKey: ["teacherAttendanceRecap", selectedAyId, selectedSemesterId, rekapStartDate, rekapEndDate, filterTeacherId, filterSubjectId, filterGradeLevel, filterClassId],
@@ -594,6 +709,16 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
 
         {/* Global Action Bar */}
         <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => setShowAuditModal(true)}
+            className="px-3.5 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-medium backdrop-blur-xs border border-white/20 transition-all flex items-center gap-1.5 cursor-pointer"
+            title="Lihat Rekam Jejak Audit Log Perubahan Absensi Guru"
+          >
+            <History className="w-4 h-4 text-amber-300" />
+            Log Perubahan
+          </button>
+
           {activeTab === "input" && (
             <>
               {isWakakurOrAdmin && (
@@ -763,6 +888,31 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Alert Banner: Pending Unreplaced JP Notification */}
+      {pendingReplacementExchanges.length > 0 && (
+        <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800/80 p-4 rounded-2xl flex items-start gap-3 text-xs text-amber-900 dark:text-amber-200 shadow-xs">
+          <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+          <div className="space-y-1.5 flex-1">
+            <div className="font-extrabold text-amber-900 dark:text-amber-100 flex items-center justify-between flex-wrap gap-2">
+              <span className="text-sm">Masih terdapat JP yang belum tergantikan.</span>
+              <span className="px-2.5 py-0.5 bg-amber-200 dark:bg-amber-900 text-amber-950 dark:text-amber-100 rounded-lg text-[10px] font-black uppercase tracking-wider">
+                {pendingReplacementExchanges.length} Pertukaran Pending
+              </span>
+            </div>
+            <p className="text-amber-800 dark:text-amber-300">
+              Jumlah JP mata pelajaran tidak boleh berkurang akibat pertukaran. Jadwal di bawah ini memerlukan penugasan JP pengganti lengkap oleh Wakakur/Guru:
+            </p>
+            <div className="flex flex-wrap gap-2 pt-1">
+              {pendingReplacementExchanges.map((ex) => (
+                <div key={ex.id} className="px-3 py-1 bg-white dark:bg-zinc-900 border border-amber-300 dark:border-amber-800 rounded-xl text-[11px] font-bold text-amber-900 dark:text-amber-200 shadow-2xs">
+                  {ex.teacherAName} ({ex.subjectAName} — {ex.classAName}, JP {ex.jpA}) Tgl: {ex.date}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ========================================================= */}
       {/* TAB 1: INPUT ABSENSI MENGAJAR                             */}
@@ -1162,6 +1312,25 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                             </div>
                           )}
 
+                          {item.status === "Tukar Jadwal" && (
+                            <div className="flex flex-wrap items-center justify-between gap-1 p-1.5 bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-900/60 rounded-lg">
+                              <span className="text-[10px] font-semibold text-indigo-900 dark:text-indigo-200">
+                                Tukar dg: <strong>{item.exchangedWithTeacherName || "Guru Penukar"}</strong>
+                              </span>
+                              {isWakakurOrAdmin && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleResetOrManageExchange(item)}
+                                  className="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 shadow-2xs"
+                                  title="Batalkan pertukaran ini dan kembalikan jadwal ke semula"
+                                >
+                                  <RotateCcw className="w-3 h-3" />
+                                  Kembalikan Semula
+                                </button>
+                              )}
+                            </div>
+                          )}
+
                           <input
                             type="text"
                             placeholder="Catatan (Terlambat 10m, dll)..."
@@ -1217,8 +1386,8 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
               </div>
 
               {/* Periode Selector */}
-              <div className="flex items-center gap-1 bg-slate-100 dark:bg-zinc-800 p-1 rounded-xl">
-                {(["mingguan", "bulanan", "semester", "tahunan"] as const).map(p => (
+              <div className="flex items-center gap-1 bg-slate-100 dark:bg-zinc-800 p-1 rounded-xl flex-wrap">
+                {(["harian", "mingguan", "bulanan", "semester", "tahunan", "custom"] as const).map(p => (
                   <button
                     key={p}
                     onClick={() => setRekapPeriodType(p)}
@@ -1228,11 +1397,35 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                         : "text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200"
                     }`}
                   >
-                    {p}
+                    {p === "custom" ? "Rentang Tanggal Bebas" : p}
                   </button>
                 ))}
               </div>
             </div>
+
+            {rekapPeriodType === "custom" && (
+              <div className="flex items-center gap-3 p-3 bg-blue-50/50 dark:bg-blue-950/30 rounded-xl border border-blue-200/60 dark:border-blue-900/40">
+                <span className="text-xs font-bold text-blue-900 dark:text-blue-200">Rentang Tanggal Custom:</span>
+                <div className="flex items-center gap-2">
+                  <label className="text-[10px] font-bold text-slate-500">Mulai:</label>
+                  <input
+                    type="date"
+                    value={rekapStartDate}
+                    onChange={(e) => setRekapStartDate(e.target.value)}
+                    className="px-2.5 py-1 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-lg text-xs font-semibold text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-[10px] font-bold text-slate-500">Sampai:</label>
+                  <input
+                    type="date"
+                    value={rekapEndDate}
+                    onChange={(e) => setRekapEndDate(e.target.value)}
+                    className="px-2.5 py-1 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-lg text-xs font-semibold text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
               <div>
@@ -1568,121 +1761,287 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
           size="lg"
         >
           <div className="space-y-4">
-            <p className="text-xs text-slate-500 dark:text-zinc-400">
-              Wakakur dapat memproses pertukaran jadwal mengajar antara dua guru atau menugaskan Sesi/JP kepada guru penukar tanpa mengubah struktur jadwal tetap sekolah.
-            </p>
-
-            <div className="space-y-3 bg-slate-50 dark:bg-zinc-800/80 p-4 rounded-2xl border border-slate-200/80 dark:border-zinc-700">
-              <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 block uppercase tracking-wider">
-                1. Pilih Sesi Mengajar Utama (Sesi A) - Tanggal {selectedDate}:
-              </label>
-              <select
-                value={exchangeScheduleAId}
-                onChange={(e) => setExchangeScheduleAId(e.target.value)}
-                className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs font-semibold text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-amber-500"
+            {/* Modal Sub-tabs */}
+            <div className="flex items-center gap-2 border-b border-slate-200 dark:border-zinc-800 pb-2">
+              <button
+                type="button"
+                onClick={() => setExchangeModalSubTab("create")}
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                  exchangeModalSubTab === "create"
+                    ? "bg-amber-500 text-slate-950 shadow-xs"
+                    : "bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300 hover:bg-slate-200"
+                }`}
               >
-                <option value="">-- Pilih Sesi Mengajar yang Akan Ditukar --</option>
-                {localAttendanceItems.map((item) => (
-                  <option key={item.scheduleId} value={item.scheduleId}>
-                    {item.teacherName} — {item.subjectName} ({item.className}) [JP {item.jp}]
-                  </option>
-                ))}
-              </select>
-
-              <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 block uppercase tracking-wider pt-2">
-                2. Pilih Guru Penukar (Guru B):
-              </label>
-              <select
-                value={exchangeTeacherBId}
-                onChange={(e) => setExchangeTeacherBId(e.target.value)}
-                className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs font-semibold text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-amber-500"
+                <PlusCircle className="w-4 h-4" />
+                Buat Pertukaran Baru
+              </button>
+              <button
+                type="button"
+                onClick={() => setExchangeModalSubTab("list")}
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                  exchangeModalSubTab === "list"
+                    ? "bg-amber-500 text-slate-950 shadow-xs"
+                    : "bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300 hover:bg-slate-200"
+                }`}
               >
-                <option value="">-- Pilih Guru Penukar --</option>
-                {teachers.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name} ({t.nip || "Guru"})
-                  </option>
-                ))}
-              </select>
+                <History className="w-4 h-4" />
+                Daftar & Kelola Tukar Jadwal ({scheduleExchangesList.length})
+              </button>
+            </div>
 
-              <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 block uppercase tracking-wider pt-2">
-                3. Pilih Tanggal Sesi Guru B (Dilain Hari atau Sama Hari):
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="date"
-                  value={exchangeDateB}
-                  onChange={(e) => setExchangeDateB(e.target.value)}
-                  className="px-3 py-2 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs font-semibold text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-amber-500"
-                />
-                <button
-                  type="button"
-                  onClick={() => setExchangeDateB(selectedDate)}
-                  className={`px-3 py-2 rounded-xl text-xs font-bold transition-all ${
-                    exchangeDateB === selectedDate
-                      ? "bg-amber-500 text-slate-950"
-                      : "bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 hover:bg-slate-300"
-                  }`}
-                >
-                  Sama Hari ({selectedDate})
-                </button>
-              </div>
-
-              <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 block uppercase tracking-wider pt-2">
-                4. Pilih Sesi Guru B yang Ditukar (Tanggal {exchangeDateB}):
-              </label>
-              <select
-                value={exchangeScheduleBId}
-                onChange={(e) => setExchangeScheduleBId(e.target.value)}
-                disabled={isLoadingScheduleB || !exchangeTeacherBId}
-                className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs font-semibold text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
-              >
-                <option value="">-- Tanpa Sesi Pengganti Sisi B (Penugasan Langsung Sesi A Saja) --</option>
-                {exchangeScheduleBItems.map((item) => (
-                  <option key={item.scheduleId} value={item.scheduleId}>
-                    {item.teacherName} — {item.subjectName} ({item.className}) [JP {item.jp}]
-                  </option>
-                ))}
-              </select>
-              {isLoadingScheduleB && (
-                <p className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">Memuat jadwal Guru B pada tanggal {exchangeDateB}...</p>
-              )}
-              {!isLoadingScheduleB && exchangeTeacherBId && exchangeScheduleBItems.length === 0 && (
-                <p className="text-[11px] text-slate-400 italic">
-                  Guru B tidak memiliki jadwal mengajar terdaftar pada tanggal {exchangeDateB}. Guru B hanya mengambil alih JP Sesi A.
+            {exchangeModalSubTab === "create" && (
+              <>
+                <p className="text-xs text-slate-500 dark:text-zinc-400">
+                  Wakakur dapat memproses pertukaran jadwal mengajar antara dua guru atau menugaskan Sesi/JP kepada guru penukar tanpa mengubah struktur jadwal tetap sekolah.
                 </p>
-              )}
 
-              <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 block uppercase tracking-wider pt-2">
-                5. Alasan / Catatan Pertukaran Sesi:
-              </label>
-              <input
-                type="text"
-                placeholder="Misal: Saling tukar JP 2 dan JP 5 karena keperluan dinas..."
-                value={exchangeReason}
-                onChange={(e) => setExchangeReason(e.target.value)}
-                className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs text-slate-800 dark:text-zinc-100"
-              />
-            </div>
+                <div className="space-y-3 bg-slate-50 dark:bg-zinc-800/80 p-4 rounded-2xl border border-slate-200/80 dark:border-zinc-700">
+                  <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 block uppercase tracking-wider">
+                    1. Pilih Sesi Mengajar Utama (Sesi A) - Tanggal {selectedDate}:
+                  </label>
+                  <select
+                    value={exchangeScheduleAId}
+                    onChange={(e) => setExchangeScheduleAId(e.target.value)}
+                    className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs font-semibold text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-amber-500"
+                  >
+                    <option value="">-- Pilih Sesi Mengajar yang Akan Ditukar --</option>
+                    {localAttendanceItems.map((item) => (
+                      <option key={item.scheduleId} value={item.scheduleId}>
+                        {item.teacherName} — {item.subjectName} ({item.className}) [JP {item.jp}]
+                      </option>
+                    ))}
+                  </select>
 
-            <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 dark:border-zinc-800">
-              <button
-                type="button"
-                onClick={() => setShowExchangeModal(false)}
-                className="px-4 py-2 bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 text-slate-700 dark:text-zinc-300 font-bold rounded-xl text-xs transition-colors cursor-pointer"
-              >
-                Batal
-              </button>
-              <button
-                type="button"
-                onClick={() => saveExchangeMutation.mutate()}
-                disabled={saveExchangeMutation.isPending || !exchangeScheduleAId || !exchangeTeacherBId}
-                className="px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 font-bold rounded-xl text-xs transition-all flex items-center gap-1.5 cursor-pointer shadow-md"
-              >
-                <RefreshCw className="w-4 h-4" />
-                {saveExchangeMutation.isPending ? "Memproses..." : "Proses Tukar Jadwal"}
-              </button>
-            </div>
+                  <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 block uppercase tracking-wider pt-2">
+                    2. Pilih Guru Penukar (Guru B):
+                  </label>
+                  <select
+                    value={exchangeTeacherBId}
+                    onChange={(e) => setExchangeTeacherBId(e.target.value)}
+                    className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs font-semibold text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-amber-500"
+                  >
+                    <option value="">-- Pilih Guru Penukar --</option>
+                    {teachers.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} ({t.nip || "Guru"})
+                      </option>
+                    ))}
+                  </select>
+
+                  <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 block uppercase tracking-wider pt-2">
+                    3. Pilih Tanggal Sesi Guru B (Dilain Hari atau Sama Hari):
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="date"
+                      value={exchangeDateB}
+                      onChange={(e) => setExchangeDateB(e.target.value)}
+                      className="px-3 py-2 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs font-semibold text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-amber-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setExchangeDateB(selectedDate)}
+                      className={`px-3 py-2 rounded-xl text-xs font-bold transition-all ${
+                        exchangeDateB === selectedDate
+                          ? "bg-amber-500 text-slate-950"
+                          : "bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 hover:bg-slate-300"
+                      }`}
+                    >
+                      Sama Hari ({selectedDate})
+                    </button>
+                  </div>
+
+                  <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 block uppercase tracking-wider pt-2">
+                    4. Pilih Sesi Guru B yang Ditukar (Tanggal {exchangeDateB}):
+                  </label>
+                  <select
+                    value={exchangeScheduleBId}
+                    onChange={(e) => setExchangeScheduleBId(e.target.value)}
+                    disabled={isLoadingScheduleB || !exchangeTeacherBId}
+                    className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs font-semibold text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
+                  >
+                    <option value="">-- Tanpa Sesi Pengganti Sisi B (Penugasan Langsung Sesi A Saja) --</option>
+                    {exchangeScheduleBItems.map((item) => (
+                      <option key={item.scheduleId} value={item.scheduleId}>
+                        {item.teacherName} — {item.subjectName} ({item.className}) [JP {item.jp}]
+                      </option>
+                    ))}
+                  </select>
+                  {isLoadingScheduleB && (
+                    <p className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">Memuat jadwal Guru B pada tanggal {exchangeDateB}...</p>
+                  )}
+                  {!isLoadingScheduleB && exchangeTeacherBId && exchangeScheduleBItems.length === 0 && (
+                    <p className="text-[11px] text-slate-400 italic">
+                      Guru B tidak memiliki jadwal mengajar terdaftar pada tanggal {exchangeDateB}. Guru B hanya mengambil alih JP Sesi A.
+                    </p>
+                  )}
+
+                  <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 block uppercase tracking-wider pt-2">
+                    5. Alasan / Catatan Pertukaran Sesi:
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Misal: Saling tukar JP 2 dan JP 5 karena keperluan dinas..."
+                    value={exchangeReason}
+                    onChange={(e) => setExchangeReason(e.target.value)}
+                    className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs text-slate-800 dark:text-zinc-100"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 dark:border-zinc-800">
+                  <button
+                    type="button"
+                    onClick={() => setShowExchangeModal(false)}
+                    className="px-4 py-2 bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 text-slate-700 dark:text-zinc-300 font-bold rounded-xl text-xs transition-colors cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => saveExchangeMutation.mutate()}
+                    disabled={saveExchangeMutation.isPending || !exchangeScheduleAId || !exchangeTeacherBId}
+                    className="px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 font-bold rounded-xl text-xs transition-all flex items-center gap-1.5 cursor-pointer shadow-md"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    {saveExchangeMutation.isPending ? "Memproses..." : "Proses Tukar Jadwal"}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {exchangeModalSubTab === "list" && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="relative flex-1">
+                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Cari nama guru, mata pelajaran, kelas, atau tanggal..."
+                      value={exchangeSearchQuery}
+                      onChange={(e) => setExchangeSearchQuery(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-amber-500"
+                    />
+                  </div>
+                </div>
+
+                {isLoadingExchanges ? (
+                  <div className="py-8 text-center text-xs text-slate-500 dark:text-zinc-400 flex items-center justify-center gap-2">
+                    <RefreshCw className="w-4 h-4 animate-spin text-amber-500" />
+                    Memuat daftar tukar jadwal...
+                  </div>
+                ) : filteredScheduleExchanges.length === 0 ? (
+                  <div className="py-8 text-center bg-slate-50 dark:bg-zinc-900/60 rounded-2xl border border-dashed border-slate-200 dark:border-zinc-800">
+                    <p className="text-xs font-semibold text-slate-600 dark:text-zinc-300">Belum ada riwayat pertukaran jadwal yang tercatat.</p>
+                    <p className="text-[11px] text-slate-400 mt-1">Gunakan tab "Buat Pertukaran Baru" untuk memproses tukar jadwal.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1">
+                    {filteredScheduleExchanges.map((ex) => (
+                      <div
+                        key={ex.id}
+                        className="p-3.5 bg-slate-50 dark:bg-zinc-800/80 rounded-2xl border border-slate-200/80 dark:border-zinc-700/80 space-y-2.5 hover:border-amber-400/50 transition-all"
+                      >
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div className="flex items-center gap-2">
+                            <span className="px-2.5 py-0.5 bg-amber-100 dark:bg-amber-950/60 text-amber-900 dark:text-amber-300 text-[10px] font-bold rounded-lg border border-amber-300/60 dark:border-amber-800/60">
+                              Tgl A: {ex.date}
+                            </span>
+                            {ex.dateB && ex.dateB !== ex.date && (
+                              <span className="px-2.5 py-0.5 bg-blue-100 dark:bg-blue-950/60 text-blue-900 dark:text-blue-300 text-[10px] font-bold rounded-lg border border-blue-300/60 dark:border-blue-800/60">
+                                Tgl B: {ex.dateB}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            {isWakakurOrAdmin && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingExchangeId(ex.id!);
+                                    setEditingExchangeReason(ex.reason || "");
+                                  }}
+                                  className="px-2.5 py-1 bg-slate-200 dark:bg-zinc-700 hover:bg-slate-300 text-slate-800 dark:text-zinc-100 rounded-lg text-[11px] font-semibold transition-all flex items-center gap-1 cursor-pointer"
+                                  title="Edit alasan pertukaran"
+                                >
+                                  <Edit2 className="w-3 h-3" />
+                                  Edit Alasan
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={deleteExchangeMutation.isPending}
+                                  onClick={() => {
+                                    if (confirm(`Batalkan tukar jadwal ini? Status kedua jadwal (${ex.teacherAName} & ${ex.teacherBName}) akan otomatis dikembalikan ke status semula.`)) {
+                                      deleteExchangeMutation.mutate(ex.id!);
+                                    }
+                                  }}
+                                  className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer shadow-2xs"
+                                  title="Batalkan & Kembalikan ke jadwal semula"
+                                >
+                                  <RotateCcw className="w-3 h-3" />
+                                  Kembalikan Semula
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Exchange Teacher Mapping details */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 bg-white dark:bg-zinc-900 p-2.5 rounded-xl border border-slate-100 dark:border-zinc-800 text-xs">
+                          <div className="space-y-0.5 border-b md:border-b-0 md:border-r border-slate-100 dark:border-zinc-800 pb-1.5 md:pb-0 md:pr-2">
+                            <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 block uppercase">Guru Sesi A (Pemrakarsa):</span>
+                            <p className="font-bold text-slate-900 dark:text-zinc-100">{ex.teacherAName}</p>
+                            <p className="text-[11px] text-slate-500 dark:text-zinc-400">{ex.subjectAName} ({ex.classAName}) • JP {ex.jpA}</p>
+                          </div>
+                          <div className="space-y-0.5 md:pl-2 pt-1 md:pt-0">
+                            <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 block uppercase">Guru Sesi B (Penukar):</span>
+                            <p className="font-bold text-slate-900 dark:text-zinc-100">{ex.teacherBName}</p>
+                            {ex.subjectBName ? (
+                              <p className="text-[11px] text-slate-500 dark:text-zinc-400">{ex.subjectBName} ({ex.classBName}) • JP {ex.jpB}</p>
+                            ) : (
+                              <p className="text-[11px] text-amber-600 dark:text-amber-400 italic">Mengambil alih Sesi A tanpa penukaran JP Sesi B</p>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Reason / Note display or Edit form */}
+                        {editingExchangeId === ex.id ? (
+                          <div className="flex items-center gap-2 pt-1">
+                            <input
+                              type="text"
+                              value={editingExchangeReason}
+                              onChange={(e) => setEditingExchangeReason(e.target.value)}
+                              className="flex-1 px-3 py-1.5 bg-white dark:bg-zinc-900 border border-amber-400 rounded-xl text-xs text-slate-800 dark:text-zinc-100"
+                              placeholder="Masukkan alasan baru..."
+                            />
+                            <button
+                              type="button"
+                              onClick={() => updateExchangeMutation.mutate({ exchangeId: ex.id!, reason: editingExchangeReason })}
+                              disabled={updateExchangeMutation.isPending}
+                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+                            >
+                              Simpan
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingExchangeId(null)}
+                              className="px-3 py-1.5 bg-slate-200 dark:bg-zinc-700 text-slate-700 dark:text-zinc-300 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                            >
+                              Batal
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="text-[11px] text-slate-600 dark:text-zinc-300 flex items-center gap-1.5 pt-0.5">
+                            <Info className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            <span>Alasan: <strong className="font-semibold text-slate-800 dark:text-zinc-200">{ex.reason}</strong></span>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </Dialog>
       )}
