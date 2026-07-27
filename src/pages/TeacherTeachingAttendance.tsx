@@ -130,13 +130,35 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
 
   // Reason state for back-dating
   const [backdateReason, setBackdateReason] = useState("");
+  const [overrideKbmLock, setOverrideKbmLock] = useState(false);
+
+  useEffect(() => {
+    setOverrideKbmLock(false);
+  }, [selectedDate]);
 
   // Schedule Exchange ("Tukar Jadwal") modal state
   const [showExchangeModal, setShowExchangeModal] = useState(false);
   const [exchangeScheduleAId, setExchangeScheduleAId] = useState("");
   const [exchangeTeacherBId, setExchangeTeacherBId] = useState("");
+  const [exchangeDateB, setExchangeDateB] = useState(selectedDate);
   const [exchangeScheduleBId, setExchangeScheduleBId] = useState("");
   const [exchangeReason, setExchangeReason] = useState("");
+
+  useEffect(() => {
+    setExchangeDateB(selectedDate);
+  }, [selectedDate, showExchangeModal]);
+
+  // Fetch Guru B's schedule/attendance for exchangeDateB
+  const { data: scheduleBData, isLoading: isLoadingScheduleB } = useQuery({
+    queryKey: ["teacherTeachingAttendanceB", exchangeDateB, selectedAyId, selectedSemesterId],
+    queryFn: () => teacherTeachingAttendanceService.getAttendanceForDate(exchangeDateB, selectedAyId, selectedSemesterId),
+    enabled: showExchangeModal && !!exchangeDateB
+  });
+
+  const exchangeScheduleBItems = useMemo(() => {
+    if (!scheduleBData?.items || !exchangeTeacherBId) return [];
+    return scheduleBData.items.filter(item => item.teacherId === exchangeTeacherBId);
+  }, [scheduleBData, exchangeTeacherBId]);
 
   // Leadership Monitoring Query (for Headmaster / Yayasan / Wakakur)
   const { data: leadershipStats } = useQuery({
@@ -152,6 +174,8 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
     queryFn: () => teacherTeachingAttendanceService.getAttendanceForDate(selectedDate, selectedAyId, selectedSemesterId),
     enabled: !!selectedDate
   });
+
+  const isKbmDisabled = !!dailyAttendanceData?.isKbmDisabled && !overrideKbmLock;
 
   const [localAttendanceItems, setLocalAttendanceItems] = useState<TeacherTeachingAttendance[]>([]);
   const [isDirty, setIsDirty] = useState<boolean>(false);
@@ -284,11 +308,12 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
       if (!itemA) throw new Error("Pilih Sesi A yang ingin ditukar");
       const teacherB = teachers.find(t => t.id === exchangeTeacherBId);
       if (!teacherB) throw new Error("Pilih Guru B (Penukar)");
-      const itemB = localAttendanceItems.find(i => i.scheduleId === exchangeScheduleBId);
+      const itemB = exchangeScheduleBItems.find(i => i.scheduleId === exchangeScheduleBId);
 
       await teacherTeachingAttendanceService.saveScheduleExchange(
         {
           date: selectedDate,
+          dateB: exchangeDateB || selectedDate,
           teacherAId: itemA.teacherId,
           teacherAName: itemA.teacherName,
           scheduleAId: itemA.scheduleId,
@@ -315,6 +340,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
       setExchangeScheduleBId("");
       setExchangeReason("");
       queryClient.invalidateQueries({ queryKey: ["teacherTeachingAttendance"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherTeachingAttendanceB"] });
       queryClient.invalidateQueries({ queryKey: ["teacherAttendanceRecap"] });
       queryClient.invalidateQueries({ queryKey: ["teacherDailyStats"] });
       queryClient.invalidateQueries({ queryKey: ["leadershipMonitoringStats"] });
@@ -597,7 +623,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
               {isWakakurOrAdmin && (
                 <button
                   onClick={() => saveMutation.mutate()}
-                  disabled={saveMutation.isPending || dailyAttendanceData?.isKbmDisabled}
+                  disabled={saveMutation.isPending || isKbmDisabled}
                   className={`px-4 py-2 rounded-xl text-xs font-semibold shadow-md transition-all flex items-center gap-2 cursor-pointer ${
                     isDirty
                       ? "bg-emerald-500 hover:bg-emerald-600 text-white ring-2 ring-emerald-300"
@@ -847,6 +873,20 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                     >
                       7 H. Lalu
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const y = selectedDate ? selectedDate.split("-")[0] : new Date().getFullYear().toString();
+                        setSelectedDate(`${y}-07-25`);
+                      }}
+                      className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                        selectedDate.endsWith("-07-25")
+                          ? "bg-amber-600 text-white shadow-xs"
+                          : "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200 hover:bg-amber-200"
+                      }`}
+                    >
+                      25 Juli (Awal KBM)
+                    </button>
                   </div>
                 </div>
               </div>
@@ -899,16 +939,30 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
 
           {/* Kaldik Lock Banner */}
           {dailyAttendanceData?.isKbmDisabled && (
-            <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 p-4 rounded-2xl flex items-center gap-3.5 text-amber-900 dark:text-amber-200 shadow-xs">
-              <div className="p-2 bg-amber-100 dark:bg-amber-900/60 rounded-xl">
-                <AlertTriangle className="w-6 h-6 text-amber-600 dark:text-amber-400" />
+            <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 p-4 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-amber-900 dark:text-amber-200 shadow-xs">
+              <div className="flex items-center gap-3.5">
+                <div className="p-2 bg-amber-100 dark:bg-amber-900/60 rounded-xl">
+                  <AlertTriangle className="w-6 h-6 text-amber-600 dark:text-amber-400" />
+                </div>
+                <div className="space-y-0.5">
+                  <h4 className="text-sm font-bold">
+                    {overrideKbmLock ? "Kunci Absensi Dibuka Secara Manual" : "Hari ini ditandai Non-KBM di Kalender Akademik"}
+                  </h4>
+                  <p className="text-xs text-amber-700 dark:text-amber-300">
+                    Agenda Kalender Akademik: <span className="font-semibold underline">{dailyAttendanceData.lockReason}</span>.
+                    {overrideKbmLock ? " Pengisian absensi diizinkan pada tanggal ini." : " Input absensi dikunci secara otomatis oleh sistem."}
+                  </p>
+                </div>
               </div>
-              <div className="space-y-0.5">
-                <h4 className="text-sm font-bold">Hari ini tidak terdapat kegiatan belajar mengajar</h4>
-                <p className="text-xs text-amber-700 dark:text-amber-300">
-                  Agenda Kalender Akademik: <span className="font-semibold underline">{dailyAttendanceData.lockReason}</span>. Input absensi dikunci secara otomatis oleh sistem.
-                </p>
-              </div>
+              {isWakakurOrAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setOverrideKbmLock(!overrideKbmLock)}
+                  className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  {overrideKbmLock ? "Tutup Kunci KBM" : "Buka Kunci Absensi Tanggal Ini"}
+                </button>
+              )}
             </div>
           )}
 
@@ -1056,7 +1110,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                         <td className="py-3.5 px-4">
                           <select
                             value={item.status}
-                            disabled={!isWakakurOrAdmin || dailyAttendanceData?.isKbmDisabled}
+                            disabled={!isWakakurOrAdmin || isKbmDisabled}
                             onChange={(e) => handleStatusChange(originalIndex, e.target.value as AttendanceTeachingStatus)}
                             className={`w-full px-2.5 py-1.5 rounded-xl text-xs font-bold border focus:ring-2 focus:outline-hidden cursor-pointer ${
                               item.status === "Hadir Mengajar"
@@ -1112,7 +1166,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                             type="text"
                             placeholder="Catatan (Terlambat 10m, dll)..."
                             value={item.notes || ""}
-                            disabled={!isWakakurOrAdmin || dailyAttendanceData?.isKbmDisabled}
+                            disabled={!isWakakurOrAdmin || isKbmDisabled}
                             onChange={(e) => handleNotesChange(originalIndex, e.target.value)}
                             className="w-full px-2.5 py-1 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-lg text-xs text-slate-800 dark:text-zinc-100 focus:ring-1 focus:ring-blue-500"
                           />
@@ -1121,7 +1175,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                         <td className="py-3.5 px-4 text-center">
                           <button
                             type="button"
-                            disabled={!isWakakurOrAdmin || dailyAttendanceData?.isKbmDisabled || savingSessionId === item.scheduleId}
+                            disabled={!isWakakurOrAdmin || isKbmDisabled || savingSessionId === item.scheduleId}
                             onClick={() => saveSingleSessionMutation.mutate(item)}
                             className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 text-white font-bold text-[11px] rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 mx-auto cursor-pointer"
                             title="Simpan absensi sesi mengajar ini secara langsung"
@@ -1278,8 +1332,9 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                       <th className="py-3.5 px-4 text-center text-amber-600 dark:text-amber-400">Sakit</th>
                       <th className="py-3.5 px-4 text-center text-indigo-600 dark:text-indigo-400">Tugas</th>
                       <th className="py-3.5 px-4 text-center text-rose-600 dark:text-rose-400">Alpa</th>
-                      <th className="py-3.5 px-4 text-center text-purple-600 dark:text-purple-400">Diganti</th>
-                      <th className="py-3.5 px-4 text-center">Total Sesi</th>
+                      <th className="py-3.5 px-4 text-center text-purple-600 dark:text-purple-400">Diganti / Tukar</th>
+                      <th className="py-3.5 px-4 text-center">Total Pertemuan</th>
+                      <th className="py-3.5 px-4 text-center text-blue-700 dark:text-blue-300">Total JP</th>
                       <th className="py-3.5 px-4 text-center">Persentase</th>
                       <th className="py-3.5 px-4 text-right">Aksi</th>
                     </tr>
@@ -1289,15 +1344,41 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                       <tr key={s.teacherId || idx} className="hover:bg-slate-50/80 dark:hover:bg-zinc-800/40 transition-colors">
                         <td className="py-3.5 px-4 text-center font-bold text-slate-400">{idx + 1}</td>
                         <td className="py-3.5 px-4 font-bold text-slate-900 dark:text-zinc-100">
-                          {s.teacherName}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span>{s.teacherName}</span>
+                            {(s.tukarJadwalMasukJP || 0) > 0 && (
+                              <span className="px-1.5 py-0.5 bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 rounded text-[10px] font-extrabold" title="Tambahan JP dari Tukar Sesi">
+                                +{s.tukarJadwalMasukJP} JP Tukar
+                              </span>
+                            )}
+                          </div>
                         </td>
-                        <td className="py-3.5 px-4 text-center font-bold text-emerald-600 dark:text-emerald-400">{s.hadir}</td>
-                        <td className="py-3.5 px-4 text-center font-bold text-blue-600 dark:text-blue-400">{s.izin}</td>
-                        <td className="py-3.5 px-4 text-center font-bold text-amber-600 dark:text-amber-400">{s.sakit}</td>
-                        <td className="py-3.5 px-4 text-center font-bold text-indigo-600 dark:text-indigo-400">{s.tugas}</td>
-                        <td className="py-3.5 px-4 text-center font-bold text-rose-600 dark:text-rose-400">{s.tidakHadir}</td>
-                        <td className="py-3.5 px-4 text-center font-bold text-purple-600 dark:text-purple-400">{s.diganti}</td>
-                        <td className="py-3.5 px-4 text-center font-bold text-slate-700 dark:text-zinc-300">{s.totalEncounters}</td>
+                        <td className="py-3.5 px-4 text-center font-bold text-emerald-600 dark:text-emerald-400">
+                          {s.hadir} <span className="text-[10px] font-normal text-slate-400">({s.hadirJP || s.hadir} JP)</span>
+                        </td>
+                        <td className="py-3.5 px-4 text-center font-bold text-blue-600 dark:text-blue-400">
+                          {s.izin} <span className="text-[10px] font-normal text-slate-400">({s.izinJP || s.izin} JP)</span>
+                        </td>
+                        <td className="py-3.5 px-4 text-center font-bold text-amber-600 dark:text-amber-400">
+                          {s.sakit} <span className="text-[10px] font-normal text-slate-400">({s.sakitJP || s.sakit} JP)</span>
+                        </td>
+                        <td className="py-3.5 px-4 text-center font-bold text-indigo-600 dark:text-indigo-400">
+                          {s.tugas} <span className="text-[10px] font-normal text-slate-400">({s.tugasJP || s.tugas} JP)</span>
+                        </td>
+                        <td className="py-3.5 px-4 text-center font-bold text-rose-600 dark:text-rose-400">
+                          {s.tidakHadir} <span className="text-[10px] font-normal text-slate-400">({s.tidakHadirJP || s.tidakHadir} JP)</span>
+                        </td>
+                        <td className="py-3.5 px-4 text-center font-bold text-purple-600 dark:text-purple-400">
+                          {s.diganti + s.tukarJadwal}
+                        </td>
+                        <td className="py-3.5 px-4 text-center font-bold text-slate-700 dark:text-zinc-300">
+                          <span className="text-slate-900 dark:text-zinc-100">{s.executedEncounters ?? s.hadir}</span>
+                          <span className="text-slate-400 text-[11px]"> / {s.totalEncounters} Pertemuan</span>
+                        </td>
+                        <td className="py-3.5 px-4 text-center font-extrabold text-blue-600 dark:text-blue-400">
+                          <span>{s.executedJP ?? s.hadirJP ?? 0}</span>
+                          <span className="text-slate-400 font-normal text-[11px]"> / {s.totalJP ?? s.totalEncounters} JP</span>
+                        </td>
                         <td className="py-3.5 px-4 text-center">
                           <span className={`px-2.5 py-1 rounded-md text-xs font-bold border ${
                             s.percentage >= 90
@@ -1525,25 +1606,55 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
               </select>
 
               <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 block uppercase tracking-wider pt-2">
-                3. Pilih Sesi Guru B yang Ditukar (Opsional jika Tukar Silang Sesi Hari Ini):
+                3. Pilih Tanggal Sesi Guru B (Dilain Hari atau Sama Hari):
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="date"
+                  value={exchangeDateB}
+                  onChange={(e) => setExchangeDateB(e.target.value)}
+                  className="px-3 py-2 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs font-semibold text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-amber-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => setExchangeDateB(selectedDate)}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold transition-all ${
+                    exchangeDateB === selectedDate
+                      ? "bg-amber-500 text-slate-950"
+                      : "bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 hover:bg-slate-300"
+                  }`}
+                >
+                  Sama Hari ({selectedDate})
+                </button>
+              </div>
+
+              <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 block uppercase tracking-wider pt-2">
+                4. Pilih Sesi Guru B yang Ditukar (Tanggal {exchangeDateB}):
               </label>
               <select
                 value={exchangeScheduleBId}
                 onChange={(e) => setExchangeScheduleBId(e.target.value)}
-                className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs font-semibold text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-amber-500"
+                disabled={isLoadingScheduleB || !exchangeTeacherBId}
+                className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs font-semibold text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
               >
-                <option value="">-- Tanpa Sesi Pengganti Sisi B (Penugasan Langsung Sesi A saja) --</option>
-                {localAttendanceItems
-                  .filter((item) => item.teacherId === exchangeTeacherBId)
-                  .map((item) => (
-                    <option key={item.scheduleId} value={item.scheduleId}>
-                      {item.teacherName} — {item.subjectName} ({item.className}) [JP {item.jp}]
-                    </option>
-                  ))}
+                <option value="">-- Tanpa Sesi Pengganti Sisi B (Penugasan Langsung Sesi A Saja) --</option>
+                {exchangeScheduleBItems.map((item) => (
+                  <option key={item.scheduleId} value={item.scheduleId}>
+                    {item.teacherName} — {item.subjectName} ({item.className}) [JP {item.jp}]
+                  </option>
+                ))}
               </select>
+              {isLoadingScheduleB && (
+                <p className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">Memuat jadwal Guru B pada tanggal {exchangeDateB}...</p>
+              )}
+              {!isLoadingScheduleB && exchangeTeacherBId && exchangeScheduleBItems.length === 0 && (
+                <p className="text-[11px] text-slate-400 italic">
+                  Guru B tidak memiliki jadwal mengajar terdaftar pada tanggal {exchangeDateB}. Guru B hanya mengambil alih JP Sesi A.
+                </p>
+              )}
 
               <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 block uppercase tracking-wider pt-2">
-                4. Alasan / Catatan Pertukaran Sesi:
+                5. Alasan / Catatan Pertukaran Sesi:
               </label>
               <input
                 type="text"

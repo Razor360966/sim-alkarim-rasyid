@@ -54,6 +54,57 @@ async function logActivity(userId: string, userName: string, action: string, des
   }
 }
 
+// Helper to parse JP count string into numeric count (e.g., "JP 1-3" -> 3, "2 JP" -> 2, "JP 1" -> 1)
+export function parseJPCount(jpStr?: string): number {
+  if (!jpStr) return 1;
+  const str = String(jpStr).trim();
+  const rangeMatch = str.match(/(?:JP\s*)?(\d+)\s*[–-]\s*(\d+)/i);
+  if (rangeMatch) {
+    const start = parseInt(rangeMatch[1], 10);
+    const end = parseInt(rangeMatch[2], 10);
+    if (!isNaN(start) && !isNaN(end) && end >= start) {
+      return (end - start) + 1;
+    }
+  }
+  const countMatch = str.match(/(\d+)\s*JP/i);
+  if (countMatch) {
+    return parseInt(countMatch[1], 10) || 1;
+  }
+  return 1;
+}
+
+function createEmptySummary(teacherId: string, teacherName: string): TeacherAttendanceSummary {
+  return {
+    teacherId,
+    teacherName,
+    totalEncounters: 0,
+    totalJP: 0,
+    executedEncounters: 0,
+    executedJP: 0,
+    hadir: 0,
+    hadirJP: 0,
+    terlambat: 0,
+    terlambatJP: 0,
+    izin: 0,
+    izinJP: 0,
+    sakit: 0,
+    sakitJP: 0,
+    tugas: 0,
+    tugasJP: 0,
+    tidakHadir: 0,
+    tidakHadirJP: 0,
+    diganti: 0,
+    digantiJP: 0,
+    tukarJadwal: 0,
+    tukarJadwalJP: 0,
+    tukarJadwalMasuk: 0,
+    tukarJadwalMasukJP: 0,
+    kbmDitiadakan: 0,
+    kbmDitiadakanJP: 0,
+    percentage: 0
+  };
+}
+
 export const teacherTeachingAttendanceService = {
   // Check Kaldik to see if date is blocked for KBM
   async checkKaldikStatus(dateStr: string, academicYearId?: string, semesterId?: string): Promise<{ isKbmDisabled: boolean; lockReason?: string }> {
@@ -66,18 +117,29 @@ export const teacherTeachingAttendanceService = {
 
       // Check for non-effective day or special events
       const blockingEvent = dayData.events.find(e => {
-        if (e.isEffectiveDay === false) return true;
-        if (e.affectsKbm === true) return true;
         const cat = (e.categoryName || "").toLowerCase();
         const title = (e.title || "").toLowerCase();
+
+        // Never block if event explicitly refers to Awal KBM / Hari Pertama / Pembelajaran
+        if (
+          title.includes("awal kbm") ||
+          title.includes("hari pertama") ||
+          title.includes("pembelajaran") ||
+          title.includes("awal semester") ||
+          cat.includes("awal kbm") ||
+          cat.includes("kbm")
+        ) {
+          return false;
+        }
+
+        if (e.isEffectiveDay === false) return true;
+
         return (
           cat.includes("libur") ||
           cat.includes("ujian") ||
-          cat.includes("mpls") ||
           cat.includes("class meeting") ||
           cat.includes("tidak efektif") ||
           title.includes("libur") ||
-          title.includes("mpls") ||
           title.includes("class meeting") ||
           title.includes("ujian") ||
           title.includes("anbk")
@@ -229,17 +291,19 @@ export const teacherTeachingAttendanceService = {
     };
   },
 
-  // Save Schedule Exchange ("Tukar Jadwal") for a specific date
+  // Save Schedule Exchange ("Tukar Jadwal") across same or different dates
   async saveScheduleExchange(
-    record: Omit<ScheduleExchangeRecord, "id" | "createdAt" | "createdByUserId" | "createdByUserName">,
+    record: Omit<ScheduleExchangeRecord, "id" | "createdAt" | "createdByUserId" | "createdByUserName"> & { dateB?: string },
     userId: string,
     userName: string
   ): Promise<void> {
     try {
       const now = new Date().toISOString();
+      const targetDateB = record.dateB || record.date;
       const colRef = collection(db, SCHEDULE_EXCHANGES_COLLECTION);
       const newExchange: ScheduleExchangeRecord = {
         date: record.date || "",
+        dateB: targetDateB,
         teacherAId: record.teacherAId || "",
         teacherAName: record.teacherAName || "",
         scheduleAId: record.scheduleAId || "",
@@ -259,40 +323,49 @@ export const teacherTeachingAttendanceService = {
       };
       await addDoc(colRef, newExchange);
 
-      // Fetch existing attendances for target date to apply swapped status
-      const { items } = await this.getAttendanceForDate(record.date, "", "");
-      
-      const itemA = items.find(i => i.scheduleId === record.scheduleAId);
+      // Fetch existing attendances for target date A to apply swapped status
+      const { items: itemsA } = await this.getAttendanceForDate(record.date, "", "");
+      const itemA = itemsA.find(i => i.scheduleId === record.scheduleAId);
       if (itemA) {
         itemA.status = "Tukar Jadwal";
         itemA.exchangedWithTeacherId = record.teacherBId;
         itemA.exchangedWithTeacherName = record.teacherBName;
-        itemA.notes = `Tukar Jadwal dengan ${record.teacherBName}: ${record.reason}`;
+        itemA.exchangedScheduleId = record.scheduleBId || "";
+        itemA.notes = `Tukar Jadwal dengan ${record.teacherBName}${record.date !== targetDateB ? ` (Tgl ${targetDateB})` : ''}: ${record.reason}`;
       }
-
-      if (record.scheduleBId) {
-        const itemB = items.find(i => i.scheduleId === record.scheduleBId);
-        if (itemB) {
-          itemB.status = "Tukar Jadwal";
-          itemB.exchangedWithTeacherId = record.teacherAId;
-          itemB.exchangedWithTeacherName = record.teacherAName;
-          itemB.notes = `Tukar Jadwal dengan ${record.teacherAName}: ${record.reason}`;
-        }
-      }
-
       await this.saveAttendanceForDate(
         record.date,
-        items,
+        itemsA,
         userId,
         userName,
         `Tukar Jadwal: ${record.reason}`
       );
 
+      // If Sesi B on Date B was selected, fetch and update Date B
+      if (record.scheduleBId) {
+        const { items: itemsB } = await this.getAttendanceForDate(targetDateB, "", "");
+        const itemB = itemsB.find(i => i.scheduleId === record.scheduleBId);
+        if (itemB) {
+          itemB.status = "Tukar Jadwal";
+          itemB.exchangedWithTeacherId = record.teacherAId;
+          itemB.exchangedWithTeacherName = record.teacherAName;
+          itemB.exchangedScheduleId = record.scheduleAId;
+          itemB.notes = `Tukar Jadwal dengan ${record.teacherAName}${record.date !== targetDateB ? ` (Tgl ${record.date})` : ''}: ${record.reason}`;
+          await this.saveAttendanceForDate(
+            targetDateB,
+            itemsB,
+            userId,
+            userName,
+            `Tukar Jadwal: ${record.reason}`
+          );
+        }
+      }
+
       await logActivity(
         userId,
         userName,
         "Schedule Exchange",
-        `Pertukaran jadwal antara ${record.teacherAName} dan ${record.teacherBName} tanggal ${record.date}`
+        `Pertukaran jadwal antara ${record.teacherAName} (${record.date}) dan ${record.teacherBName} (${targetDateB})`
       );
     } catch (error) {
       return handleFirestoreError(error, OperationType.WRITE, SCHEDULE_EXCHANGES_COLLECTION);
@@ -734,95 +807,107 @@ export const teacherTeachingAttendanceService = {
         }
       });
 
-      // Group by teacher
+      // Group by teacher with JP & Pertemuan calculations
       const map = new Map<string, TeacherAttendanceSummary>();
 
       rawRecords.forEach(rec => {
         const tId = rec.teacherId;
         const tName = rec.teacherName || "Guru";
+        const recJP = parseJPCount(rec.jp);
 
         if (!map.has(tId)) {
-          map.set(tId, {
-            teacherId: tId,
-            teacherName: tName,
-            totalEncounters: 0,
-            hadir: 0,
-            terlambat: 0,
-            izin: 0,
-            sakit: 0,
-            tugas: 0,
-            tidakHadir: 0,
-            diganti: 0,
-            tukarJadwal: 0,
-            kbmDitiadakan: 0,
-            percentage: 0
-          });
+          map.set(tId, createEmptySummary(tId, tName));
         }
 
         const sum = map.get(tId)!;
         sum.totalEncounters++;
+        sum.totalJP += recJP;
 
         switch (rec.status) {
           case "Hadir Mengajar":
             sum.hadir++;
+            sum.hadirJP += recJP;
+            sum.executedEncounters++;
+            sum.executedJP += recJP;
             break;
+
           case "Terlambat":
             sum.terlambat++;
+            sum.terlambatJP += recJP;
+            sum.executedEncounters++;
+            sum.executedJP += recJP;
             break;
+
           case "Izin":
             sum.izin++;
+            sum.izinJP += recJP;
             break;
+
           case "Sakit":
             sum.sakit++;
+            sum.sakitJP += recJP;
             break;
+
           case "Tugas Dinas":
             sum.tugas++;
+            sum.tugasJP += recJP;
             break;
+
           case "Tidak Hadir":
             sum.tidakHadir++;
+            sum.tidakHadirJP += recJP;
             break;
+
           case "Digantikan Guru Lain":
             sum.diganti++;
+            sum.digantiJP += recJP;
+            // Substitute teacher actually executed this session
+            if (rec.substituteTeacherId) {
+              const subId = rec.substituteTeacherId;
+              const subName = rec.substituteTeacherName || "Guru Pengganti";
+              if (!map.has(subId)) {
+                map.set(subId, createEmptySummary(subId, subName));
+              }
+              const subSum = map.get(subId)!;
+              subSum.executedEncounters++;
+              subSum.executedJP += recJP;
+              subSum.hadir++;
+              subSum.hadirJP += recJP;
+            }
             break;
+
           case "Tukar Jadwal":
             sum.tukarJadwal++;
+            sum.tukarJadwalJP += recJP;
+            // Original teacher exchanged this slot out -> 0 executed JP for original teacher.
+            // Credit teacher who took over (exchangedWithTeacherId)!
+            if (rec.exchangedWithTeacherId) {
+              const exId = rec.exchangedWithTeacherId;
+              const exName = rec.exchangedWithTeacherName || "Guru Penukar";
+              if (!map.has(exId)) {
+                map.set(exId, createEmptySummary(exId, exName));
+              }
+              const exSum = map.get(exId)!;
+              exSum.executedEncounters++;
+              exSum.executedJP += recJP;
+              exSum.tukarJadwalMasuk++;
+              exSum.tukarJadwalMasukJP += recJP;
+            }
             break;
+
           case "KBM Ditiadakan":
             sum.kbmDitiadakan++;
+            sum.kbmDitiadakanJP += recJP;
             break;
-        }
-
-        // Credit substitute teacher as well
-        if (rec.status === "Digantikan Guru Lain" && rec.substituteTeacherId) {
-          const subId = rec.substituteTeacherId;
-          const subName = rec.substituteTeacherName || "Guru Pengganti";
-          if (!map.has(subId)) {
-            map.set(subId, {
-              teacherId: subId,
-              teacherName: subName,
-              totalEncounters: 0,
-              hadir: 0,
-              terlambat: 0,
-              izin: 0,
-              sakit: 0,
-              tugas: 0,
-              tidakHadir: 0,
-              diganti: 0,
-              tukarJadwal: 0,
-              kbmDitiadakan: 0,
-              percentage: 0
-            });
-          }
-          const subSum = map.get(subId)!;
-          subSum.totalEncounters++;
-          subSum.hadir++; // Credit substitute teacher with an executed encounter
         }
       });
 
-      // Calculate percentage for each teacher
+      // Calculate percentage for each teacher based on executed JP vs total effective JP
       const summaries: TeacherAttendanceSummary[] = Array.from(map.values()).map(sum => {
-        const effective = sum.totalEncounters - sum.kbmDitiadakan;
-        const percentage = effective > 0 ? Math.round(((sum.hadir + sum.terlambat + sum.diganti + sum.tukarJadwal) / effective) * 100) : 0;
+        const effectiveJP = sum.totalJP - sum.kbmDitiadakanJP;
+        const percentage = effectiveJP > 0
+          ? Math.min(100, Math.round((sum.executedJP / effectiveJP) * 100))
+          : (sum.totalJP > 0 && sum.executedJP > 0 ? 100 : 0);
         return { ...sum, percentage };
       });
 

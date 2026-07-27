@@ -1,11 +1,14 @@
 export type AttendanceTeachingStatus =
   | "Hadir Mengajar"
+  | "Terlambat"
   | "Izin"
   | "Sakit"
   | "Tugas Dinas"
+  | "Digantikan Guru Lain"
+  | "Tukar Jadwal"
   | "Tidak Hadir"
-  | "Diganti Guru Lain"
-  | "KBM Ditiadakan";
+  | "KBM Ditiadakan"
+  | "Belum Diverifikasi";
 
 export interface TeacherTeachingAttendance {
   id?: string; // Firestore Document ID (usually `${date}_${scheduleId}`)
@@ -33,6 +36,9 @@ export interface TeacherTeachingAttendance {
   status: AttendanceTeachingStatus;
   substituteTeacherId?: string;
   substituteTeacherName?: string;
+  exchangedWithTeacherId?: string;
+  exchangedWithTeacherName?: string;
+  exchangedScheduleId?: string;
   notes?: string;
 
   recordedByUserId?: string;
@@ -40,6 +46,30 @@ export interface TeacherTeachingAttendance {
   isInputSusulan?: boolean;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface ScheduleExchangeRecord {
+  id?: string;
+  date: string; // Date A (YYYY-MM-DD)
+  dateB?: string; // Date B (YYYY-MM-DD) for cross-date exchange
+  teacherAId: string;
+  teacherAName: string;
+  scheduleAId: string;
+  subjectAName: string;
+  classAName: string;
+  jpA: string;
+
+  teacherBId: string;
+  teacherBName: string;
+  scheduleBId?: string;
+  subjectBName?: string;
+  classBName?: string;
+  jpB?: string;
+
+  reason: string;
+  createdAt: string;
+  createdByUserId: string;
+  createdByUserName: string;
 }
 
 export interface TeacherAttendanceAuditLog {
@@ -65,26 +95,52 @@ export interface AttendanceDailyStats {
   totalScheduledEncounters: number;
   totalUniqueTeachersScheduled: number;
   hadirCount: number;
+  terlambatCount: number;
   izinCount: number;
   sakitCount: number;
   tugasCount: number;
   tidakHadirCount: number;
   digantiCount: number;
+  tukarJadwalCount: number;
   kbmDitiadakanCount: number;
-  pendingCount: number; // Slots not yet submitted
-  attendancePercentage: number; // (hadir + diganti) / (total - kbmDitiadakan) * 100
+  belumDiverifikasiCount: number;
+  attendancePercentage: number;
 }
 
 export interface TeacherAttendanceSummary {
   teacherId: string;
   teacherName: string;
-  totalEncounters: number;
+  totalEncounters: number; // Scheduled Meetings
+  totalJP: number; // Scheduled JP
+  executedEncounters: number; // Taught / Executed Meetings (taking exchanges into account)
+  executedJP: number; // Taught / Executed JP (taking exchanges into account)
   hadir: number;
+  hadirJP: number;
+  terlambat: number;
+  terlambatJP: number;
   izin: number;
+  izinJP: number;
   sakit: number;
+  sakitJP: number;
   tugas: number;
+  tugasJP: number;
   tidakHadir: number;
+  tidakHadirJP: number;
   diganti: number;
+  digantiJP: number;
+  tukarJadwal: number;
+  tukarJadwalJP: number;
+  tukarJadwalMasuk: number;
+  tukarJadwalMasukJP: number;
   kbmDitiadakan: number;
+  kbmDitiadakanJP: number;
   percentage: number;
+}
+
+export interface LeadershipMonitoringStats {
+  totalSubstitutionsSemester: number;
+  totalExchangesSemester: number;
+  kbmExecutionPercentage: number;
+  topSubstituteTeachers: { teacherId: string; teacherName: string; count: number }[];
+  topAbsentTeachers: { teacherId: string; teacherName: string; count: number }[];
 }
