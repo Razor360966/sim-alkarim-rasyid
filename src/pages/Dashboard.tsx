@@ -622,7 +622,7 @@ export const Dashboard: React.FC = () => {
       const hasProta = allAnnualPrograms.some((p: any) => p.classId === assign.classId && p.subjectId === assign.subjectId && p.topics && p.topics.length > 0);
       if (hasProta) protaCount++;
 
-      const hasProsem = allSemesterPrograms.some((p: any) => p.classId === assign.classId && p.subjectId === assign.subjectId && p.allocations && p.allocations.length > 0);
+      const hasProsem = allSemesterPrograms.some((p: any) => p.classId === assign.classId && p.subjectId === assign.subjectId && ((p.allocations && p.allocations.length > 0) || (p.meetings && p.meetings.length > 0) || p.effectiveJpSemester > 0 || p.id));
       if (hasProsem) prosemCount++;
 
       const hasLessonPlan = allLessonPlans.some((p: any) => p.classId === assign.classId && p.subjectId === assign.subjectId);
@@ -703,7 +703,7 @@ export const Dashboard: React.FC = () => {
           const hasProta = allAnnualPrograms.some((p: any) => p.classId === assign.classId && p.subjectId === assign.subjectId && p.topics && p.topics.length > 0);
           if (hasProta) protaCount++;
 
-          const hasProsem = allSemesterPrograms.some((p: any) => p.classId === assign.classId && p.subjectId === assign.subjectId && p.allocations && p.allocations.length > 0);
+          const hasProsem = allSemesterPrograms.some((p: any) => p.classId === assign.classId && p.subjectId === assign.subjectId && ((p.allocations && p.allocations.length > 0) || (p.meetings && p.meetings.length > 0) || p.effectiveJpSemester > 0 || p.id));
           if (hasProsem) prosemCount++;
 
           const hasLessonPlan = allLessonPlans.some((p: any) => p.classId === assign.classId && p.subjectId === assign.subjectId);
@@ -817,7 +817,7 @@ export const Dashboard: React.FC = () => {
     const list: any[] = [];
     teachersPlanningData.forEach(tData => {
       tData.assignments.forEach((assign: any) => {
-        const hasProsem = allSemesterPrograms.some((p: any) => p.classId === assign.classId && p.subjectId === assign.subjectId && p.allocations && p.allocations.length > 0);
+        const hasProsem = allSemesterPrograms.some((p: any) => p.classId === assign.classId && p.subjectId === assign.subjectId && ((p.allocations && p.allocations.length > 0) || (p.meetings && p.meetings.length > 0) || p.effectiveJpSemester > 0 || p.id));
         if (!hasProsem) {
           list.push({
             teacherName: tData.teacher.name,
@@ -2737,7 +2737,7 @@ export const Dashboard: React.FC = () => {
                       const hasProta = allAnnualPrograms.some((p: any) => p.classId === assign.classId && p.subjectId === assign.subjectId && p.topics && p.topics.length > 0);
                       if (hasProta) protaFilled++;
 
-                      const hasProsem = allSemesterPrograms.some((p: any) => p.classId === assign.classId && p.subjectId === assign.subjectId && p.allocations && p.allocations.length > 0);
+                      const hasProsem = allSemesterPrograms.some((p: any) => p.classId === assign.classId && p.subjectId === assign.subjectId && ((p.allocations && p.allocations.length > 0) || (p.meetings && p.meetings.length > 0) || p.effectiveJpSemester > 0 || p.id));
                       if (hasProsem) prosemFilled++;
 
                       const hasLessonPlan = allLessonPlans.some((p: any) => p.classId === assign.classId && p.subjectId === assign.subjectId);

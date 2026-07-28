@@ -209,20 +209,55 @@ export const TeachingJournals: React.FC = () => {
     }
 
     try {
-      const prota = await curriculumPlanningService.getAnnualProgram(
+      let prota = await curriculumPlanningService.getAnnualProgram(
         activeYear?.id || "",
         classId,
         subjectId
       );
-      const prosem = await curriculumPlanningService.getSemesterProgram(
+      let prosem = await curriculumPlanningService.getSemesterProgram(
         activeYear?.id || "",
         activeSemester?.id || "",
         classId,
         subjectId
       );
 
-      const protaValid = !!(prota && Array.isArray(prota.topics) && prota.topics.length > 0);
-      const prosemValid = !!(prosem && Array.isArray(prosem.allocations) && prosem.allocations.length > 0);
+      // Fallback: If not found by exact docId, search all Prota/Prosem by subject & class/grade
+      if (!prota || !prosem) {
+        const targetClass = classes.find(c => c.id === classId);
+        const targetGrade = targetClass?.gradeLevel;
+
+        const [allProta, allProsem] = await Promise.all([
+          curriculumPlanningService.getAllAnnualPrograms(),
+          curriculumPlanningService.getAllSemesterPrograms()
+        ]);
+
+        if (!prota) {
+          prota = allProta.find(p =>
+            p.subjectId === subjectId &&
+            p.academicYearId === activeYear?.id &&
+            (p.classId === classId || (targetGrade && (p.className?.includes(targetGrade) || p.classId?.includes(targetGrade))))
+          ) || null;
+        }
+
+        if (!prosem) {
+          prosem = allProsem.find(p =>
+            p.subjectId === subjectId &&
+            p.academicYearId === activeYear?.id &&
+            p.semesterId === activeSemester?.id &&
+            (p.classId === classId || (targetGrade && (p.className?.includes(targetGrade) || p.classId?.includes(targetGrade))))
+          ) || null;
+        }
+      }
+
+      const protaValid = !!(prota && ((Array.isArray(prota.topics) && prota.topics.length > 0) || Boolean(prota.id)));
+      const prosemValid = !!(
+        prosem && (
+          (Array.isArray(prosem.allocations) && prosem.allocations.length > 0) ||
+          (Array.isArray(prosem.meetings) && prosem.meetings.length > 0) ||
+          (typeof prosem.effectiveJpSemester === "number" && prosem.effectiveJpSemester > 0) ||
+          Boolean(prosem.id)
+        )
+      );
 
       setHasProta(protaValid);
       setHasProsem(prosemValid);
