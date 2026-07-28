@@ -683,7 +683,7 @@ export const mutabaahService = {
       return {
         id: "default_period",
         name: `Semester Ganjil ${year}/${year + 1}`,
-        startDate: `${year}-07-15`,
+        startDate: `${year}-07-21`,
         endDate: `${year}-12-20`,
         isActive: true
       };
@@ -692,7 +692,7 @@ export const mutabaahService = {
       return {
         id: "default_period",
         name: `Semester Ganjil ${year}/${year + 1}`,
-        startDate: `${year}-07-15`,
+        startDate: `${year}-07-21`,
         endDate: `${year}-12-20`,
         isActive: true
       };

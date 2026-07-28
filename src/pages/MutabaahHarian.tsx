@@ -855,9 +855,9 @@ export const MutabaahHarian: React.FC = () => {
       : 100;
 
     const totalEntries = userEntries.length;
-    const mutabaahQualityPercent = totalEntries > 0
-      ? Math.round(userEntries.reduce((sum, e) => sum + e.compliancePercentage, 0) / totalEntries)
-      : 100;
+    const mutabaahQualityPercent = targetFillingDays > 0
+      ? Math.min(100, Math.round(userEntries.reduce((sum, e) => sum + e.compliancePercentage, 0) / targetFillingDays))
+      : (totalEntries > 0 ? Math.round(userEntries.reduce((sum, e) => sum + e.compliancePercentage, 0) / totalEntries) : 100);
 
     // Streaks
     let streak = 0;
@@ -950,64 +950,112 @@ export const MutabaahHarian: React.FC = () => {
     return sdm;
   }, [allUsers, canViewAllRekap, user]);
 
+  // Helper to calculate effective count of days in a date range,
+  // taking into account active mutabaah start date (e.g. 21 July 2026) and today's date
+  const getEffectiveDaysInRange = (
+    rangeStartStr: string,
+    rangeEndStr: string,
+    mutabaahStartStr: string,
+    todayStr: string,
+    periodEndStr?: string
+  ): number => {
+    const effectiveStart = rangeStartStr < mutabaahStartStr ? mutabaahStartStr : rangeStartStr;
+    let effectiveEnd = rangeEndStr > todayStr ? todayStr : rangeEndStr;
+    if (periodEndStr && effectiveEnd > periodEndStr) {
+      effectiveEnd = periodEndStr;
+    }
+
+    if (effectiveStart > effectiveEnd) {
+      return 0;
+    }
+
+    const startDateObj = new Date(effectiveStart + "T00:00:00");
+    const endDateObj = new Date(effectiveEnd + "T00:00:00");
+    const diffTime = endDateObj.getTime() - startDateObj.getTime();
+    const diffDays = Math.floor(diffTime / (1000 * 3600 * 24)) + 1;
+    return Math.max(0, diffDays);
+  };
+
   // Weekly report calculations
   const weeklyReportData = useMemo(() => {
     const yearMonth = `${selectedYear}-${String(selectedMonth).padStart(2, "0")}`;
     const activeSdm = activeSdmList;
+    const mutabaahStartStr = activePeriod?.startDate || "2026-07-21";
+    const daysInSelectedMonth = new Date(selectedYear, selectedMonth, 0).getDate();
 
     return activeSdm.map(u => {
       const uEntries = globalEntries.filter(e => e.userId === u.userId && e.date.startsWith(yearMonth));
       
-      // Split into 4 virtual weeks
-      const w1 = uEntries.filter(e => parseInt(e.date.split("-")[2], 10) <= 7);
-      const w2 = uEntries.filter(e => parseInt(e.date.split("-")[2], 10) > 7 && parseInt(e.date.split("-")[2], 10) <= 14);
-      const w3 = uEntries.filter(e => parseInt(e.date.split("-")[2], 10) > 14 && parseInt(e.date.split("-")[2], 10) <= 21);
-      const w4 = uEntries.filter(e => parseInt(e.date.split("-")[2], 10) > 21);
+      const weeksRanges = [
+        { start: `${yearMonth}-01`, end: `${yearMonth}-07` },
+        { start: `${yearMonth}-08`, end: `${yearMonth}-14` },
+        { start: `${yearMonth}-15`, end: `${yearMonth}-21` },
+        { start: `${yearMonth}-22`, end: `${yearMonth}-${String(daysInSelectedMonth).padStart(2, "0")}` }
+      ];
 
-      const calcAvg = (entries: SdmMutabaahEntry[]) => {
-        return entries.length > 0 
-          ? Math.round(entries.reduce((sum, e) => sum + e.compliancePercentage, 0) / entries.length)
-          : null;
-      };
+      const weekAvgs = weeksRanges.map(range => {
+        const effDays = getEffectiveDaysInRange(range.start, range.end, mutabaahStartStr, todayStr, activePeriod?.endDate);
+        if (effDays <= 0) return null;
 
-      const w1Avg = calcAvg(w1);
-      const w2Avg = calcAvg(w2);
-      const w3Avg = calcAvg(w3);
-      const w4Avg = calcAvg(w4);
+        const wEntries = uEntries.filter(e => e.date >= range.start && e.date <= range.end);
+        const sumPercent = wEntries.reduce((sum, e) => sum + e.compliancePercentage, 0);
+        return Math.min(100, Math.round(sumPercent / effDays));
+      });
 
-      const overall = uEntries.length > 0 
-        ? Math.round(uEntries.reduce((sum, e) => sum + e.compliancePercentage, 0) / uEntries.length)
-        : null;
+      const monthStartStr = `${yearMonth}-01`;
+      const monthEndStr = `${yearMonth}-${String(daysInSelectedMonth).padStart(2, "0")}`;
+      const totalEffDaysInMonth = getEffectiveDaysInRange(monthStartStr, monthEndStr, mutabaahStartStr, todayStr, activePeriod?.endDate);
+
+      let overall: number | null = null;
+      if (totalEffDaysInMonth > 0) {
+        const sumPercent = uEntries.reduce((sum, e) => sum + e.compliancePercentage, 0);
+        overall = Math.min(100, Math.round(sumPercent / totalEffDaysInMonth));
+      }
 
       return {
         userId: u.userId,
         name: u.name || u.email?.split("@")[0] || "",
         role: u.role || "",
-        w1: w1Avg,
-        w2: w2Avg,
-        w3: w3Avg,
-        w4: w4Avg,
+        w1: weekAvgs[0],
+        w2: weekAvgs[1],
+        w3: weekAvgs[2],
+        w4: weekAvgs[3],
         overall
       };
     });
-  }, [globalEntries, activeSdmList, selectedYear, selectedMonth]);
+  }, [globalEntries, activeSdmList, selectedYear, selectedMonth, activePeriod, todayStr]);
 
   // Monthly report calculations
   const monthlyReportData = useMemo(() => {
     const activeSdm = activeSdmList;
+    const mutabaahStartStr = activePeriod?.startDate || "2026-07-21";
+
     return activeSdm.map(u => {
       const uEntries = globalEntries.filter(e => e.userId === u.userId && e.date.startsWith(String(selectedYear)));
       const monthlyAverages = Array.from({ length: 12 }, (_, i) => {
-        const monthStr = `${selectedYear}-${String(i + 1).padStart(2, "0")}`;
+        const m = i + 1;
+        const monthStr = `${selectedYear}-${String(m).padStart(2, "0")}`;
+        const lastDay = new Date(selectedYear, m, 0).getDate();
+        const monthStartStr = `${monthStr}-01`;
+        const monthEndStr = `${monthStr}-${String(lastDay).padStart(2, "0")}`;
+
+        const effDays = getEffectiveDaysInRange(monthStartStr, monthEndStr, mutabaahStartStr, todayStr, activePeriod?.endDate);
+        if (effDays <= 0) return null;
+
         const monthEntries = uEntries.filter(e => e.date.startsWith(monthStr));
-        return monthEntries.length > 0 
-          ? Math.round(monthEntries.reduce((sum, e) => sum + e.compliancePercentage, 0) / monthEntries.length)
-          : null;
+        const sumPercent = monthEntries.reduce((sum, e) => sum + e.compliancePercentage, 0);
+        return Math.min(100, Math.round(sumPercent / effDays));
       });
 
-      const overall = uEntries.length > 0
-        ? Math.round(uEntries.reduce((sum, e) => sum + e.compliancePercentage, 0) / uEntries.length)
-        : null;
+      const yearStartStr = `${selectedYear}-01-01`;
+      const yearEndStr = `${selectedYear}-12-31`;
+      const totalEffDaysInYear = getEffectiveDaysInRange(yearStartStr, yearEndStr, mutabaahStartStr, todayStr, activePeriod?.endDate);
+
+      let overall: number | null = null;
+      if (totalEffDaysInYear > 0) {
+        const sumPercent = uEntries.reduce((sum, e) => sum + e.compliancePercentage, 0);
+        overall = Math.min(100, Math.round(sumPercent / totalEffDaysInYear));
+      }
 
       return {
         userId: u.userId,
@@ -1017,12 +1065,13 @@ export const MutabaahHarian: React.FC = () => {
         overall
       };
     });
-  }, [globalEntries, activeSdmList, selectedYear]);
+  }, [globalEntries, activeSdmList, selectedYear, activePeriod, todayStr]);
 
   // Semester report calculations
   const semesterReportData = useMemo(() => {
     const activeSdm = activeSdmList;
     const targetMonths = selectedSemester === 1 ? [7, 8, 9, 10, 11, 12] : [1, 2, 3, 4, 5, 6];
+    const mutabaahStartStr = activePeriod?.startDate || "2026-07-21";
 
     return activeSdm.map(u => {
       const uEntries = globalEntries.filter(e => {
@@ -1034,15 +1083,31 @@ export const MutabaahHarian: React.FC = () => {
 
       const monthAverages = targetMonths.map(m => {
         const monthStr = `${selectedYear}-${String(m).padStart(2, "0")}`;
+        const lastDay = new Date(selectedYear, m, 0).getDate();
+        const monthStartStr = `${monthStr}-01`;
+        const monthEndStr = `${monthStr}-${String(lastDay).padStart(2, "0")}`;
+
+        const effDays = getEffectiveDaysInRange(monthStartStr, monthEndStr, mutabaahStartStr, todayStr, activePeriod?.endDate);
+        if (effDays <= 0) return null;
+
         const monthEntries = uEntries.filter(e => e.date.startsWith(monthStr));
-        return monthEntries.length > 0 
-          ? Math.round(monthEntries.reduce((sum, e) => sum + e.compliancePercentage, 0) / monthEntries.length)
-          : null;
+        const sumPercent = monthEntries.reduce((sum, e) => sum + e.compliancePercentage, 0);
+        return Math.min(100, Math.round(sumPercent / effDays));
       });
 
-      const overall = uEntries.length > 0
-        ? Math.round(uEntries.reduce((sum, e) => sum + e.compliancePercentage, 0) / uEntries.length)
-        : null;
+      const semStartMonth = targetMonths[0];
+      const semEndMonth = targetMonths[targetMonths.length - 1];
+      const semStartStr = `${selectedYear}-${String(semStartMonth).padStart(2, "0")}-01`;
+      const semEndLastDay = new Date(selectedYear, semEndMonth, 0).getDate();
+      const semEndStr = `${selectedYear}-${String(semEndMonth).padStart(2, "0")}-${String(semEndLastDay).padStart(2, "0")}`;
+
+      const totalEffDaysInSem = getEffectiveDaysInRange(semStartStr, semEndStr, mutabaahStartStr, todayStr, activePeriod?.endDate);
+
+      let overall: number | null = null;
+      if (totalEffDaysInSem > 0) {
+        const sumPercent = uEntries.reduce((sum, e) => sum + e.compliancePercentage, 0);
+        overall = Math.min(100, Math.round(sumPercent / totalEffDaysInSem));
+      }
 
       return {
         userId: u.userId,
@@ -1052,7 +1117,7 @@ export const MutabaahHarian: React.FC = () => {
         overall
       };
     });
-  }, [globalEntries, activeSdmList, selectedYear, selectedSemester]);
+  }, [globalEntries, activeSdmList, selectedYear, selectedSemester, activePeriod, todayStr]);
 
   // Export to CSV helper
   const handleExportCSV = (filename: string, headers: string[], rows: string[][]) => {
@@ -1805,6 +1870,9 @@ export const MutabaahHarian: React.FC = () => {
                   </tbody>
                 </table>
               </div>
+              <p className="text-[11px] text-emerald-700 dark:text-emerald-400 bg-emerald-50/70 dark:bg-emerald-950/20 px-3 py-2 rounded-xl font-medium border border-emerald-100 dark:border-emerald-900/30">
+                💡 <b>Metode Perhitungan Adil:</b> Persentase rekapitulasi dihitung dari total akumulasi skor yang diisi dibagi rentang hari aktif Mutabaah (mulai 21 Juli 2026 hingga hari ini), guna mengukur konsistensi dan kemajuan pengisian secara proporsional.
+              </p>
             </div>
           )}
 
@@ -1873,6 +1941,9 @@ export const MutabaahHarian: React.FC = () => {
                   </tbody>
                 </table>
               </div>
+              <p className="text-[11px] text-emerald-700 dark:text-emerald-400 bg-emerald-50/70 dark:bg-emerald-950/20 px-3 py-2 rounded-xl font-medium border border-emerald-100 dark:border-emerald-900/30">
+                💡 <b>Metode Perhitungan Adil:</b> Persentase rekapitulasi dihitung dari total akumulasi skor yang diisi dibagi rentang hari aktif Mutabaah (mulai 21 Juli 2026 hingga hari ini), guna mengukur konsistensi dan kemajuan pengisian secara proporsional.
+              </p>
             </div>
           )}
 
@@ -1947,6 +2018,9 @@ export const MutabaahHarian: React.FC = () => {
                   </tbody>
                 </table>
               </div>
+              <p className="text-[11px] text-emerald-700 dark:text-emerald-400 bg-emerald-50/70 dark:bg-emerald-950/20 px-3 py-2 rounded-xl font-medium border border-emerald-100 dark:border-emerald-900/30">
+                💡 <b>Metode Perhitungan Adil:</b> Persentase rekapitulasi dihitung dari total akumulasi skor yang diisi dibagi rentang hari aktif Mutabaah (mulai 21 Juli 2026 hingga hari ini), guna mengukur konsistensi dan kemajuan pengisian secara proporsional.
+              </p>
             </div>
           )}
 
