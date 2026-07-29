@@ -49,6 +49,7 @@ import {
   Activity,
   TrendingUp,
   Eye,
+  Bell,
   BookOpen,
   Layers
 } from "lucide-react";
@@ -74,11 +75,28 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
   const isWakakurOrAdmin = user && (
     user.role === "admin" || 
     user.role === "wakil kepala sekolah" || 
+    user.role === "kepala sekolah" ||
+    user.role === "pimpinan" ||
+    user.role === "ketua yayasan" ||
     user.role === "operator" ||
     (user.roles && (
       user.roles.includes("admin") || 
       user.roles.includes("wakil kepala sekolah") || 
+      user.roles.includes("kepala sekolah") || 
+      user.roles.includes("pimpinan") || 
+      user.roles.includes("ketua yayasan") || 
       user.roles.includes("wakakur")
+    ))
+  );
+
+  const isKepalaSekolah = user && (
+    user.role === "kepala sekolah" ||
+    user.role === "pimpinan" ||
+    user.role === "ketua yayasan" ||
+    (user.roles && (
+      user.roles.includes("kepala sekolah") || 
+      user.roles.includes("pimpinan") || 
+      user.roles.includes("ketua yayasan")
     ))
   );
 
@@ -648,6 +666,13 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
     ...izinRecords
   ], [tidakHadirRecords, unreplacedRecords, sakitRecords, izinRecords]);
 
+  // Dedicated Absent & Leave records set for Kepala Sekolah notification
+  const absentAndLeaveRecords = useMemo(() => [
+    ...tidakHadirRecords,
+    ...izinRecords,
+    ...sakitRecords
+  ], [tidakHadirRecords, izinRecords, sakitRecords]);
+
   // Attendance Status Distribution Chart Data
   const chartDistributionData = useMemo(() => [
     { name: "Hadir", label: "Guru Hadir", count: hadirRecords.length, fill: "#10b981", key: "hadir" },
@@ -1048,6 +1073,50 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Notifikasi Kepemimpinan / Kepala Sekolah jika ada Guru Izin atau Tidak Hadir */}
+      {absentAndLeaveRecords.length > 0 && (
+        <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-rose-600 text-white p-4 sm:p-5 rounded-2xl shadow-md border border-amber-300/40 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-3.5">
+            <div className="p-3 bg-white/20 rounded-xl backdrop-blur-xs shrink-0 shadow-inner">
+              <Bell className="w-6 h-6 text-white animate-bounce" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="px-2.5 py-0.5 bg-white/25 text-white rounded-full text-[10px] font-black uppercase tracking-wider border border-white/30">
+                  Notifikasi Kepala Sekolah & Pimpinan
+                </span>
+                <span className="text-xs font-extrabold uppercase tracking-wide text-amber-100">
+                  Ketidakhadiran Guru Terdeteksi ({absentAndLeaveRecords.length} Sesi)
+                </span>
+              </div>
+              <p className="text-xs text-white font-medium mt-1 leading-relaxed">
+                Pemberitahuan kepada Kepala Sekolah & Manajemen: Terdaftar{" "}
+                {tidakHadirRecords.length > 0 && <strong className="underline font-bold">{tidakHadirRecords.length} Sesi Tidak Hadir (Alpa)</strong>}
+                {tidakHadirRecords.length > 0 && (izinRecords.length > 0 || sakitRecords.length > 0) && ", "}
+                {izinRecords.length > 0 && <strong className="underline font-bold">{izinRecords.length} Sesi Izin</strong>}
+                {izinRecords.length > 0 && sakitRecords.length > 0 && ", "}
+                {sakitRecords.length > 0 && <strong className="underline font-bold">{sakitRecords.length} Sesi Sakit</strong>}
+                . Silakan periksa rincian terurut untuk koordinasi penugasan/guru pengganti.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setCardDetailModal({
+              isOpen: true,
+              title: "Detail Ketidakhadiran Guru (Izin, Sakit & Tidak Hadir)",
+              subtitle: "Data diurutkan berdasarkan Abjad Nama Guru (A-Z) dan Sesi JP (JP 1 - JP 8)",
+              categoryKey: "absent_leave",
+              records: absentAndLeaveRecords
+            })}
+            className="px-4 py-2.5 bg-white text-slate-900 hover:bg-slate-100 font-extrabold text-xs rounded-xl transition-all shadow-md shrink-0 flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <Eye className="w-4 h-4 text-rose-600" />
+            Lihat Detail Rekap ({absentAndLeaveRecords.length} Sesi)
+          </button>
+        </div>
+      )}
 
       {/* Alert Banner: Pending Unreplaced JP Notification */}
       {pendingReplacementExchanges.length > 0 && (

@@ -47,7 +47,8 @@ import {
   FileText,
   ExternalLink,
   ClipboardList,
-  AlertTriangle
+  AlertTriangle,
+  Bell
 } from "lucide-react";
 import { 
   BarChart, 
@@ -2598,8 +2599,38 @@ export const Dashboard: React.FC = () => {
               const effectiveTotal = totalSesi - kbmDitiadakanItems.length;
               const attendancePct = effectiveTotal > 0 ? Math.round(((hadirItems.length + digantiItems.length) / effectiveTotal) * 100) : (totalSesi > 0 && todayTeachingAttendance?.isKbmDisabled ? 100 : 0);
 
+              const hasAbsentOrLeave = izinItems.length > 0 || tidakHadirItems.length > 0;
+
               return (
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                <div className="space-y-3">
+                  {hasAbsentOrLeave && (
+                    <div className="p-3.5 bg-gradient-to-r from-amber-500/15 via-orange-500/15 to-rose-500/15 border border-amber-500/30 rounded-2xl text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-slate-800 dark:text-zinc-100 shadow-xs">
+                      <div className="flex items-center gap-2.5">
+                        <div className="p-2 bg-amber-500 text-white rounded-xl shrink-0 shadow-xs">
+                          <Bell className="w-4 h-4 animate-bounce" />
+                        </div>
+                        <div>
+                          <div className="font-extrabold text-amber-900 dark:text-amber-200 uppercase tracking-wide text-[11px]">
+                            Notifikasi Kepemimpinan / Kepala Sekolah
+                          </div>
+                          <p className="text-slate-700 dark:text-zinc-300 font-medium mt-0.5">
+                            Hari ini terdaftar {izinItems.length > 0 ? <strong>{izinItems.length} guru izin/sakit/tugas</strong> : null}
+                            {izinItems.length > 0 && tidakHadirItems.length > 0 ? " dan " : null}
+                            {tidakHadirItems.length > 0 ? <strong className="text-rose-600 dark:text-rose-400">{tidakHadirItems.length} guru tidak hadir (alpa)</strong> : null}.
+                          </p>
+                        </div>
+                      </div>
+                      <Link
+                        to="/teacher-teaching-attendance"
+                        className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shrink-0 transition-all shadow-xs flex items-center justify-center gap-1 cursor-pointer"
+                      >
+                        <span>Lihat Detail Rekap</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </Link>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
                   <div
                     onClick={() => setDrilldownModal({ isOpen: true, title: "Daftar Guru Mengajar Hari Ini", type: "teaching_attendance_detail", data: items })}
                     className="p-3.5 bg-slate-50 dark:bg-zinc-850 hover:bg-slate-100 dark:hover:bg-zinc-800 border border-slate-200 dark:border-zinc-750 rounded-2xl cursor-pointer transition-all space-y-1 group"
@@ -2651,7 +2682,8 @@ export const Dashboard: React.FC = () => {
                     <p className="text-[9px] text-blue-100/80">Realtime KBM</p>
                   </div>
                 </div>
-              );
+              </div>
+            );
             })()}
           </div>
 
