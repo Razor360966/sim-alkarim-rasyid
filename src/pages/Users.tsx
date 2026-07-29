@@ -1508,14 +1508,14 @@ const confirmDeleteAccount = async () => {
               { 
                 role: "Ketua Yayasan", 
                 priority: 1, 
-                desc: "Hanya untuk memantau aktivitas operasional sekolah. Memiliki akses penuh read-only tanpa hak manipulasi data.",
-                permissions: ["Akses Semua Dashboard", "Rekap Jurnal Mengajar & Halaqah", "Grafik Kinerja SDM", "Hanya Lihat (Read-Only)"]
+                desc: "Memantau aktivitas operasional sekolah, laporan keuangan, serta memiliki akses pengisian jurnal dan pemantauan kinerja.",
+                permissions: ["Akses Semua Dashboard", "Rekap & Input Jurnal Mengajar", "Grafik Kinerja SDM", "Pemantauan Operasional"]
               },
               { 
                 role: "Kepala Sekolah", 
                 priority: 2, 
-                desc: "Akses komprehensif terhadap seluruh modul sekolah. Melakukan supervisi akademik & penilaian rapor kinerja guru.",
-                permissions: ["Akses Semua Modul Akademik", "Lakukan Penilaian & Supervisi", "Rekapitulasi Kinerja", "Validasi Jurnal Guru"]
+                desc: "Akses komprehensif terhadap seluruh modul sekolah, supervisi akademik, pengisian jurnal, serta penilaian kinerja guru.",
+                permissions: ["Akses Semua Modul Akademik", "Input & Validasi Jurnal Mengajar", "Supervisi Akademik", "Rekapitulasi Kinerja SDM"]
               },
               { 
                 role: "Wakil Kepala Sekolah (Waka)", 

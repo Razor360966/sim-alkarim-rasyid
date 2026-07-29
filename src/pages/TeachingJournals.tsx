@@ -81,7 +81,14 @@ export const TeachingJournals: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
 
+  const userRoles = user?.roles || [user?.role || ""];
+  const isAdmin = userRoles.includes("admin") || user?.role === "admin";
+  const isKepalaSekolah = userRoles.includes("kepala sekolah") || user?.role === "kepala sekolah";
+  const isKetuaYayasan = userRoles.includes("ketua yayasan") || user?.role === "ketua yayasan";
+  const isWaka = userRoles.includes("wakil kepala sekolah") || user?.role === "wakil kepala sekolah";
+  const isPimpinan = userRoles.includes("pimpinan") || user?.role === "pimpinan";
   const isGuru = user?.role === "guru";
+  const canWriteJournal = isGuru || isKepalaSekolah || isKetuaYayasan || isAdmin || isWaka || isPimpinan || !!user?.teacherId;
 
   // Active Year & Semester Queries
   const { data: activeYear, isLoading: isLoadingYear } = useQuery({
@@ -313,10 +320,25 @@ export const TeachingJournals: React.FC = () => {
     const fetchSchedules = async () => {
       try {
         const allScheds = await scheduleService.getSchedules(activeYear.id, activeSemester.id);
-        const filtered = allScheds.filter(s => 
-          s.teacherId === user?.teacherId && 
+        
+        // Find matching teacher ID for current user if available
+        const matchedTeacher = teachers.find(t => 
+          t.id === user?.teacherId ||
+          t.email?.toLowerCase() === user?.email?.toLowerCase() || 
+          t.name?.toLowerCase() === (user?.displayName || user?.name)?.toLowerCase()
+        );
+        const currentTeacherId = user?.teacherId || matchedTeacher?.id;
+
+        let filtered = allScheds.filter(s => 
+          currentTeacherId && s.teacherId === currentTeacherId && 
           s.day.toLowerCase() === dayName.toLowerCase()
         );
+
+        // If user has no specific schedule on this day or is management/leadership, fall back to all schedules on that day
+        if (filtered.length === 0) {
+          filtered = allScheds.filter(s => s.day.toLowerCase() === dayName.toLowerCase());
+        }
+
         setSchedulesForDate(filtered);
 
         const consolidated = consolidateSchedulesToMeetings(filtered);
@@ -381,11 +403,9 @@ export const TeachingJournals: React.FC = () => {
       }
     };
 
-    if (isGuru) {
-      fetchSchedules();
-    }
+    fetchSchedules();
     checkEffectiveness();
-  }, [selectedDate, activeYear, activeSemester, isGuru, user, searchParams, students, subjects]);
+  }, [selectedDate, activeYear, activeSemester, isGuru, user, searchParams, students, subjects, teachers]);
 
   // Handle schedule/meeting selection
   const handleScheduleChange = async (meetingId: string) => {
@@ -570,9 +590,16 @@ export const TeachingJournals: React.FC = () => {
     const daysIndonesian = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
     const dayName = daysIndonesian[new Date(selectedDate).getDay()];
 
+    const assignedTeacher = teachers.find(t => t.id === targetSched?.teacherId) ||
+                            teachers.find(t => t.id === user?.teacherId) ||
+                            teachers.find(t => t.email?.toLowerCase() === user?.email?.toLowerCase() || t.name?.toLowerCase() === (user?.displayName || user?.name)?.toLowerCase());
+
+    const resolvedTeacherId = targetSched?.teacherId || assignedTeacher?.id || user?.teacherId || "GURU_ALM_01";
+    const resolvedTeacherName = targetSched?.teacherName || assignedTeacher?.name || user?.teacherName || user?.displayName || user?.name || "Guru Pengampu";
+
     const payload = {
-      teacherId: user?.teacherId || "GURU_ALM_01",
-      teacherName: user?.teacherName || user?.displayName || "Guru Pengampu",
+      teacherId: resolvedTeacherId,
+      teacherName: resolvedTeacherName,
       academicYearId: activeYear?.id || "",
       academicYearName: activeYear?.year || "",
       semesterId: activeSemester?.id || "",
@@ -792,7 +819,7 @@ export const TeachingJournals: React.FC = () => {
           <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">Jurnal Mengajar Guru</h1>
           <p className="text-sm text-gray-500 dark:text-zinc-400">Modul pencatatan, pemantauan, dan verifikasi jurnal mengajar guru terintegrasi prota/promes.</p>
         </div>
-        {isGuru && (
+        {canWriteJournal && (
           <button
             onClick={() => {
               setSelectedJournal(null);
@@ -920,7 +947,7 @@ export const TeachingJournals: React.FC = () => {
                 <Eye className="h-4 w-4" />
               </button>
 
-              {isGuru && j.status === "Draft" && (
+              {(canWriteJournal || j.createdBy === user?.userId || j.teacherId === user?.teacherId) && j.status === "Draft" && (
                 <button
                   onClick={() => handleEditOpen(j)}
                   className="p-1.5 hover:bg-blue-50 dark:hover:bg-blue-950/30 text-blue-500 hover:text-blue-700 dark:hover:text-blue-300 rounded-lg transition-colors cursor-pointer"
@@ -930,7 +957,7 @@ export const TeachingJournals: React.FC = () => {
                 </button>
               )}
 
-              {isGuru && j.status === "Ditolak" && (
+              {(canWriteJournal || j.createdBy === user?.userId || j.teacherId === user?.teacherId) && j.status === "Ditolak" && (
                 <button
                   onClick={() => handleEditOpen(j)}
                   className="p-1.5 hover:bg-amber-50 dark:hover:bg-amber-950/30 text-amber-500 hover:text-amber-700 dark:hover:text-amber-300 rounded-lg transition-colors cursor-pointer"
@@ -940,7 +967,7 @@ export const TeachingJournals: React.FC = () => {
                 </button>
               )}
 
-              {isGuru && j.status === "Draft" && (
+              {(canWriteJournal || j.createdBy === user?.userId || j.teacherId === user?.teacherId) && j.status === "Draft" && (
                 <button
                   onClick={() => {
                     setSelectedJournal(j);
