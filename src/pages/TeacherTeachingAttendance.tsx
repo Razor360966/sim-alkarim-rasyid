@@ -43,8 +43,26 @@ import {
   Trash2,
   Edit2,
   PlusCircle,
-  History
+  History,
+  Users,
+  HelpCircle,
+  Activity,
+  TrendingUp,
+  Eye,
+  BookOpen,
+  Layers
 } from "lucide-react";
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Cell,
+  Legend
+} from "recharts";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 
@@ -523,14 +541,34 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
     });
   }, [localAttendanceItems, searchQuery, statusFilter]);
 
-  // --- TAB 2: REKAP ABSENSI ---
-  const [rekapPeriodType, setRekapPeriodType] = useState<"mingguan" | "bulanan" | "semester" | "tahunan" | "custom">("semester");
-  const [rekapStartDate, setRekapStartDate] = useState<string>("");
-  const [rekapEndDate, setRekapEndDate] = useState<string>("");
+  // --- TAB 2: REKAP ABSENSI & EXCEPTION FIRST DASHBOARD ---
+  const [rekapPeriodType, setRekapPeriodType] = useState<"harian" | "mingguan" | "bulanan" | "semester" | "tahunan" | "custom">("harian");
+  const [rekapStartDate, setRekapStartDate] = useState<string>(todayStr);
+  const [rekapEndDate, setRekapEndDate] = useState<string>(todayStr);
   const [filterTeacherId, setFilterTeacherId] = useState<string>("");
   const [filterSubjectId, setFilterSubjectId] = useState<string>("");
   const [filterGradeLevel, setFilterGradeLevel] = useState<string>("");
   const [filterClassId, setFilterClassId] = useState<string>("");
+
+  // Exception Card Detail Modal State
+  const [cardDetailModal, setCardDetailModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    category: string;
+    records: TeacherTeachingAttendance[];
+  } | null>(null);
+
+  const [cardModalSearch, setCardModalSearch] = useState<string>("");
+
+  const openDetailModal = (title: string, category: string, records: TeacherTeachingAttendance[]) => {
+    setCardModalSearch("");
+    setCardDetailModal({
+      isOpen: true,
+      title,
+      category,
+      records
+    });
+  };
 
   // Update date range defaults when period type changes
   useEffect(() => {
@@ -539,10 +577,10 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
       setRekapStartDate(selectedDate || todayStr);
       setRekapEndDate(selectedDate || todayStr);
     } else if (rekapPeriodType === "mingguan") {
-      const first = now.getDate() - now.getDay() + 1; // Monday
-      const last = first + 6;
-      const monday = new Date(now.setDate(first)).toISOString().split("T")[0];
-      const sunday = new Date(now.setDate(last)).toISOString().split("T")[0];
+      const day = now.getDay();
+      const diffToMon = now.getDate() - day + (day === 0 ? -6 : 1);
+      const monday = new Date(now.setDate(diffToMon)).toISOString().split("T")[0];
+      const sunday = new Date(now.setDate(diffToMon + 6)).toISOString().split("T")[0];
       setRekapStartDate(monday);
       setRekapEndDate(sunday);
     } else if (rekapPeriodType === "bulanan") {
@@ -555,7 +593,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
       setRekapStartDate("");
       setRekapEndDate("");
     }
-  }, [rekapPeriodType, selectedDate]);
+  }, [rekapPeriodType, selectedDate, todayStr]);
 
   // Pending replacement check
   const pendingReplacementExchanges = useMemo(() => {
@@ -575,6 +613,129 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
       classId: filterClassId || undefined
     })
   });
+
+  // Extract raw records for Exception First Dashboard
+  const rawRecords = useMemo(() => rekapData?.rawRecords || [], [rekapData]);
+
+  // Scheduled / Active Teachers count in selected filter range
+  const guruMengajarList = useMemo(() => {
+    const teacherMap = new Map<string, string>();
+    rawRecords.forEach(r => {
+      if (r.teacherId) teacherMap.set(r.teacherId, r.teacherName || "Guru");
+      if (r.substituteTeacherId) teacherMap.set(r.substituteTeacherId, r.substituteTeacherName || "Guru Pengganti");
+    });
+    return Array.from(teacherMap.entries()).map(([id, name]) => ({ id, name }));
+  }, [rawRecords]);
+
+  // Categorized Exception Record Sets
+  const hadirRecords = useMemo(() => rawRecords.filter(r => r.status === "Hadir Mengajar" || r.status === "Terlambat"), [rawRecords]);
+  const tugasRecords = useMemo(() => rawRecords.filter(r => r.status === "Tugas Dinas"), [rawRecords]);
+  const izinRecords = useMemo(() => rawRecords.filter(r => r.status === "Izin"), [rawRecords]);
+  const sakitRecords = useMemo(() => rawRecords.filter(r => r.status === "Sakit"), [rawRecords]);
+  const digantiRecords = useMemo(() => rawRecords.filter(r => r.status === "Digantikan Guru Lain"), [rawRecords]);
+  const tukarJpRecords = useMemo(() => rawRecords.filter(r => r.status === "Tukar Jadwal"), [rawRecords]);
+  const tidakHadirRecords = useMemo(() => rawRecords.filter(r => r.status === "Tidak Hadir"), [rawRecords]);
+  const belumDiverifikasiRecords = useMemo(() => rawRecords.filter(r => !r.status || r.status === "Belum Diverifikasi"), [rawRecords]);
+
+  // Unreplaced teaching sessions: status Digantikan Guru Lain but substitute teacher is missing
+  const unreplacedRecords = useMemo(() => digantiRecords.filter(r => !r.substituteTeacherId && !r.substituteTeacherName), [digantiRecords]);
+
+  // Critical exception sessions requiring urgent attention / action
+  const criticalRecords = useMemo(() => [
+    ...tidakHadirRecords,
+    ...unreplacedRecords,
+    ...sakitRecords,
+    ...izinRecords
+  ], [tidakHadirRecords, unreplacedRecords, sakitRecords, izinRecords]);
+
+  // Attendance Status Distribution Chart Data
+  const chartDistributionData = useMemo(() => [
+    { name: "Hadir", label: "Guru Hadir", count: hadirRecords.length, fill: "#10b981", key: "hadir" },
+    { name: "Tugas Dinas", label: "Tugas Dinas", count: tugasRecords.length, fill: "#3b82f6", key: "tugas" },
+    { name: "Izin", label: "Guru Izin", count: izinRecords.length, fill: "#eab308", key: "izin" },
+    { name: "Sakit", label: "Guru Sakit", count: sakitRecords.length, fill: "#f59e0b", key: "sakit" },
+    { name: "Digantikan", label: "Guru Digantikan", count: digantiRecords.length, fill: "#f97316", key: "diganti" },
+    { name: "Tukar JP", label: "Guru Tukar JP", count: tukarJpRecords.length, fill: "#8b5cf6", key: "tukar" },
+    { name: "Tidak Hadir", label: "Tidak Hadir", count: tidakHadirRecords.length, fill: "#f43f5e", key: "alpa" },
+    { name: "Belum Verifikasi", label: "Belum Verifikasi", count: belumDiverifikasiRecords.length, fill: "#64748b", key: "unverified" }
+  ], [hadirRecords, tugasRecords, izinRecords, sakitRecords, digantiRecords, tukarJpRecords, tidakHadirRecords, belumDiverifikasiRecords]);
+
+  // Helper to extract numerical JP for sorting
+  const parseJpNum = (record: TeacherTeachingAttendance): number => {
+    if (typeof record.sequence === "number" && record.sequence > 0) {
+      return record.sequence;
+    }
+    if (record.jp) {
+      const match = record.jp.match(/\d+/);
+      if (match) {
+        return parseInt(match[0], 10);
+      }
+    }
+    return 0;
+  };
+
+  const sortRecordsByNameAndJp = (records: TeacherTeachingAttendance[]): TeacherTeachingAttendance[] => {
+    return [...records].sort((a, b) => {
+      // 1. Sort by Teacher Name (A to Z)
+      const nameA = (a.teacherName || "").trim().toLowerCase();
+      const nameB = (b.teacherName || "").trim().toLowerCase();
+      const nameComp = nameA.localeCompare(nameB, "id", { sensitivity: "base" });
+      if (nameComp !== 0) return nameComp;
+
+      // 2. Sort by Date ascending (for multi-date views)
+      const dateA = a.date || "";
+      const dateB = b.date || "";
+      const dateComp = dateA.localeCompare(dateB);
+      if (dateComp !== 0) return dateComp;
+
+      // 3. Sort by JP Number (JP 1 to JP 8)
+      const jpA = parseJpNum(a);
+      const jpB = parseJpNum(b);
+      return jpA - jpB;
+    });
+  };
+
+  // Filtered and sorted records inside Modal
+  const filteredModalRecords = useMemo(() => {
+    if (!cardDetailModal?.records) return [];
+    
+    // Sort records alphabetically by teacher name, then chronologically by date and JP 1-8
+    const sorted = sortRecordsByNameAndJp(cardDetailModal.records);
+
+    if (!cardModalSearch.trim()) return sorted;
+    const q = cardModalSearch.toLowerCase();
+    return sorted.filter(r => 
+      r.teacherName?.toLowerCase().includes(q) ||
+      r.subjectName?.toLowerCase().includes(q) ||
+      r.className?.toLowerCase().includes(q) ||
+      r.substituteTeacherName?.toLowerCase().includes(q) ||
+      r.exchangedWithTeacherName?.toLowerCase().includes(q) ||
+      r.notes?.toLowerCase().includes(q) ||
+      r.date?.includes(q) ||
+      r.jp?.toLowerCase().includes(q)
+    );
+  }, [cardDetailModal, cardModalSearch]);
+
+  const handleExportModalExcel = (title: string, records: TeacherTeachingAttendance[]) => {
+    const dataToExport = records.map((item, idx) => ({
+      No: idx + 1,
+      Tanggal: item.date,
+      Hari: item.day,
+      "Nama Guru": item.teacherName,
+      "Mata Pelajaran": item.subjectName,
+      Kelas: item.className,
+      "No. JP / Jam": `${item.jp} (${item.timeSlot || "-"})`,
+      Status: item.status,
+      "Guru Pengganti": item.substituteTeacherName || "-",
+      "Guru Penukar": item.exchangedWithTeacherName || "-",
+      Catatan: item.notes || "-"
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Detail_Exception");
+    XLSX.writeFile(workbook, `${title.replace(/\s+/g, "_")}.xlsx`);
+  };
 
   // Modal Detail History
   const [detailTeacher, setDetailTeacher] = useState<{ id: string; name: string } | null>(null);
@@ -1369,38 +1530,85 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
       )}
 
       {/* ========================================================= */}
-      {/* TAB 2: REKAP ABSENSI MENGAJAR                             */}
+      {/* TAB 2: DASHBOARD REKAP ABSENSI GURU (EXCEPTION FIRST)     */}
       {/* ========================================================= */}
       {activeTab === "rekap" && (
         <div className="space-y-6">
-          {/* Rekap Filter Bar */}
-          <div className="bg-white dark:bg-zinc-900 p-5 rounded-2xl border border-slate-200/80 dark:border-zinc-800 shadow-xs space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-150 dark:border-zinc-800 pb-3">
-              <div className="flex items-center gap-2">
-                <Filter className="w-4 h-4 text-blue-600" />
-                <h3 className="text-sm font-bold text-slate-800 dark:text-zinc-100">Filter Rekapitulasi Kehadiran Guru</h3>
+
+          {/* 1. BANNER INFORMASI PRIORITAS (CRITICAL EXCEPTION BANNER) */}
+          {criticalRecords.length > 0 && (
+            <div className="bg-gradient-to-r from-rose-600 via-rose-700 to-amber-600 text-white p-4 sm:p-5 rounded-2xl shadow-lg border border-rose-400/40 flex flex-col md:flex-row md:items-center justify-between gap-4 animate-pulse-subtle">
+              <div className="flex items-start sm:items-center gap-3.5">
+                <div className="p-3 bg-white/20 rounded-xl backdrop-blur-md shrink-0 shadow-inner">
+                  <ShieldAlert className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h4 className="font-extrabold text-sm text-white tracking-wide uppercase">
+                      PERHATIAN: EXCEPTION DETECTED!
+                    </h4>
+                    <span className="px-2.5 py-0.5 bg-white/25 text-white rounded-full text-[10px] font-black uppercase tracking-wider border border-white/30">
+                      {criticalRecords.length} Sesi Kritis
+                    </span>
+                  </div>
+                  <p className="text-xs text-rose-100 font-medium mt-1 leading-relaxed">
+                    {unreplacedRecords.length > 0 
+                      ? `Perhatian: Terdapat ${unreplacedRecords.length} sesi pembelajaran yang belum memiliki guru pengganti.` 
+                      : `Perhatian: Terdapat ${tidakHadirRecords.length} guru tidak hadir (alpa), ${sakitRecords.length} guru sakit, dan ${izinRecords.length} guru izin yang perlu ditindaklanjuti.`}
+                  </p>
+                </div>
               </div>
 
-              {/* Periode Selector */}
+              <button
+                type="button"
+                onClick={() => openDetailModal("Sesi Kritis Memerlukan Tindak Lanjut", "kritis", criticalRecords)}
+                className="px-4 py-2.5 bg-white hover:bg-rose-50 text-rose-950 font-black text-xs rounded-xl shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer shrink-0 border border-white/80 active:scale-95"
+              >
+                <AlertTriangle className="w-4 h-4 text-rose-600" />
+                <span>Lihat & Tindak Lanjut ({criticalRecords.length})</span>
+                <ChevronRight className="w-4 h-4 text-rose-800" />
+              </button>
+            </div>
+          )}
+
+          {/* 2. REKAP FILTER BAR */}
+          <div className="bg-white dark:bg-zinc-900 p-5 rounded-2xl border border-slate-200/80 dark:border-zinc-800 shadow-xs space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-150 dark:border-zinc-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Filter className="w-4 h-4 text-blue-600" />
+                <h3 className="text-sm font-bold text-slate-800 dark:text-zinc-100">Filter Monitoring & Rekapitulasi</h3>
+                <span className="text-xs text-slate-400 font-normal">
+                  ({rekapStartDate === rekapEndDate ? rekapStartDate : `${rekapStartDate} s/d ${rekapEndDate}`})
+                </span>
+              </div>
+
+              {/* Periode Selector Buttons */}
               <div className="flex items-center gap-1 bg-slate-100 dark:bg-zinc-800 p-1 rounded-xl flex-wrap">
-                {(["harian", "mingguan", "bulanan", "semester", "tahunan", "custom"] as const).map(p => (
+                {[
+                  { id: "harian", label: "Hari Ini" },
+                  { id: "mingguan", label: "Minggu Ini" },
+                  { id: "bulanan", label: "Bulan Ini" },
+                  { id: "semester", label: "Semester" },
+                  { id: "custom", label: "Rentang Tanggal Bebas" }
+                ].map(p => (
                   <button
-                    key={p}
-                    onClick={() => setRekapPeriodType(p)}
-                    className={`px-3 py-1 rounded-lg text-xs font-bold capitalize transition-all cursor-pointer ${
-                      rekapPeriodType === p
-                        ? "bg-white dark:bg-zinc-900 text-blue-600 dark:text-blue-400 shadow-xs"
-                        : "text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200"
+                    key={p.id}
+                    onClick={() => setRekapPeriodType(p.id as any)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      rekapPeriodType === p.id
+                        ? "bg-blue-600 text-white shadow-xs"
+                        : "text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200 hover:bg-slate-200/60 dark:hover:bg-zinc-700/60"
                     }`}
                   >
-                    {p === "custom" ? "Rentang Tanggal Bebas" : p}
+                    {p.label}
                   </button>
                 ))}
               </div>
             </div>
 
+            {/* Custom Date Range Picker */}
             {rekapPeriodType === "custom" && (
-              <div className="flex items-center gap-3 p-3 bg-blue-50/50 dark:bg-blue-950/30 rounded-xl border border-blue-200/60 dark:border-blue-900/40">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 p-3 bg-blue-50/50 dark:bg-blue-950/30 rounded-xl border border-blue-200/60 dark:border-blue-900/40">
                 <span className="text-xs font-bold text-blue-900 dark:text-blue-200">Rentang Tanggal Custom:</span>
                 <div className="flex items-center gap-2">
                   <label className="text-[10px] font-bold text-slate-500">Mulai:</label>
@@ -1482,13 +1690,14 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
 
               <div className="flex items-end">
                 <button
+                  type="button"
                   onClick={() => {
                     setFilterTeacherId("");
                     setFilterSubjectId("");
                     setFilterGradeLevel("");
                     setFilterClassId("");
                   }}
-                  className="w-full px-3 py-2 bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 text-slate-700 dark:text-zinc-300 font-bold rounded-xl text-xs transition-colors cursor-pointer"
+                  className="w-full px-3 py-2 bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-300 font-bold rounded-xl text-xs transition-colors cursor-pointer"
                 >
                   Reset Filter
                 </button>
@@ -1496,8 +1705,330 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
             </div>
           </div>
 
-          {/* Summary Rekap Table */}
+          {/* 3. EXCEPTION-FIRST KPI SUMMARY CARDS */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 dark:text-zinc-400 flex items-center gap-1.5">
+                <Activity className="w-4 h-4 text-blue-600" />
+                Ringkasan Status Kehadiran (Klik Kartu Untuk Detail)
+              </h3>
+              <span className="text-[11px] font-semibold text-slate-400">
+                Actionable Exception First Dashboard
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-9 gap-3">
+              {/* Card 1: Guru Mengajar */}
+              <div
+                onClick={() => openDetailModal("Guru Mengajar (Jadwal & Sesi)", "mengajar", rawRecords)}
+                className="bg-slate-900 text-white p-3.5 rounded-2xl shadow-xs hover:shadow-md hover:scale-[1.02] transition-all cursor-pointer border border-slate-800 flex flex-col justify-between group"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[11px] font-bold text-slate-300">Guru Mengajar</span>
+                    <Users className="w-4 h-4 text-slate-400 group-hover:scale-110 transition-transform" />
+                  </div>
+                  <div className="text-xl font-black text-white">
+                    {guruMengajarList.length} <span className="text-xs font-normal text-slate-400">Guru</span>
+                  </div>
+                </div>
+                <div className="mt-2 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[10px] text-slate-400">
+                  <span>{rawRecords.length} Total Sesi</span>
+                  <ChevronRight className="w-3 h-3 text-slate-500 group-hover:translate-x-0.5 transition-transform" />
+                </div>
+              </div>
+
+              {/* Card 2: Guru Hadir (HIJAU) */}
+              <div
+                onClick={() => openDetailModal("Guru Hadir Mengajar", "hadir", hadirRecords)}
+                className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800/80 p-3.5 rounded-2xl shadow-xs hover:shadow-md hover:scale-[1.02] transition-all cursor-pointer flex flex-col justify-between group"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[11px] font-bold text-emerald-900 dark:text-emerald-200">Guru Hadir</span>
+                    <UserCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
+                  </div>
+                  <div className="text-2xl font-black text-emerald-700 dark:text-emerald-300">
+                    {hadirRecords.length}
+                  </div>
+                </div>
+                <div className="mt-2 pt-2 border-t border-emerald-200/60 dark:border-emerald-900/50 flex items-center justify-between text-[10px] font-bold text-emerald-800 dark:text-emerald-300">
+                  <span>Sesi Hadir</span>
+                  <ChevronRight className="w-3 h-3 text-emerald-600 group-hover:translate-x-0.5 transition-transform" />
+                </div>
+              </div>
+
+              {/* Card 3: Guru Tugas Dinas (BIRU) */}
+              <div
+                onClick={() => openDetailModal("Guru Tugas Dinas", "tugas", tugasRecords)}
+                className="bg-blue-50 dark:bg-blue-950/40 border border-blue-300 dark:border-blue-800/80 p-3.5 rounded-2xl shadow-xs hover:shadow-md hover:scale-[1.02] transition-all cursor-pointer flex flex-col justify-between group"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[11px] font-bold text-blue-900 dark:text-blue-200">Guru Tugas Dinas</span>
+                    <Clock className="w-4 h-4 text-blue-600 dark:text-blue-400 group-hover:scale-110 transition-transform" />
+                  </div>
+                  <div className="text-2xl font-black text-blue-700 dark:text-blue-300">
+                    {tugasRecords.length}
+                  </div>
+                </div>
+                <div className="mt-2 pt-2 border-t border-blue-200/60 dark:border-blue-900/50 flex items-center justify-between text-[10px] font-bold text-blue-800 dark:text-blue-300">
+                  <span>Sesi Dinas</span>
+                  <ChevronRight className="w-3 h-3 text-blue-600 group-hover:translate-x-0.5 transition-transform" />
+                </div>
+              </div>
+
+              {/* Card 4: Guru Izin (KUNING) */}
+              <div
+                onClick={() => openDetailModal("Guru Izin", "izin", izinRecords)}
+                className="bg-yellow-50 dark:bg-yellow-950/40 border border-yellow-300 dark:border-yellow-800/80 p-3.5 rounded-2xl shadow-xs hover:shadow-md hover:scale-[1.02] transition-all cursor-pointer flex flex-col justify-between group"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[11px] font-bold text-yellow-900 dark:text-yellow-200">Guru Izin</span>
+                    <Info className="w-4 h-4 text-yellow-600 dark:text-yellow-400 group-hover:scale-110 transition-transform" />
+                  </div>
+                  <div className="text-2xl font-black text-yellow-700 dark:text-yellow-300">
+                    {izinRecords.length}
+                  </div>
+                </div>
+                <div className="mt-2 pt-2 border-t border-yellow-200/60 dark:border-yellow-900/50 flex items-center justify-between text-[10px] font-bold text-yellow-800 dark:text-yellow-300">
+                  <span>Sesi Izin</span>
+                  <ChevronRight className="w-3 h-3 text-yellow-600 group-hover:translate-x-0.5 transition-transform" />
+                </div>
+              </div>
+
+              {/* Card 5: Guru Sakit (AMBER) */}
+              <div
+                onClick={() => openDetailModal("Guru Sakit", "sakit", sakitRecords)}
+                className="bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800/80 p-3.5 rounded-2xl shadow-xs hover:shadow-md hover:scale-[1.02] transition-all cursor-pointer flex flex-col justify-between group"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[11px] font-bold text-amber-900 dark:text-amber-200">Guru Sakit</span>
+                    <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-transform" />
+                  </div>
+                  <div className="text-2xl font-black text-amber-700 dark:text-amber-300">
+                    {sakitRecords.length}
+                  </div>
+                </div>
+                <div className="mt-2 pt-2 border-t border-amber-200/60 dark:border-amber-900/50 flex items-center justify-between text-[10px] font-bold text-amber-800 dark:text-amber-300">
+                  <span>Sesi Sakit</span>
+                  <ChevronRight className="w-3 h-3 text-amber-600 group-hover:translate-x-0.5 transition-transform" />
+                </div>
+              </div>
+
+              {/* Card 6: Guru Digantikan (ORANYE) */}
+              <div
+                onClick={() => openDetailModal("Guru / Sesi Digantikan", "diganti", digantiRecords)}
+                className="bg-orange-50 dark:bg-orange-950/40 border border-orange-300 dark:border-orange-800/80 p-3.5 rounded-2xl shadow-xs hover:shadow-md hover:scale-[1.02] transition-all cursor-pointer flex flex-col justify-between group"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[11px] font-bold text-orange-900 dark:text-orange-200">Guru Digantikan</span>
+                    <RefreshCw className="w-4 h-4 text-orange-600 dark:text-orange-400 group-hover:rotate-45 transition-transform" />
+                  </div>
+                  <div className="text-2xl font-black text-orange-700 dark:text-orange-300">
+                    {digantiRecords.length}
+                  </div>
+                </div>
+                <div className="mt-2 pt-2 border-t border-orange-200/60 dark:border-orange-900/50 flex items-center justify-between text-[10px] font-bold text-orange-800 dark:text-orange-300">
+                  <span>{unreplacedRecords.length > 0 ? `⚠️ ${unreplacedRecords.length} Belum Diganti` : "Sesi Diganti"}</span>
+                  <ChevronRight className="w-3 h-3 text-orange-600 group-hover:translate-x-0.5 transition-transform" />
+                </div>
+              </div>
+
+              {/* Card 7: Guru Tukar JP (UNGU / PURPLE) */}
+              <div
+                onClick={() => openDetailModal("Guru / Sesi Tukar JP", "tukar", tukarJpRecords)}
+                className="bg-purple-50 dark:bg-purple-950/40 border border-purple-300 dark:border-purple-800/80 p-3.5 rounded-2xl shadow-xs hover:shadow-md hover:scale-[1.02] transition-all cursor-pointer flex flex-col justify-between group"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[11px] font-bold text-purple-900 dark:text-purple-200">Guru Tukar JP</span>
+                    <ArrowRightLeft className="w-4 h-4 text-purple-600 dark:text-purple-400 group-hover:scale-110 transition-transform" />
+                  </div>
+                  <div className="text-2xl font-black text-purple-700 dark:text-purple-300">
+                    {tukarJpRecords.length}
+                  </div>
+                </div>
+                <div className="mt-2 pt-2 border-t border-purple-200/60 dark:border-purple-900/50 flex items-center justify-between text-[10px] font-bold text-purple-800 dark:text-purple-300">
+                  <span>Pertukaran JP</span>
+                  <ChevronRight className="w-3 h-3 text-purple-600 group-hover:translate-x-0.5 transition-transform" />
+                </div>
+              </div>
+
+              {/* Card 8: Guru Tidak Hadir (MERAH) */}
+              <div
+                onClick={() => openDetailModal("Guru Tidak Hadir (Alpa)", "alpa", tidakHadirRecords)}
+                className="bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800/80 p-3.5 rounded-2xl shadow-xs hover:shadow-md hover:scale-[1.02] transition-all cursor-pointer flex flex-col justify-between group"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[11px] font-bold text-rose-900 dark:text-rose-200">Guru Tidak Hadir</span>
+                    <UserX className="w-4 h-4 text-rose-600 dark:text-rose-400 group-hover:scale-110 transition-transform" />
+                  </div>
+                  <div className="text-2xl font-black text-rose-700 dark:text-rose-300">
+                    {tidakHadirRecords.length}
+                  </div>
+                </div>
+                <div className="mt-2 pt-2 border-t border-rose-200/60 dark:border-rose-900/50 flex items-center justify-between text-[10px] font-bold text-rose-800 dark:text-rose-300">
+                  <span>Tidak Hadir</span>
+                  <ChevronRight className="w-3 h-3 text-rose-600 group-hover:translate-x-0.5 transition-transform" />
+                </div>
+              </div>
+
+              {/* Card 9: Belum Diverifikasi (ABU-ABU) */}
+              <div
+                onClick={() => openDetailModal("Sesi Belum Diverifikasi", "unverified", belumDiverifikasiRecords)}
+                className="bg-slate-100 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 p-3.5 rounded-2xl shadow-xs hover:shadow-md hover:scale-[1.02] transition-all cursor-pointer flex flex-col justify-between group"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[11px] font-bold text-slate-800 dark:text-zinc-200">Belum Verifikasi</span>
+                    <HelpCircle className="w-4 h-4 text-slate-500 dark:text-zinc-400 group-hover:scale-110 transition-transform" />
+                  </div>
+                  <div className="text-2xl font-black text-slate-700 dark:text-zinc-300">
+                    {belumDiverifikasiRecords.length}
+                  </div>
+                </div>
+                <div className="mt-2 pt-2 border-t border-slate-200 dark:border-zinc-700 flex items-center justify-between text-[10px] font-bold text-slate-600 dark:text-zinc-400">
+                  <span>Sesi Belum Dihadirkan</span>
+                  <ChevronRight className="w-3 h-3 text-slate-500 group-hover:translate-x-0.5 transition-transform" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 4. GRAFIK DISTRIBUSI STATUS KEHADIRAN GURU */}
+          <div className="bg-white dark:bg-zinc-900 p-5 rounded-2xl border border-slate-200/80 dark:border-zinc-800 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-150 dark:border-zinc-800 pb-3">
+              <div>
+                <h3 className="text-sm font-extrabold text-slate-900 dark:text-zinc-100 flex items-center gap-2">
+                  <BarChart2 className="w-4 h-4 text-blue-600" />
+                  Grafik Distribusi Status Kehadiran Guru
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Visualisasi statistik distribusi kehadiran mengajar untuk periode terpilih ({rekapPeriodType}).
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-600 dark:text-zinc-300 bg-slate-50 dark:bg-zinc-800 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-zinc-700">
+                <span>Total Record:</span>
+                <span className="text-blue-600 font-black">{rawRecords.length} Sesi</span>
+              </div>
+            </div>
+
+            {rawRecords.length === 0 ? (
+              <div className="p-10 text-center text-xs text-slate-400 space-y-2">
+                <BarChart2 className="w-10 h-10 text-slate-300 mx-auto" />
+                <p>Belum ada data sesi mengajar terdata pada filter periode ini.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="h-64 w-full pt-2">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartDistributionData} margin={{ top: 10, right: 10, left: -20, bottom: 25 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                      <XAxis
+                        dataKey="name"
+                        tick={{ fontSize: 11, fontWeight: 700 }}
+                        interval={0}
+                        angle={-15}
+                        textAnchor="end"
+                      />
+                      <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                      <Tooltip
+                        content={({ active, payload }) => {
+                          if (active && payload && payload.length) {
+                            const data = payload[0].payload;
+                            const pct = rawRecords.length > 0 ? Math.round((data.count / rawRecords.length) * 100) : 0;
+                            return (
+                              <div className="bg-slate-900 text-white p-2.5 rounded-xl shadow-xl text-xs space-y-1 border border-slate-700">
+                                <div className="font-bold border-b border-slate-700 pb-1">{data.label}</div>
+                                <div className="flex items-center justify-between gap-4">
+                                  <span>Jumlah:</span>
+                                  <span className="font-extrabold text-amber-300">{data.count} Sesi</span>
+                                </div>
+                                <div className="flex items-center justify-between gap-4 text-[11px] text-slate-300">
+                                  <span>Persentase:</span>
+                                  <span>{pct}%</span>
+                                </div>
+                              </div>
+                            );
+                          }
+                          return null;
+                        }}
+                      />
+                      <Bar
+                        dataKey="count"
+                        radius={[8, 8, 0, 0]}
+                        onClick={(entry) => {
+                          if (entry && entry.key) {
+                            if (entry.key === "hadir") openDetailModal("Guru Hadir Mengajar", "hadir", hadirRecords);
+                            else if (entry.key === "tugas") openDetailModal("Guru Tugas Dinas", "tugas", tugasRecords);
+                            else if (entry.key === "izin") openDetailModal("Guru Izin", "izin", izinRecords);
+                            else if (entry.key === "sakit") openDetailModal("Guru Sakit", "sakit", sakitRecords);
+                            else if (entry.key === "diganti") openDetailModal("Guru / Sesi Digantikan", "diganti", digantiRecords);
+                            else if (entry.key === "tukar") openDetailModal("Guru / Sesi Tukar JP", "tukar", tukarJpRecords);
+                            else if (entry.key === "alpa") openDetailModal("Guru Tidak Hadir (Alpa)", "alpa", tidakHadirRecords);
+                            else if (entry.key === "unverified") openDetailModal("Sesi Belum Diverifikasi", "unverified", belumDiverifikasiRecords);
+                          }
+                        }}
+                        className="cursor-pointer hover:opacity-85 transition-opacity"
+                      >
+                        {chartDistributionData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.fill} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* Status Legend Pills */}
+                <div className="flex flex-wrap items-center justify-center gap-2 pt-2 border-t border-slate-100 dark:border-zinc-800">
+                  {chartDistributionData.map((item) => {
+                    const pct = rawRecords.length > 0 ? Math.round((item.count / rawRecords.length) * 100) : 0;
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() => {
+                          if (item.key === "hadir") openDetailModal("Guru Hadir Mengajar", "hadir", hadirRecords);
+                          else if (item.key === "tugas") openDetailModal("Guru Tugas Dinas", "tugas", tugasRecords);
+                          else if (item.key === "izin") openDetailModal("Guru Izin", "izin", izinRecords);
+                          else if (item.key === "sakit") openDetailModal("Guru Sakit", "sakit", sakitRecords);
+                          else if (item.key === "diganti") openDetailModal("Guru / Sesi Digantikan", "diganti", digantiRecords);
+                          else if (item.key === "tukar") openDetailModal("Guru / Sesi Tukar JP", "tukar", tukarJpRecords);
+                          else if (item.key === "alpa") openDetailModal("Guru Tidak Hadir (Alpa)", "alpa", tidakHadirRecords);
+                          else if (item.key === "unverified") openDetailModal("Sesi Belum Diverifikasi", "unverified", belumDiverifikasiRecords);
+                        }}
+                        className="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-zinc-800/80 dark:hover:bg-zinc-700/80 border border-slate-200 dark:border-zinc-700 text-xs font-bold transition-all cursor-pointer"
+                      >
+                        <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.fill }} />
+                        <span className="text-slate-700 dark:text-zinc-200">{item.name}:</span>
+                        <span className="text-slate-900 dark:text-white font-black">{item.count}</span>
+                        <span className="text-[10px] text-slate-400 font-normal">({pct}%)</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* 5. TABEL RINCIAN REKAPITULASI KEHADIRAN PER GURU */}
           <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-200/80 dark:border-zinc-800 shadow-xs overflow-hidden">
+            <div className="p-4 border-b border-slate-150 dark:border-zinc-800 flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-800 dark:text-zinc-100 flex items-center gap-2">
+                <BookOpen className="w-4 h-4 text-blue-600" />
+                Tabel Rincian Rekapitulasi Kehadiran Per Guru
+              </h3>
+              <span className="text-xs text-slate-400">
+                {rekapData?.summaries?.length || 0} Guru Terdata
+              </span>
+            </div>
+
             {isLoadingRekap ? (
               <div className="p-12 text-center">
                 <Loading />
@@ -1581,6 +2112,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                         </td>
                         <td className="py-3.5 px-4 text-right">
                           <button
+                            type="button"
                             onClick={() => setDetailTeacher({ id: s.teacherId, name: s.teacherName })}
                             className="px-3 py-1.5 bg-blue-50 dark:bg-blue-950/40 hover:bg-blue-100 text-blue-700 dark:text-blue-300 rounded-lg text-xs font-bold transition-all border border-blue-200/60 dark:border-blue-900/40 flex items-center gap-1 ml-auto cursor-pointer"
                           >
@@ -1595,6 +2127,135 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
               </div>
             )}
           </div>
+
+          {/* 6. MODAL RINCIAN EXCEPTION (ACTIONABLE CARD DETAIL POPUP) */}
+          {cardDetailModal && cardDetailModal.isOpen && (
+            <Dialog
+              isOpen={cardDetailModal.isOpen}
+              onClose={() => setCardDetailModal(null)}
+              title={cardDetailModal.title}
+              size="lg"
+            >
+              <div className="space-y-4 max-h-[78vh] overflow-y-auto pr-1">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-slate-50 dark:bg-zinc-800/80 p-3 rounded-2xl border border-slate-200 dark:border-zinc-700">
+                  <div className="relative flex-1 w-full">
+                    <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Cari nama guru, mapel, kelas, atau catatan..."
+                      value={cardModalSearch}
+                      onChange={(e) => setCardModalSearch(e.target.value)}
+                      className="w-full pl-9 pr-3 py-1.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs text-slate-800 dark:text-zinc-100"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-xs font-bold text-slate-600 dark:text-zinc-300">
+                      Total: <strong className="text-blue-600">{filteredModalRecords.length} Sesi</strong>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleExportModalExcel(cardDetailModal.title, filteredModalRecords)}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+                    >
+                      <FileSpreadsheet className="w-3.5 h-3.5" />
+                      Export Excel
+                    </button>
+                  </div>
+                </div>
+
+                {filteredModalRecords.length === 0 ? (
+                  <div className="p-8 text-center text-xs text-slate-400 bg-slate-50 dark:bg-zinc-900/60 rounded-2xl border border-dashed border-slate-200 dark:border-zinc-800">
+                    Tidak ada data sesi ditemukan untuk kategori ini.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-zinc-800">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-100 dark:bg-zinc-950 border-b border-slate-200 dark:border-zinc-800 text-slate-600 dark:text-zinc-400 font-bold uppercase tracking-wider">
+                          <th className="py-2.5 px-3">Tanggal & Hari</th>
+                          <th className="py-2.5 px-3">Nama Guru</th>
+                          <th className="py-2.5 px-3">Mata Pelajaran</th>
+                          <th className="py-2.5 px-3">Kelas</th>
+                          <th className="py-2.5 px-3">JP / Jam</th>
+                          <th className="py-2.5 px-3">Status</th>
+                          <th className="py-2.5 px-3">Pengganti / Penukar</th>
+                          <th className="py-2.5 px-3">Alasan / Catatan</th>
+                          <th className="py-2.5 px-3 text-right">Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-150 dark:divide-zinc-800 font-medium text-slate-800 dark:text-zinc-200">
+                        {filteredModalRecords.map((r, idx) => (
+                          <tr key={r.id || idx} className="hover:bg-slate-50 dark:hover:bg-zinc-800/40">
+                            <td className="py-2.5 px-3">
+                              <div className="font-bold text-slate-900 dark:text-zinc-100">{r.date}</div>
+                              <div className="text-[10px] text-slate-500">{r.day}</div>
+                            </td>
+                            <td className="py-2.5 px-3 font-bold text-slate-800 dark:text-zinc-100">{r.teacherName}</td>
+                            <td className="py-2.5 px-3 text-slate-700 dark:text-zinc-200">{r.subjectName}</td>
+                            <td className="py-2.5 px-3 font-semibold">{r.className}</td>
+                            <td className="py-2.5 px-3 font-bold text-blue-600 dark:text-blue-400">
+                              {r.jp} {r.timeSlot ? `(${r.timeSlot})` : ""}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <span className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
+                                r.status === "Hadir Mengajar" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" :
+                                r.status === "Tidak Hadir" ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300" :
+                                r.status === "Izin" ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-950 dark:text-yellow-300" :
+                                r.status === "Sakit" ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" :
+                                r.status === "Digantikan Guru Lain" ? "bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300" :
+                                r.status === "Tukar Jadwal" ? "bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300" :
+                                r.status === "Tugas Dinas" ? "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300" :
+                                "bg-slate-100 text-slate-700 dark:bg-zinc-800 dark:text-zinc-300"
+                              }`}>
+                                {r.status}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3">
+                              {r.substituteTeacherName ? (
+                                <span className="font-bold text-orange-700 dark:text-orange-300 flex items-center gap-1">
+                                  <RefreshCw className="w-3 h-3 text-orange-500" />
+                                  {r.substituteTeacherName}
+                                </span>
+                              ) : r.exchangedWithTeacherName ? (
+                                <span className="font-bold text-purple-700 dark:text-purple-300 flex items-center gap-1">
+                                  <ArrowRightLeft className="w-3 h-3 text-purple-500" />
+                                  {r.exchangedWithTeacherName}
+                                </span>
+                              ) : r.status === "Digantikan Guru Lain" ? (
+                                <span className="text-rose-600 dark:text-rose-400 font-extrabold italic animate-pulse">
+                                  ⚠️ Belum Ditentukan
+                                </span>
+                              ) : (
+                                <span className="text-slate-400">-</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-600 dark:text-zinc-300">
+                              {r.notes || "-"}
+                            </td>
+                            <td className="py-2.5 px-3 text-right">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedDate(r.date);
+                                  setActiveTab("input");
+                                  setCardDetailModal(null);
+                                }}
+                                className="px-2.5 py-1 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 text-blue-700 dark:text-blue-300 rounded-lg text-[11px] font-bold transition-all border border-blue-200/60 cursor-pointer"
+                                title="Buka Halaman Input/Edit untuk Tanggal Ini"
+                              >
+                                Buka Sesi
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </Dialog>
+          )}
+
         </div>
       )}
 
