@@ -54,6 +54,7 @@ import SupervisionSchedules from "./pages/SupervisionSchedules";
 import SupervisionInstruments from "./pages/SupervisionInstruments";
 import InventarisMasukSantri from "./pages/InventarisMasukSantri";
 import TeacherTeachingAttendancePage from "./pages/TeacherTeachingAttendance";
+import { TeachingQrCheckInPage } from "./pages/TeachingQrCheckIn";
 import NotFound from "./pages/NotFound";
 
 // Create TanStack Query Client
@@ -131,6 +132,7 @@ export default function App() {
 
                     {/* Monitoring Pembelajaran - Absensi Mengajar Guru */}
                     <Route path="teacher-teaching-attendance" element={<TeacherTeachingAttendancePage />} />
+                    <Route path="teaching-qr-checkin" element={<TeachingQrCheckInPage />} />
                   </Route>
 
                   {/* 404 Catch All Route */}

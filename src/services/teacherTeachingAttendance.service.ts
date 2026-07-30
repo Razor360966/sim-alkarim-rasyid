@@ -1112,6 +1112,344 @@ export const teacherTeachingAttendanceService = {
     }
   },
 
+  // Process Teaching Check-in & Check-out via Static Class QR Code
+  async processQrCheckIn(params: {
+    scannedContent: string;
+    currentUser: { id: string; name: string; teacherId?: string; role?: string };
+    academicYearId?: string;
+    semesterId?: string;
+    customTimeStr?: string; // Optional override for testing or exact time
+  }): Promise<{
+    success: boolean;
+    action?: "CHECK_IN" | "CHECK_OUT";
+    message: string;
+    record?: TeacherTeachingAttendance;
+  }> {
+    try {
+      const todayStr = new Date().toISOString().split("T")[0];
+      const now = new Date();
+      const defaultTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      const currentTimeStr = params.customTimeStr || defaultTimeStr;
+      const currentM = parseTimeToMinutes(currentTimeStr);
+
+      // 1. Parse scanned QR code to extract target class identifier
+      let targetClassIdentifier = params.scannedContent.trim();
+      try {
+        if (targetClassIdentifier.startsWith("{") && targetClassIdentifier.endsWith("}")) {
+          const parsedJson = JSON.parse(targetClassIdentifier);
+          targetClassIdentifier = parsedJson.className || parsedJson.classId || parsedJson.code || targetClassIdentifier;
+        }
+      } catch (err) {
+        // Not JSON, continue with raw string
+      }
+
+      if (targetClassIdentifier.toUpperCase().startsWith("CLASS_QR:")) {
+        targetClassIdentifier = targetClassIdentifier.substring(9).trim();
+      }
+
+      const cleanTarget = targetClassIdentifier.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+      // 2. Fetch classes to verify class existence
+      const classes = await classService.getClasses();
+      const matchedClass = classes.find(c => {
+        const cNameClean = (c.name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const cCodeClean = (c.code || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const cIdClean = (c.id || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const cRoomClean = (c.roomCode || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        return cNameClean === cleanTarget || cCodeClean === cleanTarget || cIdClean === cleanTarget || (cRoomClean && cRoomClean === cleanTarget);
+      });
+
+      const targetClassName = matchedClass?.name || targetClassIdentifier;
+
+      // 3. Fetch today's attendance entries derived from active schedules
+      const { items, isKbmDisabled, lockReason } = await this.getAttendanceForDate(
+        todayStr,
+        params.academicYearId || "",
+        params.semesterId || ""
+      );
+
+      if (isKbmDisabled) {
+        return {
+          success: false,
+          message: `Check-in tidak dapat dilakukan: ${lockReason || "KBM Ditiadakan Hari Ini"}.`
+        };
+      }
+
+      if (items.length === 0) {
+        return {
+          success: false,
+          message: "Tidak ada jadwal pelajaran yang terdaftar untuk hari ini."
+        };
+      }
+
+      // 4. Find schedules matching current logged in teacher
+      const currentTeacherNameClean = (params.currentUser.name || "").toLowerCase().trim();
+      const currentTeacherId = params.currentUser.teacherId || params.currentUser.id;
+
+      const teacherTodayItems = items.filter(item => {
+        const matchesId = (item.teacherId && item.teacherId === currentTeacherId) || (item.substituteTeacherId && item.substituteTeacherId === currentTeacherId);
+        const matchesName = (item.teacherName || "").toLowerCase().trim() === currentTeacherNameClean || (item.substituteTeacherName || "").toLowerCase().trim() === currentTeacherNameClean;
+        return matchesId || matchesName;
+      });
+
+      if (teacherTodayItems.length === 0) {
+        return {
+          success: false,
+          message: `Akun Anda (${params.currentUser.name}) tidak memiliki jadwal mengajar pada hari ini.`
+        };
+      }
+
+      // 5. Validate whether teacher has schedule in the SCANNED class today
+      const classTeacherItems = teacherTodayItems.filter(item => {
+        if (matchedClass) {
+          if (item.classId === matchedClass.id) return true;
+        }
+        const itemClassClean = (item.className || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        return itemClassClean === cleanTarget || itemClassClean.includes(cleanTarget) || cleanTarget.includes(itemClassClean);
+      });
+
+      if (classTeacherItems.length === 0) {
+        return {
+          success: false,
+          message: `Anda tidak memiliki jadwal mengajar pada kelas ${targetClassName}.`
+        };
+      }
+
+      // 6. Validate current time against schedule time slots
+      let selectedScheduleItem: TeacherTeachingAttendance | null = null;
+      let isLateCheckIn = false;
+
+      for (const item of classTeacherItems) {
+        let startM = 0;
+        let endM = 0;
+
+        if (item.timeSlot && item.timeSlot.includes("-")) {
+          const [startStr, endStr] = item.timeSlot.split("-").map(s => s.trim());
+          startM = parseTimeToMinutes(startStr);
+          endM = parseTimeToMinutes(endStr);
+        } else {
+          // Default period time estimations based on sequence if timeSlot is missing
+          const defaultStartHour = 7 + Math.floor((item.sequence - 1) * 0.75);
+          const defaultStartMin = ((item.sequence - 1) * 45) % 60;
+          startM = defaultStartHour * 60 + defaultStartMin;
+          endM = startM + 45;
+        }
+
+        const earliestCheckInM = startM - 15; // 15 mins tolerance before
+        const latestValidM = endM + 30; // Up to 30 mins after period end
+
+        if (currentM >= earliestCheckInM && currentM <= latestValidM) {
+          selectedScheduleItem = item;
+          if (currentM > startM + 15) {
+            isLateCheckIn = true;
+          }
+          break;
+        }
+      }
+
+      // If no schedule matched the current time window, pick the closest schedule if only 1 exists, or return window error
+      if (!selectedScheduleItem) {
+        if (classTeacherItems.length === 1) {
+          // Check if scan is way early or way late
+          const single = classTeacherItems[0];
+          let startStr = "07:30";
+          if (single.timeSlot && single.timeSlot.includes("-")) {
+            startStr = single.timeSlot.split("-")[0].trim();
+          }
+          const startM = parseTimeToMinutes(startStr);
+          if (currentM < startM - 15) {
+            return {
+              success: false,
+              message: `Terlalu awal. Check-In kelas ${single.className} (${single.jp}) baru dapat dilakukan 15 menit sebelum jam ${startStr}.`
+            };
+          }
+          selectedScheduleItem = single;
+          if (currentM > startM + 15) {
+            isLateCheckIn = true;
+          }
+        } else {
+          return {
+            success: false,
+            message: `Tidak ada jadwal mengajar di kelas ${targetClassName} pada jam ${currentTimeStr}.`
+          };
+        }
+      }
+
+      // 7. Perform Check-In or Check-Out logic on selectedScheduleItem
+      const logs = selectedScheduleItem.checkInLogs || [];
+      const activeLogIndex = logs.findIndex(l => !l.checkOut);
+
+      let action: "CHECK_IN" | "CHECK_OUT" = "CHECK_IN";
+      let returnMsg = "";
+
+      if (activeLogIndex >= 0) {
+        // --- CHECK OUT FLOW ---
+        action = "CHECK_OUT";
+        const activeLog = logs[activeLogIndex];
+        const duration = calculateDurationInMinutes(activeLog.checkIn, currentTimeStr);
+
+        activeLog.checkOut = currentTimeStr;
+        activeLog.durationMinutes = duration;
+
+        selectedScheduleItem.checkOutTime = currentTimeStr;
+        selectedScheduleItem.teachingDurationMinutes = (selectedScheduleItem.teachingDurationMinutes || 0) + duration;
+        selectedScheduleItem.checkInLogs = logs;
+        selectedScheduleItem.updatedAt = new Date().toISOString();
+
+        returnMsg = `CHECK OUT Berhasil di Kelas ${selectedScheduleItem.className} (${selectedScheduleItem.jp}). Durasi mengajar: ${duration} menit.`;
+      } else {
+        // --- CHECK IN FLOW ---
+        action = "CHECK_IN";
+        const newLog = { checkIn: currentTimeStr };
+        logs.push(newLog);
+
+        selectedScheduleItem.checkInTime = selectedScheduleItem.checkInTime || currentTimeStr;
+        selectedScheduleItem.checkInLogs = logs;
+        selectedScheduleItem.checkInType = "Scan QR";
+        selectedScheduleItem.status = isLateCheckIn ? "Terlambat" : "Hadir Mengajar";
+        selectedScheduleItem.updatedAt = new Date().toISOString();
+
+        returnMsg = `CHECK IN Berhasil di Kelas ${selectedScheduleItem.className} (${selectedScheduleItem.jp})${isLateCheckIn ? " [Terlambat]" : ""}.`;
+      }
+
+      // Save updated attendance record to Firestore
+      await this.saveSingleSessionAttendance(
+        todayStr,
+        selectedScheduleItem,
+        params.currentUser.id,
+        params.currentUser.name,
+        `QR Code ${action}: ${currentTimeStr}`
+      );
+
+      return {
+        success: true,
+        action,
+        message: returnMsg,
+        record: selectedScheduleItem
+      };
+    } catch (error) {
+      console.error("Error processing QR check-in:", error);
+      return {
+        success: false,
+        message: "Gagal memproses QR Code. Silakan coba beberapa saat lagi."
+      };
+    }
+  },
+
+  // Perform Manual Check Out by Wakakur / Admin
+  async performManualCheckOut(params: {
+    dateStr: string;
+    scheduleId: string;
+    manualCheckOutTime: string; // e.g. "08:15"
+    userId: string;
+    userName: string;
+    reason: string;
+  }): Promise<void> {
+    const { items } = await this.getAttendanceForDate(params.dateStr, "", "");
+    const item = items.find(i => i.scheduleId === params.scheduleId);
+    if (!item) {
+      throw new Error("Sesi jadwal mengajar tidak ditemukan.");
+    }
+
+    const checkInStr = item.checkInTime || "07:30";
+    const duration = calculateDurationInMinutes(checkInStr, params.manualCheckOutTime);
+
+    item.checkOutTime = params.manualCheckOutTime;
+    item.isManualCheckOut = true;
+    item.manualCheckOutByUserId = params.userId;
+    item.manualCheckOutByUserName = params.userName;
+    item.manualCheckOutTime = new Date().toISOString();
+    item.manualCheckOutReason = params.reason;
+    item.teachingDurationMinutes = duration;
+    item.notes = `${item.notes ? item.notes + " | " : ""}Check Out Manual oleh ${params.userName}: ${params.reason}`;
+
+    if (!item.checkInLogs || item.checkInLogs.length === 0) {
+      item.checkInLogs = [{ checkIn: checkInStr, checkOut: params.manualCheckOutTime, durationMinutes: duration, note: params.reason }];
+    } else {
+      const last = item.checkInLogs[item.checkInLogs.length - 1];
+      last.checkOut = params.manualCheckOutTime;
+      last.durationMinutes = duration;
+      last.note = params.reason;
+    }
+
+    await this.saveSingleSessionAttendance(
+      params.dateStr,
+      item,
+      params.userId,
+      params.userName,
+      `Check Out Manual: ${params.reason}`
+    );
+  },
+
+  // Get QR Check-In Monitoring Indicators for Wakakur Dashboard
+  async getQrMonitoringStats(dateStr: string, academicYearId?: string, semesterId?: string): Promise<{
+    belumCheckIn: TeacherTeachingAttendance[];
+    belumCheckOut: TeacherTeachingAttendance[];
+    terlambatCheckIn: TeacherTeachingAttendance[];
+    lupaCheckOut: TeacherTeachingAttendance[];
+    totalCheckInQrCount: number;
+  }> {
+    const { items } = await this.getAttendanceForDate(dateStr, academicYearId || "", semesterId || "");
+    const now = new Date();
+    const defaultTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const currentM = parseTimeToMinutes(defaultTimeStr);
+
+    const belumCheckIn: TeacherTeachingAttendance[] = [];
+    const belumCheckOut: TeacherTeachingAttendance[] = [];
+    const terlambatCheckIn: TeacherTeachingAttendance[] = [];
+    const lupaCheckOut: TeacherTeachingAttendance[] = [];
+    let totalCheckInQrCount = 0;
+
+    items.forEach(item => {
+      if (item.status === "KBM Ditiadakan" || item.status === "Izin" || item.status === "Sakit" || item.status === "Tidak Hadir") {
+        return;
+      }
+
+      let startM = 0;
+      let endM = 0;
+      if (item.timeSlot && item.timeSlot.includes("-")) {
+        const [s, e] = item.timeSlot.split("-").map(x => x.trim());
+        startM = parseTimeToMinutes(s);
+        endM = parseTimeToMinutes(e);
+      } else {
+        startM = 450 + (item.sequence - 1) * 45;
+        endM = startM + 45;
+      }
+
+      if (item.checkInTime) {
+        totalCheckInQrCount++;
+      }
+
+      // 1. Belum Check In: Schedule period has started (or current time > startM) but no checkInTime recorded
+      if (!item.checkInTime && currentM >= startM) {
+        belumCheckIn.push(item);
+      }
+
+      // 2. Belum Check Out: Checked-in, schedule period ended (current time > endM), but no checkOutTime
+      if (item.checkInTime && !item.checkOutTime && currentM > endM) {
+        belumCheckOut.push(item);
+      }
+
+      // 3. Terlambat Check In
+      if (item.status === "Terlambat" || (item.checkInTime && parseTimeToMinutes(item.checkInTime) > startM + 15)) {
+        terlambatCheckIn.push(item);
+      }
+
+      // 4. Lupa Check Out (Checked in, period ended > 60 mins ago without checkOutTime, or manual checkout performed)
+      if (item.isManualCheckOut || (item.checkInTime && !item.checkOutTime && currentM > endM + 60)) {
+        lupaCheckOut.push(item);
+      }
+    });
+
+    return {
+      belumCheckIn,
+      belumCheckOut,
+      terlambatCheckIn,
+      lupaCheckOut,
+      totalCheckInQrCount
+    };
+  },
+
   // Get full timeline history for a specific teacher
   async getTeacherHistory(
     teacherId: string,
@@ -1131,3 +1469,19 @@ export const teacherTeachingAttendanceService = {
     return rawRecords;
   }
 };
+
+function parseTimeToMinutes(timeStr?: string): number {
+  if (!timeStr) return 0;
+  const parts = timeStr.trim().split(":");
+  if (parts.length < 2) return 0;
+  const h = parseInt(parts[0], 10) || 0;
+  const m = parseInt(parts[1], 10) || 0;
+  return h * 60 + m;
+}
+
+function calculateDurationInMinutes(startStr: string, endStr: string): number {
+  const startM = parseTimeToMinutes(startStr);
+  const endM = parseTimeToMinutes(endStr);
+  return Math.max(0, endM - startM);
+}
+

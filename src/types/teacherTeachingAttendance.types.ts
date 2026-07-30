@@ -41,6 +41,18 @@ export interface TeacherTeachingAttendance {
   exchangedScheduleId?: string;
   notes?: string;
 
+  // QR Teaching Check-in & Check-out Data
+  checkInTime?: string; // e.g. "07:32:10"
+  checkOutTime?: string; // e.g. "08:14:45"
+  teachingDurationMinutes?: number;
+  checkInType?: "Scan QR" | "Manual Wakakur" | "Manual Admin" | "Auto";
+  checkInLogs?: { checkIn: string; checkOut?: string; durationMinutes?: number; note?: string }[];
+  isManualCheckOut?: boolean;
+  manualCheckOutByUserId?: string;
+  manualCheckOutByUserName?: string;
+  manualCheckOutTime?: string;
+  manualCheckOutReason?: string;
+
   recordedByUserId?: string;
   recordedByUserName?: string;
   isInputSusulan?: boolean;

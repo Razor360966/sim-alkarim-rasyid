@@ -32,7 +32,8 @@ import {
   ClipboardList,
   FileCheck,
   FileText,
-  Heart
+  Heart,
+  QrCode
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -163,6 +164,7 @@ export const MainLayout: React.FC = () => {
     { name: "Referensi Akademik", path: "/academic-references", icon: SettingsIcon, roles: ["admin", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Perencanaan Akademik" },
 
     // Monitoring Pembelajaran
+    { name: "Scan QR Mengajar", path: "/teaching-qr-checkin", icon: QrCode, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "tata usaha", "operator", "ketua yayasan"], group: "Monitoring Pembelajaran" },
     { name: "Absensi Mengajar Guru", path: "/teacher-teaching-attendance", icon: ClipboardList, roles: ["admin", "wakil kepala sekolah", "kepala sekolah", "pimpinan", "ketua yayasan", "operator"], group: "Monitoring Pembelajaran" },
 
     // Perencanaan Pembelajaran

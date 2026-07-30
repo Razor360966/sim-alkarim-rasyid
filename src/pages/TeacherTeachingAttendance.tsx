@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
+import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
@@ -8,6 +9,7 @@ import { subjectService } from "../services/subjectService";
 import { classService } from "../services/classService";
 import { academicYearService } from "../services/academicYearService";
 import { semesterService } from "../services/semester.service";
+import { ClassQrCardsModal } from "../components/ClassQrCardsModal";
 import { 
   TeacherTeachingAttendance, 
   AttendanceTeachingStatus, 
@@ -51,7 +53,9 @@ import {
   Eye,
   Bell,
   BookOpen,
-  Layers
+  Layers,
+  QrCode,
+  Printer
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -235,6 +239,45 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
     queryKey: ["leadershipMonitoringStats", selectedAyId, selectedSemesterId],
     queryFn: () => teacherTeachingAttendanceService.getLeadershipMonitoringStats(selectedAyId, selectedSemesterId)
   });
+
+  // QR Teaching Check-in Monitoring Stats Query
+  const { data: qrStats, refetch: refetchQrStats } = useQuery({
+    queryKey: ["qrMonitoringStats", selectedDate, selectedAyId, selectedSemesterId],
+    queryFn: () => teacherTeachingAttendanceService.getQrMonitoringStats(selectedDate, selectedAyId, selectedSemesterId),
+    enabled: !!selectedDate
+  });
+
+  const [isClassQrModalOpen, setIsClassQrModalOpen] = useState<boolean>(false);
+  const [manualCheckOutModal, setManualCheckOutModal] = useState<{
+    isOpen: boolean;
+    item?: TeacherTeachingAttendance;
+    checkOutTime: string;
+    reason: string;
+  }>({
+    isOpen: false,
+    checkOutTime: "08:15",
+    reason: ""
+  });
+
+  const handleManualCheckOutSubmit = async () => {
+    if (!manualCheckOutModal.item || !manualCheckOutModal.item.scheduleId) return;
+    try {
+      await teacherTeachingAttendanceService.performManualCheckOut({
+        dateStr: selectedDate,
+        scheduleId: manualCheckOutModal.item.scheduleId,
+        manualCheckOutTime: manualCheckOutModal.checkOutTime,
+        userId: user?.id || "",
+        userName: user?.name || "Wakakur",
+        reason: manualCheckOutModal.reason || "Check Out Manual Wakakur"
+      });
+      toast("Berhasil mencatat Check Out Manual untuk " + manualCheckOutModal.item.teacherName, "success");
+      setManualCheckOutModal({ isOpen: false, checkOutTime: "08:15", reason: "" });
+      queryClient.invalidateQueries({ queryKey: ["teacherTeachingAttendance"] });
+      queryClient.invalidateQueries({ queryKey: ["qrMonitoringStats"] });
+    } catch (err: any) {
+      toast("Gagal Check Out Manual: " + (err?.message || "Terjadi kesalahan"), "error");
+    }
+  };
 
   // --- TAB 1: INPUT ABSENSI ---
   const dayName = getIndonesianDayName(selectedDate);
@@ -1115,6 +1158,143 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
             <Eye className="w-4 h-4 text-rose-600" />
             Lihat Detail Rekap ({absentAndLeaveRecords.length} Sesi)
           </button>
+        </div>
+      )}
+
+      {/* Indicator Monitoring Check-in / Check-out QR Mengajar */}
+      {isWakakurOrAdmin && qrStats && (
+        <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-3xl p-5 shadow-xs space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 rounded-2xl">
+                <QrCode className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-800 dark:text-zinc-200">
+                  Monitoring Teaching Check-In QR ({selectedDate})
+                </h3>
+                <p className="text-[11px] text-slate-500 dark:text-zinc-400">
+                  Real-time status konfirmasi kehadiran mengajar guru via pemindaian QR kelas
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Link
+                to="/teaching-qr-checkin"
+                className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2"
+              >
+                <QrCode className="w-4 h-4" />
+                <span>Scan QR</span>
+              </Link>
+              <button
+                type="button"
+                onClick={() => setIsClassQrModalOpen(true)}
+                className="px-3.5 py-2 bg-slate-900 dark:bg-zinc-100 hover:bg-slate-800 dark:hover:bg-white text-white dark:text-slate-900 font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer"
+              >
+                <Printer className="w-4 h-4" />
+                <span>Cetak QR Kelas</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {/* 1. Belum Check-In */}
+            <button
+              type="button"
+              onClick={() => setCardDetailModal({
+                isOpen: true,
+                title: "Daftar Sesi Guru Belum Check-In QR",
+                subtitle: "Guru belum memindai QR Code kelas saat jam mengajar telah/sedang berjalan",
+                categoryKey: "qr_belum_checkin",
+                records: qrStats.belumCheckIn
+              })}
+              className="p-3.5 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/80 rounded-2xl text-left hover:scale-[1.02] transition-all cursor-pointer group"
+            >
+              <div className="text-[10px] font-black uppercase tracking-wider text-amber-700 dark:text-amber-400 flex items-center justify-between">
+                <span>Belum Check In</span>
+                <Clock className="w-3.5 h-3.5" />
+              </div>
+              <div className="text-2xl font-black text-amber-900 dark:text-amber-100 mt-1">
+                {qrStats.belumCheckIn.length} <span className="text-xs font-normal opacity-70">Sesi</span>
+              </div>
+              <p className="text-[10px] text-amber-800 dark:text-amber-300 mt-1 group-hover:underline">
+                Klik detail &rarr;
+              </p>
+            </button>
+
+            {/* 2. Belum Check-Out */}
+            <button
+              type="button"
+              onClick={() => setCardDetailModal({
+                isOpen: true,
+                title: "Daftar Sesi Guru Belum Check-Out QR",
+                subtitle: "Guru sudah check-in tetapi jam mengajar usai tanpa scan check-out. Wakakur dapat melakukan Check Out Manual.",
+                categoryKey: "qr_belum_checkout",
+                records: qrStats.belumCheckOut
+              })}
+              className="p-3.5 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/80 rounded-2xl text-left hover:scale-[1.02] transition-all cursor-pointer group"
+            >
+              <div className="text-[10px] font-black uppercase tracking-wider text-blue-700 dark:text-blue-400 flex items-center justify-between">
+                <span>Belum Check Out</span>
+                <Clock className="w-3.5 h-3.5" />
+              </div>
+              <div className="text-2xl font-black text-blue-900 dark:text-blue-100 mt-1">
+                {qrStats.belumCheckOut.length} <span className="text-xs font-normal opacity-70">Sesi</span>
+              </div>
+              <p className="text-[10px] text-blue-800 dark:text-blue-300 mt-1 group-hover:underline">
+                Klik untuk Check-Out Manual &rarr;
+              </p>
+            </button>
+
+            {/* 3. Terlambat Check-In */}
+            <button
+              type="button"
+              onClick={() => setCardDetailModal({
+                isOpen: true,
+                title: "Daftar Sesi Guru Terlambat Check-In QR",
+                subtitle: "Guru memindai QR Code lebih dari 15 menit setelah jam pelajaran dimulai",
+                categoryKey: "qr_terlambat",
+                records: qrStats.terlambatCheckIn
+              })}
+              className="p-3.5 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/80 rounded-2xl text-left hover:scale-[1.02] transition-all cursor-pointer group"
+            >
+              <div className="text-[10px] font-black uppercase tracking-wider text-rose-700 dark:text-rose-400 flex items-center justify-between">
+                <span>Terlambat Check In</span>
+                <AlertTriangle className="w-3.5 h-3.5" />
+              </div>
+              <div className="text-2xl font-black text-rose-900 dark:text-rose-100 mt-1">
+                {qrStats.terlambatCheckIn.length} <span className="text-xs font-normal opacity-70">Sesi</span>
+              </div>
+              <p className="text-[10px] text-rose-800 dark:text-rose-300 mt-1 group-hover:underline">
+                Klik detail &rarr;
+              </p>
+            </button>
+
+            {/* 4. Lupa Check-Out / Manual */}
+            <button
+              type="button"
+              onClick={() => setCardDetailModal({
+                isOpen: true,
+                title: "Daftar Sesi Check-Out Manual / Terindikasi Lupa Scan",
+                subtitle: "Sesi mengajar yang dicatat Check Out Manual oleh Wakakur atau terindikasi lupa scan",
+                categoryKey: "qr_lupa_checkout",
+                records: qrStats.lupaCheckOut
+              })}
+              className="p-3.5 bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800/80 rounded-2xl text-left hover:scale-[1.02] transition-all cursor-pointer group"
+            >
+              <div className="text-[10px] font-black uppercase tracking-wider text-purple-700 dark:text-purple-400 flex items-center justify-between">
+                <span>Check Out Manual</span>
+                <CheckCircle2 className="w-3.5 h-3.5" />
+              </div>
+              <div className="text-2xl font-black text-purple-900 dark:text-purple-100 mt-1">
+                {qrStats.lupaCheckOut.length} <span className="text-xs font-normal opacity-70">Sesi</span>
+              </div>
+              <p className="text-[10px] text-purple-800 dark:text-purple-300 mt-1 group-hover:underline">
+                Klik detail &rarr;
+              </p>
+            </button>
+          </div>
         </div>
       )}
 
@@ -2771,6 +2951,78 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
           </div>
         </Dialog>
       )}
+
+      {/* Manual Check Out Dialog for Wakakur */}
+      {manualCheckOutModal.isOpen && (
+        <Dialog
+          isOpen={manualCheckOutModal.isOpen}
+          onClose={() => setManualCheckOutModal({ isOpen: false, checkOutTime: "08:15", reason: "" })}
+          title="Konfirmasi Check Out Manual (Wakakur)"
+          size="md"
+        >
+          <div className="space-y-4">
+            <div className="p-3.5 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 rounded-2xl text-xs space-y-1">
+              <div className="font-bold text-indigo-900 dark:text-indigo-200">
+                {manualCheckOutModal.item?.teacherName}
+              </div>
+              <div className="text-slate-600 dark:text-zinc-300">
+                {manualCheckOutModal.item?.subjectName} — Kelas {manualCheckOutModal.item?.className} ({manualCheckOutModal.item?.jp})
+              </div>
+              <div className="text-slate-500 dark:text-zinc-400 font-mono text-[11px]">
+                Waktu Check-In: {manualCheckOutModal.item?.checkInTime || "-"}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-700 dark:text-zinc-300">
+                Waktu Check-Out Manual (HH:MM)
+              </label>
+              <input
+                type="text"
+                value={manualCheckOutModal.checkOutTime}
+                onChange={(e) => setManualCheckOutModal(prev => ({ ...prev, checkOutTime: e.target.value }))}
+                placeholder="08:15"
+                className="w-full px-3.5 py-2.5 bg-white dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs font-bold font-mono focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-700 dark:text-zinc-300">
+                Alasan / Catatan Wakakur
+              </label>
+              <textarea
+                value={manualCheckOutModal.reason}
+                onChange={(e) => setManualCheckOutModal(prev => ({ ...prev, reason: e.target.value }))}
+                placeholder="Misal: Guru lupa scan out karena langsung ada rapat guru"
+                className="w-full px-3.5 py-2.5 bg-white dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500 min-h-[70px]"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setManualCheckOutModal({ isOpen: false, checkOutTime: "08:15", reason: "" })}
+                className="px-4 py-2 bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 text-slate-700 dark:text-zinc-300 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleManualCheckOutSubmit}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer"
+              >
+                Simpan Check Out Manual
+              </button>
+            </div>
+          </div>
+        </Dialog>
+      )}
+
+      {/* Class QR Cards Printable Modal */}
+      <ClassQrCardsModal
+        isOpen={isClassQrModalOpen}
+        onClose={() => setIsClassQrModalOpen(false)}
+      />
     </div>
   );
 };
