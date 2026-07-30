@@ -1,4 +1,4 @@
-import React from "react";
+import React, { lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -10,52 +10,55 @@ import { AuthProvider } from "./contexts/AuthContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { ToastProvider } from "./contexts/ToastContext";
 
-// Components
+// Components & Fallbacks
 import ErrorBoundary from "./components/ErrorBoundary";
 import { FirebaseConfigWarning } from "./components/FirebaseConfigWarning";
+import { PageLoading } from "./components/PageLoading";
 
-// Layout & Pages
+// Layout
 import MainLayout from "./layout/MainLayout";
-import Login from "./pages/Login";
-import Register from "./pages/Register";
-import ChangePassword from "./pages/ChangePassword";
-import Dashboard from "./pages/Dashboard";
-import AcademicYears from "./pages/AcademicYears";
-import Subjects from "./pages/Subjects";
-import Classes from "./pages/Classes";
-import Teachers from "./pages/Teachers";
-import Students from "./pages/Students";
-import CurriculumMatrixPage from "./pages/CurriculumMatrix";
-import Semesters from "./pages/Semesters";
-import Users from "./pages/Users";
-import Settings from "./pages/Settings";
-import Profile from "./pages/Profile";
-import SchoolAgendas from "./pages/SchoolAgendas";
-import LessonPeriods from "./pages/LessonPeriods";
-import Schedules from "./pages/Schedules";
-import AcademicCalendar from "./pages/AcademicCalendar";
-import AnnualActivityTimeline from "./pages/AnnualActivityTimeline";
-import EffectiveWeeks from "./pages/EffectiveWeeks";
-import EffectiveDays from "./pages/EffectiveDays";
-import EffectiveJp from "./pages/EffectiveJp";
-import AcademicReferences from "./pages/AcademicReferences";
-import AnnualProgram from "./pages/AnnualProgram";
-import SemesterProgram from "./pages/SemesterProgram";
-import { LessonPlans } from "./pages/LessonPlans";
-import TeachingJournals from "./pages/TeachingJournals";
-import { MySchedule } from "./pages/MySchedule";
-import MusrifJournals from "./pages/MusrifJournals";
-import { MutabaahHarian } from "./pages/MutabaahHarian";
-import SdmPerformance from "./pages/SdmPerformance";
-import GtkDevelopment from "./pages/GtkDevelopment";
-import SupervisionAcademic from "./pages/SupervisionAcademic";
-import SupervisionManagerial from "./pages/SupervisionManagerial";
-import SupervisionSchedules from "./pages/SupervisionSchedules";
-import SupervisionInstruments from "./pages/SupervisionInstruments";
-import InventarisMasukSantri from "./pages/InventarisMasukSantri";
-import TeacherTeachingAttendancePage from "./pages/TeacherTeachingAttendance";
-import { TeachingQrCheckInPage } from "./pages/TeachingQrCheckIn";
-import NotFound from "./pages/NotFound";
+
+// Lazy Loaded Pages
+const Login = lazy(() => import("./pages/Login"));
+const Register = lazy(() => import("./pages/Register"));
+const ChangePassword = lazy(() => import("./pages/ChangePassword"));
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const AcademicYears = lazy(() => import("./pages/AcademicYears"));
+const Subjects = lazy(() => import("./pages/Subjects"));
+const Classes = lazy(() => import("./pages/Classes"));
+const Teachers = lazy(() => import("./pages/Teachers"));
+const Students = lazy(() => import("./pages/Students"));
+const CurriculumMatrixPage = lazy(() => import("./pages/CurriculumMatrix"));
+const Semesters = lazy(() => import("./pages/Semesters"));
+const Users = lazy(() => import("./pages/Users"));
+const Settings = lazy(() => import("./pages/Settings"));
+const Profile = lazy(() => import("./pages/Profile"));
+const SchoolAgendas = lazy(() => import("./pages/SchoolAgendas"));
+const LessonPeriods = lazy(() => import("./pages/LessonPeriods"));
+const Schedules = lazy(() => import("./pages/Schedules"));
+const AcademicCalendar = lazy(() => import("./pages/AcademicCalendar"));
+const AnnualActivityTimeline = lazy(() => import("./pages/AnnualActivityTimeline"));
+const EffectiveWeeks = lazy(() => import("./pages/EffectiveWeeks"));
+const EffectiveDays = lazy(() => import("./pages/EffectiveDays"));
+const EffectiveJp = lazy(() => import("./pages/EffectiveJp"));
+const AcademicReferences = lazy(() => import("./pages/AcademicReferences"));
+const AnnualProgram = lazy(() => import("./pages/AnnualProgram"));
+const SemesterProgram = lazy(() => import("./pages/SemesterProgram"));
+const LessonPlans = lazy(() => import("./pages/LessonPlans").then(m => ({ default: m.LessonPlans })));
+const TeachingJournals = lazy(() => import("./pages/TeachingJournals"));
+const MySchedule = lazy(() => import("./pages/MySchedule").then(m => ({ default: m.MySchedule })));
+const MusrifJournals = lazy(() => import("./pages/MusrifJournals"));
+const MutabaahHarian = lazy(() => import("./pages/MutabaahHarian").then(m => ({ default: m.MutabaahHarian })));
+const SdmPerformance = lazy(() => import("./pages/SdmPerformance"));
+const GtkDevelopment = lazy(() => import("./pages/GtkDevelopment"));
+const SupervisionAcademic = lazy(() => import("./pages/SupervisionAcademic"));
+const SupervisionManagerial = lazy(() => import("./pages/SupervisionManagerial"));
+const SupervisionSchedules = lazy(() => import("./pages/SupervisionSchedules"));
+const SupervisionInstruments = lazy(() => import("./pages/SupervisionInstruments"));
+const InventarisMasukSantri = lazy(() => import("./pages/InventarisMasukSantri"));
+const TeacherTeachingAttendancePage = lazy(() => import("./pages/TeacherTeachingAttendance"));
+const TeachingQrCheckInPage = lazy(() => import("./pages/TeachingQrCheckIn").then(m => ({ default: m.TeachingQrCheckInPage })));
+const NotFound = lazy(() => import("./pages/NotFound"));
 
 // Create TanStack Query Client
 const queryClient = new QueryClient({
@@ -80,65 +83,67 @@ export default function App() {
           <ToastProvider>
             <AuthProvider>
               <BrowserRouter>
-                <Routes>
-                  {/* Public Authentication routes */}
-                  <Route path="/login" element={<Login />} />
-                  <Route path="/register" element={<Register />} />
-                  <Route path="/change-password" element={<ChangePassword />} />
+                <Suspense fallback={<PageLoading />}>
+                  <Routes>
+                    {/* Public Authentication routes */}
+                    <Route path="/login" element={<Login />} />
+                    <Route path="/register" element={<Register />} />
+                    <Route path="/change-password" element={<ChangePassword />} />
 
-                  {/* Protected School Master Data routes */}
-                  <Route path="/" element={<MainLayout />}>
-                    <Route index element={<Dashboard />} />
-                    <Route path="profile" element={<Profile />} />
-                    <Route path="academic-years" element={<AcademicYears />} />
-                    <Route path="semesters" element={<Semesters />} />
-                    <Route path="subjects" element={<Subjects />} />
-                    <Route path="classes" element={<Classes />} />
-                    <Route path="teachers" element={<Teachers />} />
-                    <Route path="students" element={<Students />} />
-                    <Route path="users" element={<Users />} />
-                    <Route path="lesson-periods" element={<LessonPeriods />} />
-                    <Route path="schedules" element={<Schedules />} />
-                    <Route path="settings" element={<Settings />} />
-                    <Route path="settings/agendas" element={<SchoolAgendas />} />
-                    <Route path="curriculum-matrix" element={<CurriculumMatrixPage />} />
-                    
-                    {/* Academic Planning Engine Foundation Routes */}
-                    <Route path="academic-calendar" element={<AcademicCalendar />} />
-                    <Route path="annual-activity-timeline" element={<AnnualActivityTimeline />} />
-                    <Route path="effective-weeks" element={<EffectiveWeeks />} />
-                    <Route path="effective-days" element={<EffectiveDays />} />
-                    <Route path="effective-jp" element={<EffectiveJp />} />
-                    <Route path="academic-references" element={<AcademicReferences />} />
+                    {/* Protected School Master Data routes */}
+                    <Route path="/" element={<MainLayout />}>
+                      <Route index element={<Dashboard />} />
+                      <Route path="profile" element={<Profile />} />
+                      <Route path="academic-years" element={<AcademicYears />} />
+                      <Route path="semesters" element={<Semesters />} />
+                      <Route path="subjects" element={<Subjects />} />
+                      <Route path="classes" element={<Classes />} />
+                      <Route path="teachers" element={<Teachers />} />
+                      <Route path="students" element={<Students />} />
+                      <Route path="users" element={<Users />} />
+                      <Route path="lesson-periods" element={<LessonPeriods />} />
+                      <Route path="schedules" element={<Schedules />} />
+                      <Route path="settings" element={<Settings />} />
+                      <Route path="settings/agendas" element={<SchoolAgendas />} />
+                      <Route path="curriculum-matrix" element={<CurriculumMatrixPage />} />
+                      
+                      {/* Academic Planning Engine Foundation Routes */}
+                      <Route path="academic-calendar" element={<AcademicCalendar />} />
+                      <Route path="annual-activity-timeline" element={<AnnualActivityTimeline />} />
+                      <Route path="effective-weeks" element={<EffectiveWeeks />} />
+                      <Route path="effective-days" element={<EffectiveDays />} />
+                      <Route path="effective-jp" element={<EffectiveJp />} />
+                      <Route path="academic-references" element={<AcademicReferences />} />
 
-                    {/* Perencanaan Pembelajaran */}
-                    <Route path="annual-programs" element={<AnnualProgram />} />
-                    <Route path="semester-programs" element={<SemesterProgram />} />
-                    <Route path="lesson-plans" element={<LessonPlans />} />
-                    <Route path="teaching-journals" element={<TeachingJournals />} />
-                    <Route path="my-schedule" element={<MySchedule />} />
-                    <Route path="musrif-journals" element={<MusrifJournals />} />
-                    <Route path="mutabaah-harian" element={<MutabaahHarian />} />
-                    <Route path="sdm-performance" element={<SdmPerformance />} />
-                    <Route path="gtk-development" element={<GtkDevelopment />} />
+                      {/* Perencanaan Pembelajaran */}
+                      <Route path="annual-programs" element={<AnnualProgram />} />
+                      <Route path="semester-programs" element={<SemesterProgram />} />
+                      <Route path="lesson-plans" element={<LessonPlans />} />
+                      <Route path="teaching-journals" element={<TeachingJournals />} />
+                      <Route path="my-schedule" element={<MySchedule />} />
+                      <Route path="musrif-journals" element={<MusrifJournals />} />
+                      <Route path="mutabaah-harian" element={<MutabaahHarian />} />
+                      <Route path="sdm-performance" element={<SdmPerformance />} />
+                      <Route path="gtk-development" element={<GtkDevelopment />} />
 
-                    {/* Supervisi Akademik & Manajerial */}
-                    <Route path="supervision-academic" element={<SupervisionAcademic />} />
-                    <Route path="supervision-managerial" element={<SupervisionManagerial />} />
-                    <Route path="supervision-instruments" element={<SupervisionInstruments />} />
+                      {/* Supervisi Akademik & Manajerial */}
+                      <Route path="supervision-academic" element={<SupervisionAcademic />} />
+                      <Route path="supervision-managerial" element={<SupervisionManagerial />} />
+                      <Route path="supervision-instruments" element={<SupervisionInstruments />} />
 
-                    {/* Inventaris Masuk Santri */}
-                    <Route path="inventaris-santri" element={<InventarisMasukSantri />} />
+                      {/* Inventaris Masuk Santri */}
+                      <Route path="inventaris-santri" element={<InventarisMasukSantri />} />
 
-                    {/* Monitoring Pembelajaran - Absensi Mengajar Guru */}
-                    <Route path="teacher-teaching-attendance" element={<TeacherTeachingAttendancePage />} />
-                    <Route path="teaching-qr-checkin" element={<TeachingQrCheckInPage />} />
-                  </Route>
+                      {/* Monitoring Pembelajaran - Absensi Mengajar Guru */}
+                      <Route path="teacher-teaching-attendance" element={<TeacherTeachingAttendancePage />} />
+                      <Route path="teaching-qr-checkin" element={<TeachingQrCheckInPage />} />
+                    </Route>
 
-                  {/* 404 Catch All Route */}
-                  <Route path="/404" element={<NotFound />} />
-                  <Route path="*" element={<Navigate to="/404" replace />} />
-                </Routes>
+                    {/* 404 Catch All Route */}
+                    <Route path="/404" element={<NotFound />} />
+                    <Route path="*" element={<Navigate to="/404" replace />} />
+                  </Routes>
+                </Suspense>
               </BrowserRouter>
             </AuthProvider>
           </ToastProvider>
