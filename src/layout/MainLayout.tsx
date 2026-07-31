@@ -7,6 +7,9 @@ import { academicYearService } from "../services/academicYearService";
 import { AcademicYear } from "../types";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
+import { APP_CONFIG } from "../config/appVersion";
+import OfflineBanner from "../components/OfflineBanner";
+import PwaUpdateBanner from "../components/PwaUpdateBanner";
 import { 
   LayoutDashboard, 
   CalendarDays, 
@@ -33,7 +36,8 @@ import {
   FileCheck,
   FileText,
   Heart,
-  QrCode
+  QrCode,
+  Info
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -200,6 +204,7 @@ export const MainLayout: React.FC = () => {
     { name: "Rapor Kinerja SDM", path: "/sdm-performance", icon: Award, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Evaluasi Kinerja" },
 
     { name: "Profil Saya", path: "/profile", icon: UserIcon, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Akun Saya" },
+    { name: "Tentang Aplikasi", path: "/about", icon: Info, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Akun Saya" },
 
     { name: "Pengaturan Sekolah", path: "/settings", icon: SettingsIcon, roles: ["admin", "kepala sekolah", "operator"], group: "Pengaturan Sekolah" },
     { name: "Agenda Rutin", path: "/settings/agendas", icon: Calendar, roles: ["admin", "kepala sekolah", "operator"], group: "Pengaturan Sekolah" },
@@ -241,6 +246,7 @@ export const MainLayout: React.FC = () => {
       { name: "Mutabaah Harian Saya", path: "/mutabaah-harian", icon: ClipboardList, roles: ["musrif"], group: "Halaqah Musrif (Asrama)" },
       ...(isAssignedPetugas ? [{ name: "Ceklis Barang Santri", path: "/inventaris-santri", icon: ClipboardList, roles: ["musrif"], group: "Halaqah Musrif (Asrama)" }] : []),
       { name: "Profil Saya", path: "/profile", icon: UserIcon, roles: ["musrif"], group: "Akun Saya" },
+      { name: "Tentang Aplikasi", path: "/about", icon: Info, roles: ["musrif"], group: "Akun Saya" },
       { name: "Pengaturan Akun", path: "/change-password", icon: SettingsIcon, roles: ["musrif"], group: "Akun Saya" }
     ];
   } else if (user.role === "guru halaqoh") {
@@ -252,6 +258,7 @@ export const MainLayout: React.FC = () => {
       { name: "Mutabaah Harian Saya", path: "/mutabaah-harian", icon: ClipboardList, roles: ["guru halaqoh"], group: "Halaqah Al-Qur'an (Tahfidz)" },
       ...(isAssignedPetugas ? [{ name: "Ceklis Barang Santri", path: "/inventaris-santri", icon: ClipboardList, roles: ["guru halaqoh"], group: "Halaqah Al-Qur'an (Tahfidz)" }] : []),
       { name: "Profil Saya", path: "/profile", icon: UserIcon, roles: ["guru halaqoh"], group: "Akun Saya" },
+      { name: "Tentang Aplikasi", path: "/about", icon: Info, roles: ["guru halaqoh"], group: "Akun Saya" },
       { name: "Pengaturan Akun", path: "/change-password", icon: SettingsIcon, roles: ["guru halaqoh"], group: "Akun Saya" }
     ];
   }
@@ -478,6 +485,8 @@ export const MainLayout: React.FC = () => {
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col h-full overflow-hidden">
+        <PwaUpdateBanner />
+        <OfflineBanner />
         
         {/* Topbar */}
         <header className="h-16 border-b border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between px-4 sm:px-6 z-10 shadow-xs shrink-0">
@@ -577,16 +586,20 @@ export const MainLayout: React.FC = () => {
         </main>
 
         {/* Status Bar Footer */}
-        <footer className="h-8 bg-white dark:bg-zinc-900 border-t border-slate-200 dark:border-zinc-800 flex items-center justify-between px-6 shrink-0 z-10 shadow-sm">
+        <footer className="h-8 bg-white dark:bg-zinc-900 border-t border-slate-200 dark:border-zinc-800 flex items-center justify-between px-6 shrink-0 z-10 shadow-sm text-[10px]">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-              <span className="text-[10px] text-slate-500 dark:text-zinc-400 font-medium">Firebase Connected: Cloud Firestore (Stable)</span>
+              <span className="text-slate-500 dark:text-zinc-400 font-medium">Firebase Connected: Cloud Firestore</span>
             </div>
             <div className="h-3 w-[1px] bg-slate-200 dark:bg-zinc-800"></div>
-            <span className="text-[10px] text-slate-500 dark:text-zinc-400 font-medium uppercase tracking-tight">SMP ALKARIM RASYID v1.0.4-LATEST</span>
+            <Link to="/about" className="text-slate-500 hover:text-blue-600 dark:text-zinc-400 dark:hover:text-blue-400 font-bold uppercase tracking-tight flex items-center gap-1">
+              <span>{APP_CONFIG.name} v{APP_CONFIG.version}</span>
+            </Link>
           </div>
-          <div className="text-[10px] text-slate-400 dark:text-zinc-500 italic font-medium hidden sm:block">Sistem dibangun dengan Clean Architecture & TypeScript</div>
+          <div className="text-slate-400 dark:text-zinc-500 italic font-medium hidden sm:block">
+            {APP_CONFIG.schoolName}
+          </div>
         </footer>
       </div>
 

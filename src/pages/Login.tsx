@@ -8,6 +8,7 @@ import { useToast } from "../contexts/ToastContext";
 import { FormInput } from "../components/FormInput";
 import { School, Loader2, ArrowRight } from "lucide-react";
 import { motion } from "motion/react";
+import { APP_CONFIG } from "../config/appVersion";
 
 const loginSchema = z.object({
   identifier: z.string().min(1, { message: "Email atau Username wajib diisi" }),
@@ -123,7 +124,7 @@ export const Login: React.FC = () => {
           </form>
 
           {/* Registration link */}
-          <div className="mt-6 pt-6 border-t border-gray-100 dark:border-zinc-850 text-center">
+          <div className="mt-6 pt-6 border-t border-gray-100 dark:border-zinc-850 text-center space-y-3">
             <p className="text-xs text-gray-500 dark:text-zinc-400">
               Belum memiliki akun?{" "}
               <Link
@@ -133,6 +134,9 @@ export const Login: React.FC = () => {
                 Daftar Akun
               </Link>
             </p>
+            <div className="text-[10px] text-gray-400 dark:text-zinc-500 font-mono font-medium">
+              {APP_CONFIG.name} Versi {APP_CONFIG.version}
+            </div>
           </div>
         </motion.div>
       </div>
