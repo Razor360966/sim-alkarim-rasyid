@@ -2,49 +2,48 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig} from 'vite';
-import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig(() => {
   return {
-    plugins: [
-  react(),
-  tailwindcss(),
-  VitePWA({
-    registerType: 'autoUpdate',
-    workbox: {
-    maximumFileSizeToCacheInBytes: 10 * 1024 * 1024
-},
-    includeAssets: [
-      'favicon.ico',
-      'apple-touch-icon.png'
-    ],
-    manifest: {
-      name: 'SIMAK SMP Alkarim',
-      short_name: 'SIMAK',
-      description: 'Sistem Manajemen Akademik SMP Alkarim Rasyid',
-      theme_color: '#0f766e',
-      background_color: '#ffffff',
-      display: 'standalone',
-      orientation: 'portrait',
-      start_url: '/',
-      icons: [
-        {
-          src: 'icon-192.png',
-          sizes: '192x192',
-          type: 'image/png'
-        },
-        {
-          src: 'icon-512.png',
-          sizes: '512x512',
-          type: 'image/png'
-        }
-      ]
-    }
-  })
-],
+    plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
+      },
+    },
+    build: {
+      chunkSizeWarningLimit: 1000,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules')) {
+              if (
+                id.includes('/react/') ||
+                id.includes('/react-dom/') ||
+                id.includes('/react-router/') ||
+                id.includes('/react-router-dom/')
+              ) {
+                return 'react-vendor';
+              }
+              if (id.includes('/firebase/')) {
+                return 'firebase';
+              }
+              if (id.includes('jspdf') || id.includes('html2canvas')) {
+                return 'pdf';
+              }
+              if (id.includes('xlsx') || id.includes('exceljs')) {
+                return 'excel';
+              }
+              if (id.includes('recharts') || id.includes('d3')) {
+                return 'charts';
+              }
+              if (id.includes('html5-qrcode') || id.includes('qrcode.react')) {
+                return 'qr';
+              }
+              return 'vendor';
+            }
+          },
+        },
       },
     },
     server: {
