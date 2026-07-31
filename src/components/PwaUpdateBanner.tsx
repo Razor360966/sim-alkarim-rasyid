@@ -1,10 +1,11 @@
 import React from "react";
 import { RefreshCw, Sparkles, X } from "lucide-react";
 import { usePwa } from "../contexts/PwaContext";
-import { APP_CONFIG } from "../config/appVersion";
+import { useSchoolIdentity } from "../contexts/SchoolIdentityContext";
 
 export const PwaUpdateBanner: React.FC = () => {
   const { updateAvailable, applyUpdate } = usePwa();
+  const { identity } = useSchoolIdentity();
   const [dismissed, setDismissed] = React.useState(false);
 
   if (!updateAvailable || dismissed) return null;
@@ -13,7 +14,7 @@ export const PwaUpdateBanner: React.FC = () => {
     <div className="bg-indigo-600 text-white px-4 py-2.5 text-xs font-bold flex flex-col sm:flex-row items-center justify-between gap-2 shadow-lg shrink-0 sticky top-0 z-[100] border-b border-indigo-400">
       <div className="flex items-center gap-2">
         <Sparkles className="w-4 h-4 text-amber-300 animate-spin" />
-        <span>Versi baru SIMAK ({APP_CONFIG.version}) telah tersedia! Klik perbarui untuk memuat fitur terbaru.</span>
+        <span>Versi baru {identity.name} (v{identity.version}) telah tersedia! Klik perbarui untuk memuat fitur terbaru.</span>
       </div>
       <div className="flex items-center gap-2 shrink-0">
         <button

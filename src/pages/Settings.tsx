@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useSchoolSettings } from "../hooks/schoolSettings.hook";
 import { useAuth } from "../contexts/AuthContext";
+import { useToast } from "../contexts/ToastContext";
+import { useSchoolIdentity } from "../contexts/SchoolIdentityContext";
 import { schoolSettingsService, SettingsHistoryItem } from "../services/schoolSettings.service";
 import { 
   Settings as SettingsIcon, 
@@ -28,7 +30,15 @@ import {
   Eye,
   History,
   ArrowRight,
-  CheckCircle2
+  CheckCircle2,
+  School,
+  Building,
+  Globe,
+  MapPin,
+  Mail,
+  Phone,
+  User,
+  Loader2
 } from "lucide-react";
 import { generateDailySchedule, TimelineBlock, minutesToTime, timeToMinutes } from "../utils/scheduleCalculator";
 import { SchoolSettings, BreakTime, RoutineActivity } from "../types";
@@ -93,12 +103,24 @@ function checkRoutineOverlap(activities: RoutineActivity[], activeDays: string[]
 
 export default function Settings() {
   const { user } = useAuth();
+  const { toast } = useToast();
+  const { identity, updateIdentity } = useSchoolIdentity();
   const { settings: fetchedSettings, isLoading, updateSettings, isUpdating, refetch } = useSchoolSettings();
 
   // Menu Tabs for sections
   const [activeTab, setActiveTab] = useState<
-    "hari-aktif" | "jam-sekolah" | "kegiatan-rutin" | "waktu-istirahat" | "struktur-jp" | "hari-libur" | "simpan" | "riwayat"
-  >("hari-aktif");
+    "identitas-sekolah" | "hari-aktif" | "jam-sekolah" | "kegiatan-rutin" | "waktu-istirahat" | "struktur-jp" | "hari-libur" | "simpan" | "riwayat"
+  >("identitas-sekolah");
+
+  // School Identity form state
+  const [identityForm, setIdentityForm] = useState(identity);
+  const [isSavingIdentity, setIsSavingIdentity] = useState(false);
+
+  useEffect(() => {
+    if (identity) {
+      setIdentityForm(identity);
+    }
+  }, [identity]);
 
   // Selected day for the timeline preview
   const [selectedPreviewDay, setSelectedPreviewDay] = useState("Senin");
@@ -632,6 +654,7 @@ export default function Settings() {
 
   // List of tabs corresponding exactly to spec
   const menuItems = [
+    { id: "identitas-sekolah", label: "0. Identitas Sekolah", icon: School },
     { id: "hari-aktif", label: "1. Hari Aktif", icon: Calendar },
     { id: "jam-sekolah", label: "2. Jam Sekolah", icon: Clock },
     { id: "struktur-jp", label: "3. Struktur JP", icon: Sliders },
@@ -769,6 +792,312 @@ export default function Settings() {
             
             {/* Form Fields Section */}
             <div>
+              {/* 0. IDENTITAS SEKOLAH & APLIKASI */}
+              {activeTab === "identitas-sekolah" && (
+                <div className="space-y-5">
+                  <div className="border-b border-slate-100 dark:border-zinc-850 pb-3">
+                    <h2 className="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                      <School className="h-4.5 w-4.5 text-indigo-600" />
+                      0. Pengaturan Identitas Sekolah & Aplikasi
+                    </h2>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      Single Source of Truth (SSOT) untuk seluruh identitas lembaga, aplikasi, dan kepala sekolah.
+                    </p>
+                  </div>
+
+                  {/* Section 1: Identitas Sekolah & Yayasan */}
+                  <div className="space-y-3">
+                    <h3 className="text-xs font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <Building className="w-3.5 h-3.5" />
+                      Identitas Sekolah & Yayasan
+                    </h3>
+                    <div className="grid grid-cols-1 gap-2.5">
+                      <div>
+                        <label className="text-[11px] font-semibold text-slate-700 dark:text-zinc-300">Nama Yayasan</label>
+                        <input
+                          type="text"
+                          value={identityForm.foundationName || ""}
+                          onChange={(e) => setIdentityForm({ ...identityForm, foundationName: e.target.value })}
+                          className="w-full mt-1 px-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-indigo-500"
+                          placeholder="Contoh: Yayasan Alkarim Rasyid"
+                          disabled={!hasWriteAccess}
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[11px] font-semibold text-slate-700 dark:text-zinc-300">Nama Sekolah</label>
+                          <input
+                            type="text"
+                            value={identityForm.schoolName || ""}
+                            onChange={(e) => setIdentityForm({ ...identityForm, schoolName: e.target.value })}
+                            className="w-full mt-1 px-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-indigo-500"
+                            placeholder="Contoh: SMP Alkarim Rasyid"
+                            disabled={!hasWriteAccess}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-semibold text-slate-700 dark:text-zinc-300">Singkatan Sekolah</label>
+                          <input
+                            type="text"
+                            value={identityForm.schoolAbbreviation || ""}
+                            onChange={(e) => setIdentityForm({ ...identityForm, schoolAbbreviation: e.target.value })}
+                            className="w-full mt-1 px-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-indigo-500"
+                            placeholder="Contoh: SMP AKR"
+                            disabled={!hasWriteAccess}
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[11px] font-semibold text-slate-700 dark:text-zinc-300">Logo Sekolah (URL / Path)</label>
+                          <input
+                            type="text"
+                            value={identityForm.logoUrl || ""}
+                            onChange={(e) => setIdentityForm({ ...identityForm, logoUrl: e.target.value })}
+                            className="w-full mt-1 px-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-indigo-500"
+                            placeholder="/logo.png atau URL logo"
+                            disabled={!hasWriteAccess}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-semibold text-slate-700 dark:text-zinc-300">Favicon Browser (URL / Path)</label>
+                          <input
+                            type="text"
+                            value={identityForm.faviconUrl || ""}
+                            onChange={(e) => setIdentityForm({ ...identityForm, faviconUrl: e.target.value })}
+                            className="w-full mt-1 px-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-indigo-500"
+                            placeholder="/favicon.ico"
+                            disabled={!hasWriteAccess}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Section 2: Alamat & Kontak */}
+                  <div className="space-y-3 pt-2">
+                    <h3 className="text-xs font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <MapPin className="w-3.5 h-3.5" />
+                      Alamat & Kontak Sekolah
+                    </h3>
+                    <div className="grid grid-cols-1 gap-2">
+                      <div>
+                        <label className="text-[11px] font-semibold text-slate-700 dark:text-zinc-300">Alamat Lengkap</label>
+                        <input
+                          type="text"
+                          value={identityForm.address || ""}
+                          onChange={(e) => setIdentityForm({ ...identityForm, address: e.target.value })}
+                          className="w-full mt-1 px-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-100"
+                          disabled={!hasWriteAccess}
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[11px] font-semibold text-slate-700 dark:text-zinc-300">Desa/Kelurahan</label>
+                          <input
+                            type="text"
+                            value={identityForm.village || ""}
+                            onChange={(e) => setIdentityForm({ ...identityForm, village: e.target.value })}
+                            className="w-full mt-1 px-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-100"
+                            disabled={!hasWriteAccess}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-semibold text-slate-700 dark:text-zinc-300">Kecamatan</label>
+                          <input
+                            type="text"
+                            value={identityForm.district || ""}
+                            onChange={(e) => setIdentityForm({ ...identityForm, district: e.target.value })}
+                            className="w-full mt-1 px-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-100"
+                            disabled={!hasWriteAccess}
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <label className="text-[11px] font-semibold text-slate-700 dark:text-zinc-300">Kab/Kota</label>
+                          <input
+                            type="text"
+                            value={identityForm.regency || ""}
+                            onChange={(e) => setIdentityForm({ ...identityForm, regency: e.target.value })}
+                            className="w-full mt-1 px-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-100"
+                            disabled={!hasWriteAccess}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-semibold text-slate-700 dark:text-zinc-300">Provinsi</label>
+                          <input
+                            type="text"
+                            value={identityForm.province || ""}
+                            onChange={(e) => setIdentityForm({ ...identityForm, province: e.target.value })}
+                            className="w-full mt-1 px-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-100"
+                            disabled={!hasWriteAccess}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-semibold text-slate-700 dark:text-zinc-300">Kode Pos</label>
+                          <input
+                            type="text"
+                            value={identityForm.postalCode || ""}
+                            onChange={(e) => setIdentityForm({ ...identityForm, postalCode: e.target.value })}
+                            className="w-full mt-1 px-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-100"
+                            disabled={!hasWriteAccess}
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[11px] font-semibold text-slate-700 dark:text-zinc-300">Telepon / HP</label>
+                          <input
+                            type="text"
+                            value={identityForm.phone || ""}
+                            onChange={(e) => setIdentityForm({ ...identityForm, phone: e.target.value })}
+                            className="w-full mt-1 px-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-100"
+                            disabled={!hasWriteAccess}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-semibold text-slate-700 dark:text-zinc-300">WhatsApp</label>
+                          <input
+                            type="text"
+                            value={identityForm.whatsapp || ""}
+                            onChange={(e) => setIdentityForm({ ...identityForm, whatsapp: e.target.value })}
+                            className="w-full mt-1 px-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-100"
+                            disabled={!hasWriteAccess}
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[11px] font-semibold text-slate-700 dark:text-zinc-300">Email Sekolah</label>
+                          <input
+                            type="text"
+                            value={identityForm.email || ""}
+                            onChange={(e) => setIdentityForm({ ...identityForm, email: e.target.value })}
+                            className="w-full mt-1 px-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-100"
+                            disabled={!hasWriteAccess}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-semibold text-slate-700 dark:text-zinc-300">Website Resmi</label>
+                          <input
+                            type="text"
+                            value={identityForm.website || ""}
+                            onChange={(e) => setIdentityForm({ ...identityForm, website: e.target.value })}
+                            className="w-full mt-1 px-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-100"
+                            disabled={!hasWriteAccess}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Section 3: Identitas Kepala Sekolah */}
+                  <div className="space-y-3 pt-2">
+                    <h3 className="text-xs font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <User className="w-3.5 h-3.5" />
+                      Identitas Kepala Sekolah
+                    </h3>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="text-[11px] font-semibold text-slate-700 dark:text-zinc-300">Nama Kepala Sekolah</label>
+                        <input
+                          type="text"
+                          value={identityForm.principalName || ""}
+                          onChange={(e) => setIdentityForm({ ...identityForm, principalName: e.target.value })}
+                          className="w-full mt-1 px-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-100"
+                          disabled={!hasWriteAccess}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-semibold text-slate-700 dark:text-zinc-300">Gelar</label>
+                        <input
+                          type="text"
+                          value={identityForm.principalDegree || ""}
+                          onChange={(e) => setIdentityForm({ ...identityForm, principalDegree: e.target.value })}
+                          className="w-full mt-1 px-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-100"
+                          disabled={!hasWriteAccess}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-semibold text-slate-700 dark:text-zinc-300">NIP / NIY</label>
+                        <input
+                          type="text"
+                          value={identityForm.principalNipNiy || ""}
+                          onChange={(e) => setIdentityForm({ ...identityForm, principalNipNiy: e.target.value })}
+                          className="w-full mt-1 px-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-100"
+                          disabled={!hasWriteAccess}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Section 4: Identitas Aplikasi */}
+                  <div className="space-y-3 pt-2">
+                    <h3 className="text-xs font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <Info className="w-3.5 h-3.5" />
+                      Identitas & Versi Aplikasi
+                    </h3>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[11px] font-semibold text-slate-700 dark:text-zinc-300">Nama Aplikasi</label>
+                        <input
+                          type="text"
+                          value={identityForm.name || ""}
+                          onChange={(e) => setIdentityForm({ ...identityForm, name: e.target.value })}
+                          className="w-full mt-1 px-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-100"
+                          disabled={!hasWriteAccess}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-semibold text-slate-700 dark:text-zinc-300">Subjudul Aplikasi</label>
+                        <input
+                          type="text"
+                          value={identityForm.fullName || ""}
+                          onChange={(e) => setIdentityForm({ ...identityForm, fullName: e.target.value })}
+                          className="w-full mt-1 px-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-100"
+                          disabled={!hasWriteAccess}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {hasWriteAccess && (
+                    <div className="pt-3 border-t border-slate-100 dark:border-zinc-850">
+                      <button
+                        type="button"
+                        disabled={isSavingIdentity}
+                        onClick={async () => {
+                          setIsSavingIdentity(true);
+                          try {
+                            await updateIdentity(identityForm);
+                            toast("Pengaturan Identitas Sekolah berhasil diperbarui!", "success");
+                          } catch (err) {
+                            console.error(err);
+                            toast("Gagal memperbarui identitas sekolah.", "error");
+                          } finally {
+                            setIsSavingIdentity(false);
+                          }
+                        }}
+                        className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                      >
+                        {isSavingIdentity ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span>Menyimpan Identitas...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Save className="w-4 h-4" />
+                            <span>Simpan Identitas Sekolah & Aplikasi</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* 1. HARI AKTIF */}
               {activeTab === "hari-aktif" && (
                 <div className="space-y-4">

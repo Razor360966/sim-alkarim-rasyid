@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { School, Sparkles } from "lucide-react";
-import { APP_CONFIG } from "../config/appVersion";
+import { useSchoolIdentity } from "../contexts/SchoolIdentityContext";
 import { motion, AnimatePresence } from "motion/react";
 
 interface SplashScreenProps {
@@ -13,6 +13,8 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
   durationMs = 1800
 }) => {
   const [visible, setVisible] = useState(true);
+  const { identity } = useSchoolIdentity();
+  const [imgError, setImgError] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -42,8 +44,19 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
             className="flex flex-col items-center text-center space-y-5"
           >
             <div className="relative flex items-center justify-center">
-              <div className="h-20 w-20 rounded-3xl bg-indigo-600 flex items-center justify-center text-white shadow-2xl shadow-indigo-500/40 border border-indigo-400/30">
-                <School className="h-10 w-10 animate-pulse" />
+              <div className="h-20 w-20 rounded-3xl bg-slate-900 flex items-center justify-center text-white shadow-2xl p-2 border border-indigo-500/30">
+                {!imgError && identity.logoUrl ? (
+                  <img
+                    src={identity.logoUrl}
+                    alt={identity.schoolName}
+                    className="h-full w-full object-contain"
+                    onError={() => setImgError(true)}
+                  />
+                ) : (
+                  <div className="h-full w-full rounded-2xl bg-indigo-600 flex items-center justify-center text-white">
+                    <School className="h-10 w-10 animate-pulse" />
+                  </div>
+                )}
               </div>
               <div className="absolute -top-2 -right-2 p-1.5 bg-amber-400 text-slate-950 rounded-xl shadow-md">
                 <Sparkles className="h-4 w-4" />
@@ -52,13 +65,13 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
 
             <div className="space-y-1.5">
               <h1 className="text-3xl font-black tracking-tight text-white">
-                {APP_CONFIG.name}
+                {identity.name}
               </h1>
               <p className="text-xs font-bold text-indigo-300 uppercase tracking-widest">
-                {APP_CONFIG.fullName}
+                {identity.fullName}
               </p>
               <p className="text-[11px] text-slate-400 font-medium">
-                {APP_CONFIG.schoolName}
+                {identity.schoolName}
               </p>
             </div>
 
@@ -78,9 +91,9 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
             className="flex flex-col items-center text-center space-y-1 text-slate-500 text-xs font-medium"
           >
             <div className="px-3 py-1 bg-slate-900 border border-slate-800 rounded-full text-[11px] font-mono text-indigo-400 font-bold">
-              Versi {APP_CONFIG.version}
+              Versi {identity.version}
             </div>
-            <p className="text-[10px] text-slate-600 mt-1">{APP_CONFIG.copyright}</p>
+            <p className="text-[10px] text-slate-600 mt-1">{identity.copyright}</p>
           </motion.div>
         </motion.div>
       )}

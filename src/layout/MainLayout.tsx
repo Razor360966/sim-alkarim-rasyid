@@ -3,6 +3,7 @@ import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { useToast } from "../contexts/ToastContext";
+import { useSchoolIdentity } from "../contexts/SchoolIdentityContext";
 import { academicYearService } from "../services/academicYearService";
 import { AcademicYear } from "../types";
 import { doc, getDoc } from "firebase/firestore";
@@ -45,8 +46,10 @@ export const MainLayout: React.FC = () => {
   const { user, logout, switchRole, activeRole } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const { toast } = useToast();
+  const { identity } = useSchoolIdentity();
   const location = useLocation();
   const navigate = useNavigate();
+  const [sidebarImgError, setSidebarImgError] = useState(false);
   
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -291,8 +294,17 @@ export const MainLayout: React.FC = () => {
         {/* Brand / Logo */}
         <div className="flex items-center h-16 px-5 border-b border-slate-800 justify-between">
           <Link to="/" className="flex items-center gap-2.5 overflow-hidden">
-            <div className="flex-shrink-0 h-9 w-9 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-md shadow-blue-900/30">
-              <School className="h-5 w-5" />
+            <div className="flex-shrink-0 h-9 w-9 rounded-xl bg-slate-800 flex items-center justify-center p-1 text-white shadow-md border border-slate-700">
+              {!sidebarImgError && identity.logoUrl ? (
+                <img
+                  src={identity.logoUrl}
+                  alt={identity.schoolName}
+                  className="h-full w-full object-contain"
+                  onError={() => setSidebarImgError(true)}
+                />
+              ) : (
+                <School className="h-5 w-5 text-blue-400" />
+              )}
             </div>
             {!isSidebarCollapsed && (
               <motion.div 
@@ -300,8 +312,8 @@ export const MainLayout: React.FC = () => {
                 animate={{ opacity: 1, x: 0 }}
                 className="flex flex-col leading-none"
               >
-                <span className="font-bold tracking-tight text-sm text-white">{APP_CONFIG.name}</span>
-                <span className="text-[10px] text-slate-400 font-semibold tracking-wider uppercase">{APP_CONFIG.schoolName}</span>
+                <span className="font-bold tracking-tight text-sm text-white">{identity.name}</span>
+                <span className="text-[10px] text-slate-400 font-semibold tracking-wider uppercase truncate max-w-[150px]">{identity.schoolName}</span>
               </motion.div>
             )}
           </Link>
@@ -417,12 +429,21 @@ export const MainLayout: React.FC = () => {
             >
               <div className="flex items-center justify-between border-b border-slate-800 pb-4 mb-4">
                 <div className="flex items-center gap-2.5">
-                  <div className="h-9 w-9 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-md shadow-blue-900/30">
-                    <School className="h-5 w-5" />
+                  <div className="h-9 w-9 rounded-xl bg-slate-800 flex items-center justify-center p-1 text-white shadow-md border border-slate-700">
+                    {!sidebarImgError && identity.logoUrl ? (
+                      <img
+                        src={identity.logoUrl}
+                        alt={identity.schoolName}
+                        className="h-full w-full object-contain"
+                        onError={() => setSidebarImgError(true)}
+                      />
+                    ) : (
+                      <School className="h-5 w-5 text-blue-400" />
+                    )}
                   </div>
                   <div className="flex flex-col leading-none">
-                    <span className="font-bold tracking-tight text-sm text-white">{APP_CONFIG.name}</span>
-                    <span className="text-[10px] text-slate-400 font-semibold tracking-wider uppercase">{APP_CONFIG.schoolName}</span>
+                    <span className="font-bold tracking-tight text-sm text-white">{identity.name}</span>
+                    <span className="text-[10px] text-slate-400 font-semibold tracking-wider uppercase truncate max-w-[150px]">{identity.schoolName}</span>
                   </div>
                 </div>
               </div>
@@ -594,11 +615,11 @@ export const MainLayout: React.FC = () => {
             </div>
             <div className="h-3 w-[1px] bg-slate-200 dark:bg-zinc-800"></div>
             <Link to="/about" className="text-slate-500 hover:text-blue-600 dark:text-zinc-400 dark:hover:text-blue-400 font-bold uppercase tracking-tight flex items-center gap-1">
-              <span>{APP_CONFIG.name} v{APP_CONFIG.version}</span>
+              <span>{identity.name} v{identity.version}</span>
             </Link>
           </div>
           <div className="text-slate-400 dark:text-zinc-500 italic font-medium hidden sm:block">
-            {APP_CONFIG.schoolName}
+            {identity.schoolName}
           </div>
         </footer>
       </div>

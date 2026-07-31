@@ -10,6 +10,7 @@ import { AuthProvider } from "./contexts/AuthContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { ToastProvider } from "./contexts/ToastContext";
 import { PwaProvider } from "./contexts/PwaContext";
+import { SchoolIdentityProvider, useSchoolIdentity } from "./contexts/SchoolIdentityContext";
 
 // Config
 import { APP_CONFIG } from "./config/appConfig";
@@ -25,7 +26,6 @@ import MainLayout from "./layout/MainLayout";
 
 // Lazy Loaded Pages
 const Login = lazy(() => import("./pages/Login"));
-const Register = lazy(() => import("./pages/Register"));
 const ChangePassword = lazy(() => import("./pages/ChangePassword"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const AcademicYears = lazy(() => import("./pages/AcademicYears"));
@@ -67,6 +67,15 @@ const AboutApp = lazy(() => import("./pages/AboutApp"));
 const OfflinePage = lazy(() => import("./pages/OfflinePage"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
+// Inner component to dynamically update Document Title based on SSOT identity
+function AppTitleUpdater() {
+  const { identity } = useSchoolIdentity();
+  useEffect(() => {
+    document.title = `${identity.name} – ${identity.fullName} ${identity.schoolName}`;
+  }, [identity]);
+  return null;
+}
+
 // Create TanStack Query Client
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -79,10 +88,6 @@ const queryClient = new QueryClient({
 });
 
 export default function App() {
-  useEffect(() => {
-    document.title = `${APP_CONFIG.name} – ${APP_CONFIG.fullName} ${APP_CONFIG.schoolName}`;
-  }, []);
-
   const [showSplash, setShowSplash] = useState<boolean>(() => {
     return !sessionStorage.getItem("simak_splash_shown");
   });
@@ -101,17 +106,19 @@ export default function App() {
       <QueryClientProvider client={queryClient}>
         <ThemeProvider>
           <ToastProvider>
-            <PwaProvider>
-              {showSplash && <SplashScreen onFinish={handleSplashFinish} durationMs={1800} />}
-              <AuthProvider>
-                <BrowserRouter>
-                  <Suspense fallback={<PageLoading />}>
-                    <Routes>
-                      {/* Public Authentication routes */}
-                      <Route path="/login" element={<Login />} />
-                      <Route path="/register" element={<Register />} />
-                      <Route path="/change-password" element={<ChangePassword />} />
-                      <Route path="/offline" element={<OfflinePage />} />
+            <SchoolIdentityProvider>
+              <AppTitleUpdater />
+              <PwaProvider>
+                {showSplash && <SplashScreen onFinish={handleSplashFinish} durationMs={1800} />}
+                <AuthProvider>
+                  <BrowserRouter>
+                    <Suspense fallback={<PageLoading />}>
+                      <Routes>
+                        {/* Public Authentication routes */}
+                        <Route path="/login" element={<Login />} />
+                        <Route path="/register" element={<Navigate to="/login" replace />} />
+                        <Route path="/change-password" element={<ChangePassword />} />
+                        <Route path="/offline" element={<OfflinePage />} />
 
                       {/* Protected School Master Data routes */}
                       <Route path="/" element={<MainLayout />}>
@@ -171,6 +178,7 @@ export default function App() {
                 </BrowserRouter>
               </AuthProvider>
             </PwaProvider>
+            </SchoolIdentityProvider>
           </ToastProvider>
         </ThemeProvider>
       </QueryClientProvider>

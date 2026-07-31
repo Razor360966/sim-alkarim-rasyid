@@ -2,13 +2,13 @@ import React, { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
+import { useSchoolIdentity } from "../contexts/SchoolIdentityContext";
 import { FormInput } from "../components/FormInput";
 import { School, Loader2, ArrowRight } from "lucide-react";
 import { motion } from "motion/react";
-import { APP_CONFIG } from "../config/appVersion";
 
 const loginSchema = z.object({
   identifier: z.string().min(1, { message: "Email atau Username wajib diisi" }),
@@ -20,8 +20,10 @@ type LoginFormValues = z.infer<typeof loginSchema>;
 export const Login: React.FC = () => {
   const { login } = useAuth();
   const { toast } = useToast();
+  const { identity } = useSchoolIdentity();
   const navigate = useNavigate();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [imgError, setImgError] = useState(false);
 
   const {
     register,
@@ -61,17 +63,28 @@ export const Login: React.FC = () => {
         
         {/* Header Logo */}
         <div className="flex flex-col items-center mb-8 text-center space-y-1">
-          <div className="h-14 w-14 rounded-2xl bg-indigo-600 dark:bg-indigo-500 flex items-center justify-center text-white shadow-lg mb-2 border border-indigo-400/30">
-            <School className="h-7 w-7" />
+          <div className="h-16 w-16 rounded-2xl bg-white dark:bg-zinc-900 flex items-center justify-center p-2 mb-2 border border-indigo-100 dark:border-zinc-800 shadow-md">
+            {!imgError && identity.logoUrl ? (
+              <img
+                src={identity.logoUrl}
+                alt={identity.schoolName}
+                className="h-full w-full object-contain"
+                onError={() => setImgError(true)}
+              />
+            ) : (
+              <div className="h-12 w-12 rounded-xl bg-indigo-600 dark:bg-indigo-500 flex items-center justify-center text-white shadow-xs">
+                <School className="h-6 w-6" />
+              </div>
+            )}
           </div>
           <h1 className="text-2xl font-black tracking-tight text-gray-900 dark:text-white">
-            {APP_CONFIG.name}
+            {identity.name}
           </h1>
           <p className="text-xs text-indigo-600 dark:text-indigo-400 font-bold uppercase tracking-wider">
-            {APP_CONFIG.fullName}
+            {identity.fullName}
           </p>
           <p className="text-xs text-gray-500 dark:text-zinc-400 font-medium">
-            {APP_CONFIG.schoolName}
+            {identity.schoolName}
           </p>
         </div>
 
@@ -86,7 +99,7 @@ export const Login: React.FC = () => {
               Selamat Datang Kembali
             </h2>
             <p className="text-xs text-gray-400 dark:text-zinc-400 mt-1">
-              Masukkan akun terdaftar Anda untuk masuk ke dashboard
+              Masukkan akun terdaftar Anda untuk masuk ke sistem
             </p>
           </div>
 
@@ -126,20 +139,13 @@ export const Login: React.FC = () => {
             </button>
           </form>
 
-          {/* Registration link */}
-          <div className="mt-6 pt-6 border-t border-gray-100 dark:border-zinc-850 text-center space-y-3">
-            <p className="text-xs text-gray-500 dark:text-zinc-400">
-              Belum memiliki akun?{" "}
-              <Link
-                to="/register"
-                className="font-bold text-blue-600 dark:text-blue-400 hover:underline"
-              >
-                Daftar Akun
-              </Link>
-            </p>
-            <div className="text-[10px] text-gray-400 dark:text-zinc-500 font-mono font-medium space-y-0.5">
-              <div>{APP_CONFIG.name} Versi {APP_CONFIG.version} (Build {APP_CONFIG.buildNumber})</div>
-              <div>Build Date: {APP_CONFIG.buildDate}</div>
+          {/* Footer Info (No Register Link) */}
+          <div className="mt-6 pt-6 border-t border-gray-100 dark:border-zinc-850 text-center space-y-1">
+            <div className="text-[11px] text-gray-500 dark:text-zinc-400 font-medium">
+              Sistem Akses Internal &bull; {identity.schoolName}
+            </div>
+            <div className="text-[10px] text-gray-400 dark:text-zinc-500 font-mono">
+              {identity.name} v{identity.version} (Build {identity.buildNumber})
             </div>
           </div>
         </motion.div>
