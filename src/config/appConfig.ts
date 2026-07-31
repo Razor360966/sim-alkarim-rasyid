@@ -66,7 +66,7 @@ export const APP_CONFIG: AppConfig = {
   buildNumber: "103",
   buildDate: "2026-07-30",
   developer: "M. Rakhman Azizi, S.Pd., Gr.",
-  developerNote: "Developed by M. Rakhman Azizi, S.Pd., Gr., with the support of Artificial Intelligence technologies powered by ChatGPT (OpenAI) and Google AI Studio.
+  developerNote: "Developed by M. Rakhman Azizi, S.Pd., Gr., with the support of Artificial Intelligence technologies powered by ChatGPT (OpenAI) and Google AI Studio.",
   releaseYear: "2026",
   techStack: [
     "React",
@@ -84,7 +84,7 @@ export const APP_CONFIG: AppConfig = {
   // Identitas Kepala Sekolah Default
   principalName: "Samhari",
   principalDegree: "S.Sos",
-  principalNipNiy: "NIY"
+  principalNipNiy: "NIY",
   principalSignatureUrl: ""
 };
 
