@@ -64,7 +64,10 @@ export default defineConfig(() => {
                 id.includes('/react/') ||
                 id.includes('/react-dom/') ||
                 id.includes('/react-router/') ||
-                id.includes('/react-router-dom/')
+                id.includes('/react-router-dom/') ||
+                id.includes('/scheduler/') ||
+                id.includes('/@remix-run/router/') ||
+                id.includes('/use-sync-external-store/')
               ) {
                 return 'react-vendor';
               }
