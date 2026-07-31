@@ -19,7 +19,7 @@ import {
   ChevronRight
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
-import { teacherTeachingAttendanceService } from "../services/teacherTeachingAttendance.service";
+import { teacherTeachingAttendanceService, getTodayDateStr } from "../services/teacherTeachingAttendance.service";
 import { academicYearService } from "../services/academicYearService";
 import { semesterService } from "../services/semester.service";
 import { classService } from "../services/classService";
@@ -142,9 +142,15 @@ export const TeachingQrCheckInPage: React.FC = () => {
   useEffect(() => {
     const updateTime = () => {
       const now = new Date();
-      setCurrentTime(now.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
-      setCurrentDateStr(now.toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" }));
-      setCurrentDayName(now.toLocaleDateString("id-ID", { weekday: "long" }));
+      try {
+        setCurrentTime(now.toLocaleTimeString("id-ID", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+        setCurrentDateStr(now.toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta", day: "numeric", month: "long", year: "numeric" }));
+        setCurrentDayName(now.toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta", weekday: "long" }));
+      } catch (e) {
+        setCurrentTime(now.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+        setCurrentDateStr(now.toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" }));
+        setCurrentDayName(now.toLocaleDateString("id-ID", { weekday: "long" }));
+      }
     };
     updateTime();
     const timer = setInterval(updateTime, 1000);
@@ -180,7 +186,7 @@ export const TeachingQrCheckInPage: React.FC = () => {
 
   const fetchTodaySchedules = async (ayId: string, semId: string) => {
     if (!user) return;
-    const todayStr = new Date().toISOString().split("T")[0];
+    const todayStr = getTodayDateStr();
     try {
       const { items } = await teacherTeachingAttendanceService.getAttendanceForDate(todayStr, ayId, semId);
       const teacherNameClean = (user.name || "").toLowerCase().trim();

@@ -41,6 +41,24 @@ export function getIndonesianDayName(dateStr: string): string {
   return days[dayIndex] || "Senin";
 }
 
+export function getTodayDateStr(timeZone = "Asia/Jakarta"): string {
+  try {
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    });
+    return formatter.format(new Date());
+  } catch (e) {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+}
+
 async function logActivity(userId: string, userName: string, action: string, description: string) {
   try {
     const logsRef = collection(db, "activity_logs");
@@ -594,7 +612,7 @@ export const teacherTeachingAttendanceService = {
   ): Promise<void> {
     try {
       const timestamp = new Date().toISOString();
-      const todayStr = new Date().toISOString().split("T")[0];
+      const todayStr = getTodayDateStr();
       const isPastDate = dateStr < todayStr;
 
       const docId = item.id || `${dateStr}_${item.scheduleId}`;
@@ -668,7 +686,7 @@ export const teacherTeachingAttendanceService = {
     try {
       const batch = writeBatch(db);
       const timestamp = new Date().toISOString();
-      const todayStr = new Date().toISOString().split("T")[0];
+      const todayStr = getTodayDateStr();
       const isPastDate = dateStr < todayStr;
 
       // Fetch existing snapshot to compare previous values for audit log
@@ -779,7 +797,10 @@ export const teacherTeachingAttendanceService = {
       for (let i = 1; i <= limitDays; i++) {
         const d = new Date();
         d.setDate(today.getDate() - i);
-        const dateStr = d.toISOString().split("T")[0];
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        const dateStr = `${year}-${month}-${day}`;
 
         const kaldik = await this.checkKaldikStatus(dateStr, academicYearId, semesterId);
         if (kaldik.isKbmDisabled) continue;
@@ -1126,9 +1147,14 @@ export const teacherTeachingAttendanceService = {
     record?: TeacherTeachingAttendance;
   }> {
     try {
-      const todayStr = new Date().toISOString().split("T")[0];
+      const todayStr = getTodayDateStr();
       const now = new Date();
-      const defaultTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      let defaultTimeStr = "";
+      try {
+        defaultTimeStr = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit", hour12: false }).format(now);
+      } catch (e) {
+        defaultTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      }
       const currentTimeStr = params.customTimeStr || defaultTimeStr;
       const currentM = parseTimeToMinutes(currentTimeStr);
 
@@ -1391,7 +1417,12 @@ export const teacherTeachingAttendanceService = {
   }> {
     const { items } = await this.getAttendanceForDate(dateStr, academicYearId || "", semesterId || "");
     const now = new Date();
-    const defaultTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    let defaultTimeStr = "";
+    try {
+      defaultTimeStr = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit", hour12: false }).format(now);
+    } catch (e) {
+      defaultTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    }
     const currentM = parseTimeToMinutes(defaultTimeStr);
 
     const belumCheckIn: TeacherTeachingAttendance[] = [];

@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
-import { teacherTeachingAttendanceService, getIndonesianDayName } from "../services/teacherTeachingAttendance.service";
+import { teacherTeachingAttendanceService, getIndonesianDayName, getTodayDateStr } from "../services/teacherTeachingAttendance.service";
 import { teacherService } from "../services/teacherService";
 import { subjectService } from "../services/subjectService";
 import { classService } from "../services/classService";
@@ -105,7 +105,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
   );
 
   // Default date = today's YYYY-MM-DD
-  const todayStr = new Date().toISOString().split("T")[0];
+  const todayStr = getTodayDateStr();
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const [activeTab, setActiveTab] = useState<"input" | "rekap">("input");
 
@@ -305,7 +305,10 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
   const getOffsetDateStr = (daysAgo: number) => {
     const d = new Date();
     d.setDate(d.getDate() - daysAgo);
-    return d.toISOString().split("T")[0];
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
   };
 
   // Handle local changes
@@ -639,11 +642,17 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
       setRekapEndDate(selectedDate || todayStr);
     } else if (rekapPeriodType === "mingguan") {
       const day = now.getDay();
-      const diffToMon = now.getDate() - day + (day === 0 ? -6 : 1);
-      const monday = new Date(now.setDate(diffToMon)).toISOString().split("T")[0];
-      const sunday = new Date(now.setDate(diffToMon + 6)).toISOString().split("T")[0];
-      setRekapStartDate(monday);
-      setRekapEndDate(sunday);
+      const diffToMon = day === 0 ? -6 : 1 - day;
+      const monObj = new Date(now);
+      monObj.setDate(now.getDate() + diffToMon);
+      const sunObj = new Date(monObj);
+      sunObj.setDate(monObj.getDate() + 6);
+
+      const monStr = `${monObj.getFullYear()}-${String(monObj.getMonth() + 1).padStart(2, "0")}-${String(monObj.getDate()).padStart(2, "0")}`;
+      const sunStr = `${sunObj.getFullYear()}-${String(sunObj.getMonth() + 1).padStart(2, "0")}-${String(sunObj.getDate()).padStart(2, "0")}`;
+
+      setRekapStartDate(monStr);
+      setRekapEndDate(sunStr);
     } else if (rekapPeriodType === "bulanan") {
       const y = now.getFullYear();
       const m = String(now.getMonth() + 1).padStart(2, "0");
