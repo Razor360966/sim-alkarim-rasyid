@@ -27,24 +27,39 @@ export const PwaProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // 1. Cleanup legacy manual SW or stale cache on mount
   useEffect(() => {
     if (typeof window !== "undefined" && "serviceWorker" in navigator) {
-      navigator.serviceWorker.getRegistrations().then((registrations) => {
-        for (const reg of registrations) {
-          if (reg.active && reg.active.scriptURL.endsWith("/sw.js") && !reg.active.scriptURL.includes("workbox")) {
-            console.log("Cleaning up legacy manual service worker...");
-            reg.unregister();
-          }
-        }
-      });
-
-      if ("caches" in window) {
-        caches.keys().then((names) => {
-          for (const name of names) {
-            if (name.startsWith("simak-app-v")) {
-              console.log("Deleting legacy cache storage:", name);
-              caches.delete(name);
+      navigator.serviceWorker
+        .getRegistrations()
+        .then((registrations) => {
+          for (const reg of registrations) {
+            const scriptURL =
+              reg.active?.scriptURL ||
+              reg.waiting?.scriptURL ||
+              reg.installing?.scriptURL ||
+              "";
+            if (scriptURL.endsWith("/sw.js") && !scriptURL.includes("workbox")) {
+              console.log("Cleaning up legacy manual service worker...");
+              reg.unregister();
             }
           }
+        })
+        .catch((err) => {
+          console.warn("Error checking SW registrations:", err);
         });
+
+      if ("caches" in window) {
+        caches
+          .keys()
+          .then((names) => {
+            for (const name of names) {
+              if (name.startsWith("simak-app-v")) {
+                console.log("Deleting legacy cache storage:", name);
+                caches.delete(name);
+              }
+            }
+          })
+          .catch((err) => {
+            console.warn("Error clearing legacy caches:", err);
+          });
       }
     }
   }, []);
@@ -92,14 +107,6 @@ export const PwaProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
 
       updateSWRef.current = updateSW;
-
-      let refreshing = false;
-      navigator.serviceWorker.addEventListener("controllerchange", () => {
-        if (!refreshing) {
-          refreshing = true;
-          window.location.reload();
-        }
-      });
     }
   }, [toast]);
 
