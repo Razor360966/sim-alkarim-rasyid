@@ -57,7 +57,9 @@ export const LessonPlans: React.FC = () => {
   const [formDescription, setFormDescription] = useState("");
 
   const currentRole = user?.role?.toLowerCase() || "";
-  const isGuru = user?.roles?.includes("guru") || currentRole === "guru";
+  const isAdminOrKurikulum = user?.roles?.some(r => ["admin", "kurikulum", "superadmin", "operator"].includes(r.toLowerCase())) || 
+                             ["admin", "kurikulum", "superadmin", "operator"].includes(currentRole);
+  const isGuru = (user?.roles?.includes("guru") || currentRole === "guru") && !isAdminOrKurikulum;
 
   // Load classes, semesters, matrix
   useEffect(() => {
@@ -99,28 +101,80 @@ export const LessonPlans: React.FC = () => {
   const selectedClassObj = classes.find(c => c.id === selectedClassId);
   const gradeLevel = selectedClassObj?.gradeLevel || "VII";
 
-  const allOfferedSubjects = curriculumMatrix.map(m => ({
-    id: m.subjectId,
-    name: m.subjectName,
-    teacherId: m.teacherId,
-    teacherName: m.teacherName,
-    jp: gradeLevel === "VII" ? m.jp_vii : gradeLevel === "VIII" ? m.jp_viii : m.jp_ix
-  })).filter(s => s.jp > 0);
+  const allOfferedSubjects = curriculumMatrix.map(m => {
+    let assignedTeacherId = m.teacherId;
+    let assignedTeacherName = m.teacherName;
+
+    if (m.useDifferentTeachers) {
+      if (gradeLevel === "VII") {
+        assignedTeacherId = m.teacherId_vii || m.teacherId;
+        assignedTeacherName = m.teacherName_vii || m.teacherName;
+      } else if (gradeLevel === "VIII") {
+        assignedTeacherId = m.teacherId_viii || m.teacherId;
+        assignedTeacherName = m.teacherName_viii || m.teacherName;
+      } else if (gradeLevel === "IX") {
+        assignedTeacherId = m.teacherId_ix || m.teacherId;
+        assignedTeacherName = m.teacherName_ix || m.teacherName;
+      }
+    }
+
+    const jp = gradeLevel === "VII" ? m.jp_vii : gradeLevel === "VIII" ? m.jp_viii : m.jp_ix;
+
+    return {
+      id: m.subjectId,
+      name: m.subjectName,
+      teacherId: assignedTeacherId,
+      teacherName: assignedTeacherName,
+      jp: jp || 0
+    };
+  }).filter(s => s.jp > 0);
+
+  const filterTeacherSubject = (s: { teacherId: string; teacherName: string }) => {
+    if (!user) return false;
+    if (user.teacherId && s.teacherId === user.teacherId) return true;
+    if (user.uid && s.teacherId === user.uid) return true;
+    const userDisplayName = (user.displayName || user.name || user.teacherName || "").toLowerCase().trim();
+    const teacherName = (s.teacherName || "").toLowerCase().trim();
+    if (userDisplayName && teacherName && (userDisplayName.includes(teacherName) || teacherName.includes(userDisplayName))) {
+      return true;
+    }
+    return false;
+  };
 
   const offeredSubjects = isGuru
-    ? allOfferedSubjects.filter(s => s.teacherId === user?.teacherId)
+    ? allOfferedSubjects.filter(filterTeacherSubject)
     : allOfferedSubjects;
 
   // Filter offered subjects for modal form
   const modalClassObj = classes.find(c => c.id === formClassId);
   const modalGradeLevel = modalClassObj?.gradeLevel || "VII";
-  const modalOfferedSubjects = curriculumMatrix.map(m => ({
-    id: m.subjectId,
-    name: m.subjectName,
-    teacherId: m.teacherId,
-    teacherName: m.teacherName,
-    jp: modalGradeLevel === "VII" ? m.jp_vii : modalGradeLevel === "VIII" ? m.jp_viii : m.jp_ix
-  })).filter(s => s.jp > 0);
+  const modalOfferedSubjects = curriculumMatrix.map(m => {
+    let assignedTeacherId = m.teacherId;
+    let assignedTeacherName = m.teacherName;
+
+    if (m.useDifferentTeachers) {
+      if (modalGradeLevel === "VII") {
+        assignedTeacherId = m.teacherId_vii || m.teacherId;
+        assignedTeacherName = m.teacherName_vii || m.teacherName;
+      } else if (modalGradeLevel === "VIII") {
+        assignedTeacherId = m.teacherId_viii || m.teacherId;
+        assignedTeacherName = m.teacherName_viii || m.teacherName;
+      } else if (modalGradeLevel === "IX") {
+        assignedTeacherId = m.teacherId_ix || m.teacherId;
+        assignedTeacherName = m.teacherName_ix || m.teacherName;
+      }
+    }
+
+    const jp = modalGradeLevel === "VII" ? m.jp_vii : modalGradeLevel === "VIII" ? m.jp_viii : m.jp_ix;
+
+    return {
+      id: m.subjectId,
+      name: m.subjectName,
+      teacherId: assignedTeacherId,
+      teacherName: assignedTeacherName,
+      jp: jp || 0
+    };
+  }).filter(s => s.jp > 0);
 
   // Fetch Lesson Plans
   const fetchLessonPlans = () => {

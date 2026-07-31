@@ -198,31 +198,58 @@ export const SemesterProgram: React.FC = () => {
   const allOfferedSubjects = useMemo(
     () =>
       curriculumMatrix
-        .map((m) => ({
-          id: m.subjectId,
-          name: m.subjectName,
-          teacherId: m.teacherId,
-          teacherName: m.teacherName,
-          jp:
-            gradeLevel === "VII"
-              ? m.jp_vii
-              : gradeLevel === "VIII"
-              ? m.jp_viii
-              : m.jp_ix,
-        }))
+        .map((m) => {
+          let assignedTeacherId = m.teacherId;
+          let assignedTeacherName = m.teacherName;
+
+          if (m.useDifferentTeachers) {
+            if (gradeLevel === "VII") {
+              assignedTeacherId = m.teacherId_vii || m.teacherId;
+              assignedTeacherName = m.teacherName_vii || m.teacherName;
+            } else if (gradeLevel === "VIII") {
+              assignedTeacherId = m.teacherId_viii || m.teacherId;
+              assignedTeacherName = m.teacherName_viii || m.teacherName;
+            } else if (gradeLevel === "IX") {
+              assignedTeacherId = m.teacherId_ix || m.teacherId;
+              assignedTeacherName = m.teacherName_ix || m.teacherName;
+            }
+          }
+
+          const jp = gradeLevel === "VII" ? m.jp_vii : gradeLevel === "VIII" ? m.jp_viii : m.jp_ix;
+
+          return {
+            id: m.subjectId,
+            name: m.subjectName,
+            teacherId: assignedTeacherId,
+            teacherName: assignedTeacherName,
+            jp: jp || 0
+          };
+        })
         .filter((s) => s.jp > 0),
     [curriculumMatrix, gradeLevel]
   );
 
   const currentRole = user?.role?.toLowerCase() || "";
-  const isGuru = user?.roles?.includes("guru") || currentRole === "guru";
+  const isAdminOrKurikulum = user?.roles?.some(r => ["admin", "kurikulum", "superadmin", "operator"].includes(r.toLowerCase())) || 
+                             ["admin", "kurikulum", "superadmin", "operator"].includes(currentRole);
+  const isGuru = (user?.roles?.includes("guru") || currentRole === "guru") && !isAdminOrKurikulum;
 
   const offeredSubjects = useMemo(
     () =>
       isGuru
-        ? allOfferedSubjects.filter((s) => s.teacherId === user?.teacherId)
+        ? allOfferedSubjects.filter((s) => {
+            if (!user) return false;
+            if (user.teacherId && s.teacherId === user.teacherId) return true;
+            if (user.uid && s.teacherId === user.uid) return true;
+            const userDisplayName = (user.displayName || user.name || user.teacherName || "").toLowerCase().trim();
+            const teacherName = (s.teacherName || "").toLowerCase().trim();
+            if (userDisplayName && teacherName && (userDisplayName.includes(teacherName) || teacherName.includes(userDisplayName))) {
+              return true;
+            }
+            return false;
+          })
         : allOfferedSubjects,
-    [allOfferedSubjects, isGuru, user?.teacherId]
+    [allOfferedSubjects, isGuru, user]
   );
 
   useEffect(() => {
