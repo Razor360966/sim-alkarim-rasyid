@@ -11,6 +11,9 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import { ToastProvider } from "./contexts/ToastContext";
 import { PwaProvider } from "./contexts/PwaContext";
 
+// Config
+import { APP_CONFIG } from "./config/appConfig";
+
 // Components & Fallbacks
 import ErrorBoundary from "./components/ErrorBoundary";
 import { FirebaseConfigWarning } from "./components/FirebaseConfigWarning";
@@ -76,6 +79,10 @@ const queryClient = new QueryClient({
 });
 
 export default function App() {
+  useEffect(() => {
+    document.title = `${APP_CONFIG.name} – ${APP_CONFIG.fullName} ${APP_CONFIG.schoolName}`;
+  }, []);
+
   const [showSplash, setShowSplash] = useState<boolean>(() => {
     return !sessionStorage.getItem("simak_splash_shown");
   });

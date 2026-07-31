@@ -7,6 +7,7 @@ import { userService, getPrimaryRole } from "../services/user.service";
 import { UserProfile } from "../types";
 import { Loader2 } from "lucide-react";
 import { useToast } from "./ToastContext";
+import { APP_CONFIG } from "../config/appConfig";
 
 // Helper function to fetch teacher name with academic titles (frontTitle and backTitle)
 const fetchTeacherFullName = async (teacherId?: string | null, email?: string | null, fallbackName?: string): Promise<string> => {
@@ -287,7 +288,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         <div className="flex flex-col items-center space-y-4">
           <Loader2 className="h-10 w-10 animate-spin text-blue-600 dark:text-blue-400" />
           <div className="text-center">
-            <h1 className="text-xl font-bold tracking-tight text-gray-900 dark:text-zinc-100">SMP ALKARIM RASYID</h1>
+            <h1 className="text-xl font-bold tracking-tight text-gray-900 dark:text-zinc-100">{APP_CONFIG.name} – {APP_CONFIG.schoolName}</h1>
             <p className="text-xs text-gray-500 dark:text-zinc-400 mt-1">Memuat data autentikasi...</p>
           </div>
         </div>

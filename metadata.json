@@ -1,6 +1,6 @@
 {
-  "name": "Master Data Sekolah",
-  "description": "Sistem informasi Master Data Sekolah SMP Alkarim Rasyid untuk manajemen tahun ajaran, kelas, mata pelajaran, guru, siswa, dan Lesson Period Engine.",
+  "name": "SIMAK – SMP Alkarim Rasyid",
+  "description": "SIMAK – Sistem Manajemen Akademik SMP Alkarim Rasyid",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

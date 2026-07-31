@@ -300,8 +300,8 @@ export const MainLayout: React.FC = () => {
                 animate={{ opacity: 1, x: 0 }}
                 className="flex flex-col leading-none"
               >
-                <span className="font-bold tracking-tight text-sm text-white">SMP ALKARIM</span>
-                <span className="text-[10px] text-slate-400 font-semibold tracking-wider uppercase">RASYID</span>
+                <span className="font-bold tracking-tight text-sm text-white">{APP_CONFIG.name}</span>
+                <span className="text-[10px] text-slate-400 font-semibold tracking-wider uppercase">{APP_CONFIG.schoolName}</span>
               </motion.div>
             )}
           </Link>
@@ -421,8 +421,8 @@ export const MainLayout: React.FC = () => {
                     <School className="h-5 w-5" />
                   </div>
                   <div className="flex flex-col leading-none">
-                    <span className="font-bold tracking-tight text-sm text-white">SMP ALKARIM</span>
-                    <span className="text-[10px] text-slate-400 font-semibold tracking-wider uppercase">RASYID</span>
+                    <span className="font-bold tracking-tight text-sm text-white">{APP_CONFIG.name}</span>
+                    <span className="text-[10px] text-slate-400 font-semibold tracking-wider uppercase">{APP_CONFIG.schoolName}</span>
                   </div>
                 </div>
               </div>

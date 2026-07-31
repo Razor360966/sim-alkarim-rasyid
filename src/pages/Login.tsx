@@ -60,15 +60,18 @@ export const Login: React.FC = () => {
       <div className="w-full max-w-md">
         
         {/* Header Logo */}
-        <div className="flex flex-col items-center mb-8 text-center">
-          <div className="h-12 w-12 rounded-2xl bg-blue-600 dark:bg-blue-500 flex items-center justify-center text-white shadow-md mb-3">
-            <School className="h-6 w-6" />
+        <div className="flex flex-col items-center mb-8 text-center space-y-1">
+          <div className="h-14 w-14 rounded-2xl bg-indigo-600 dark:bg-indigo-500 flex items-center justify-center text-white shadow-lg mb-2 border border-indigo-400/30">
+            <School className="h-7 w-7" />
           </div>
-          <h1 className="text-2xl font-extrabold tracking-tight text-gray-900 dark:text-white">
-            SMP ALKARIM RASYID
+          <h1 className="text-2xl font-black tracking-tight text-gray-900 dark:text-white">
+            {APP_CONFIG.name}
           </h1>
-          <p className="text-xs text-gray-500 dark:text-zinc-400 mt-1 font-semibold tracking-wider uppercase">
-            Sistem Informasi Master Data
+          <p className="text-xs text-indigo-600 dark:text-indigo-400 font-bold uppercase tracking-wider">
+            {APP_CONFIG.fullName}
+          </p>
+          <p className="text-xs text-gray-500 dark:text-zinc-400 font-medium">
+            {APP_CONFIG.schoolName}
           </p>
         </div>
 
@@ -134,8 +137,9 @@ export const Login: React.FC = () => {
                 Daftar Akun
               </Link>
             </p>
-            <div className="text-[10px] text-gray-400 dark:text-zinc-500 font-mono font-medium">
-              {APP_CONFIG.name} Versi {APP_CONFIG.version}
+            <div className="text-[10px] text-gray-400 dark:text-zinc-500 font-mono font-medium space-y-0.5">
+              <div>{APP_CONFIG.name} Versi {APP_CONFIG.version} (Build {APP_CONFIG.buildNumber})</div>
+              <div>Build Date: {APP_CONFIG.buildDate}</div>
             </div>
           </div>
         </motion.div>

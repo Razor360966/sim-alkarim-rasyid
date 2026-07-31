@@ -12,6 +12,7 @@ import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { userService } from "../services/user.service";
 import { ShieldAlert, Loader2, ArrowRight, CheckCircle2 } from "lucide-react";
 import { motion } from "motion/react";
+import { APP_CONFIG } from "../config/appConfig";
 
 const changePasswordSchema = z.object({
   password: z.string().min(6, { message: "Kata sandi minimal 6 karakter" }),
@@ -112,7 +113,7 @@ export default function ChangePassword() {
             PENGAMANAN AKUN
           </h1>
           <p className="text-xs text-gray-500 dark:text-zinc-400 mt-1 font-semibold tracking-wider uppercase">
-            SMP ALKARIM RASYID
+            {APP_CONFIG.schoolName}
           </p>
         </div>
 

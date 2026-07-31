@@ -1,11 +1,54 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig} from 'vite';
+import { defineConfig } from 'vite';
+import { VitePWA } from 'vite-plugin-pwa';
+import { APP_CONFIG } from './src/config/appConfig';
 
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [
+      react(),
+      tailwindcss(),
+      VitePWA({
+        registerType: 'autoUpdate',
+        injectRegister: 'script-defer',
+        includeAssets: ['icon-192.png', 'icon-512.png'],
+        manifest: {
+          name: `${APP_CONFIG.name} – ${APP_CONFIG.fullName} ${APP_CONFIG.schoolName}`,
+          short_name: APP_CONFIG.shortName,
+          description: `${APP_CONFIG.fullName} Terintegrasi ${APP_CONFIG.schoolName}`,
+          theme_color: APP_CONFIG.themeColor,
+          background_color: APP_CONFIG.backgroundColor,
+          display: 'standalone',
+          orientation: 'portrait',
+          start_url: '/',
+          scope: '/',
+          icons: [
+            {
+              src: '/icon-192.png',
+              type: 'image/png',
+              sizes: '192x192',
+              purpose: 'any maskable'
+            },
+            {
+              src: '/icon-512.png',
+              type: 'image/png',
+              sizes: '512x512',
+              purpose: 'any maskable'
+            }
+          ]
+        },
+        workbox: {
+          cleanupOutdatedCaches: true,
+          skipWaiting: true,
+          clientsClaim: true,
+          navigateFallback: '/index.html',
+          navigateFallbackDenylist: [/^\/api/],
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,json,woff2}']
+        }
+      })
+    ],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

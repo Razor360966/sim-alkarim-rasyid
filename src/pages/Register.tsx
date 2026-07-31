@@ -8,6 +8,7 @@ import { useToast } from "../contexts/ToastContext";
 import { FormInput, FormSelect } from "../components/FormInput";
 import { School, Loader2, UserPlus } from "lucide-react";
 import { motion } from "motion/react";
+import { APP_CONFIG } from "../config/appConfig";
 
 const registerSchema = z.object({
   displayName: z.string().min(2, { message: "Nama lengkap minimal 2 karakter" }),
@@ -69,15 +70,18 @@ export const Register: React.FC = () => {
       <div className="w-full max-w-md">
         
         {/* Header Logo */}
-        <div className="flex flex-col items-center mb-8 text-center">
-          <div className="h-12 w-12 rounded-2xl bg-blue-600 dark:bg-blue-500 flex items-center justify-center text-white shadow-md mb-3">
-            <School className="h-6 w-6" />
+        <div className="flex flex-col items-center mb-8 text-center space-y-1">
+          <div className="h-14 w-14 rounded-2xl bg-indigo-600 dark:bg-indigo-500 flex items-center justify-center text-white shadow-lg mb-2 border border-indigo-400/30">
+            <School className="h-7 w-7" />
           </div>
-          <h1 className="text-2xl font-extrabold tracking-tight text-gray-900 dark:text-white">
-            SMP ALKARIM RASYID
+          <h1 className="text-2xl font-black tracking-tight text-gray-900 dark:text-white">
+            {APP_CONFIG.name}
           </h1>
-          <p className="text-xs text-gray-500 dark:text-zinc-400 mt-1 font-semibold tracking-wider uppercase">
-            Sistem Informasi Master Data
+          <p className="text-xs text-indigo-600 dark:text-indigo-400 font-bold uppercase tracking-wider">
+            {APP_CONFIG.fullName}
+          </p>
+          <p className="text-xs text-gray-500 dark:text-zinc-400 font-medium">
+            {APP_CONFIG.schoolName}
           </p>
         </div>
 
@@ -148,7 +152,7 @@ export const Register: React.FC = () => {
           </form>
 
           {/* Login link */}
-          <div className="mt-6 pt-6 border-t border-gray-100 dark:border-zinc-850 text-center">
+          <div className="mt-6 pt-6 border-t border-gray-100 dark:border-zinc-850 text-center space-y-3">
             <p className="text-xs text-gray-500 dark:text-zinc-400">
               Sudah memiliki akun?{" "}
               <Link
@@ -158,6 +162,9 @@ export const Register: React.FC = () => {
                 Masuk Sesi
               </Link>
             </p>
+            <div className="text-[10px] text-gray-400 dark:text-zinc-500 font-mono font-medium">
+              {APP_CONFIG.name} Versi {APP_CONFIG.version} (Build {APP_CONFIG.buildNumber})
+            </div>
           </div>
         </motion.div>
       </div>

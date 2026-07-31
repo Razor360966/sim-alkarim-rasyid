@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
+import { registerSW } from "virtual:pwa-register";
 import { useToast } from "./ToastContext";
 
 interface PwaContextType {
@@ -19,10 +20,36 @@ export const PwaProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [updateAvailable, setUpdateAvailable] = useState<boolean>(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [registration, setRegistration] = useState<ServiceWorkerRegistration | null>(null);
+  const updateSWRef = useRef<((reloadPage?: boolean) => Promise<void>) | null>(null);
 
   const { toast } = useToast();
 
-  // 1. Online / Offline listeners
+  // 1. Cleanup legacy manual SW or stale cache on mount
+  useEffect(() => {
+    if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+      navigator.serviceWorker.getRegistrations().then((registrations) => {
+        for (const reg of registrations) {
+          if (reg.active && reg.active.scriptURL.endsWith("/sw.js") && !reg.active.scriptURL.includes("workbox")) {
+            console.log("Cleaning up legacy manual service worker...");
+            reg.unregister();
+          }
+        }
+      });
+
+      if ("caches" in window) {
+        caches.keys().then((names) => {
+          for (const name of names) {
+            if (name.startsWith("simak-app-v")) {
+              console.log("Deleting legacy cache storage:", name);
+              caches.delete(name);
+            }
+          }
+        });
+      }
+    }
+  }, []);
+
+  // 2. Online / Offline listeners
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
@@ -43,35 +70,28 @@ export const PwaProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, [toast]);
 
-  // 2. Service Worker Registration & Update Listener
+  // 3. Register Service Worker using vite-plugin-pwa (Workbox)
   useEffect(() => {
     if (typeof window !== "undefined" && "serviceWorker" in navigator) {
-      navigator.serviceWorker
-        .register("/sw.js")
-        .then((reg) => {
-          setRegistration(reg);
-
-          // Check if there is already a waiting worker
-          if (reg.waiting) {
-            setUpdateAvailable(true);
+      const updateSW = registerSW({
+        onNeedRefresh() {
+          setUpdateAvailable(true);
+          toast("✨ Versi baru SIMAK tersedia! Silakan perbarui.", "info");
+        },
+        onOfflineReady() {
+          console.log("SIMAK siap digunakan secara offline.");
+        },
+        onRegisteredSW(_swUrl, reg) {
+          if (reg) {
+            setRegistration(reg);
           }
+        },
+        onRegisterError(error) {
+          console.error("Gagal mendaftarkan Service Worker Workbox:", error);
+        }
+      });
 
-          // Listener for new service worker found
-          reg.addEventListener("updatefound", () => {
-            const newWorker = reg.installing;
-            if (newWorker) {
-              newWorker.addEventListener("statechange", () => {
-                if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
-                  setUpdateAvailable(true);
-                  toast("✨ Versi baru SIMAK tersedia! Silakan perbarui.", "info");
-                }
-              });
-            }
-          });
-        })
-        .catch((err) => {
-          console.error("Gagal mendaftarkan Service Worker PWA:", err);
-        });
+      updateSWRef.current = updateSW;
 
       let refreshing = false;
       navigator.serviceWorker.addEventListener("controllerchange", () => {
@@ -83,7 +103,7 @@ export const PwaProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [toast]);
 
-  // 3. Install Prompt Listener
+  // 4. Install Prompt Listener
   useEffect(() => {
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
@@ -99,7 +119,9 @@ export const PwaProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Action: Apply Update
   const applyUpdate = useCallback(() => {
-    if (registration && registration.waiting) {
+    if (updateSWRef.current) {
+      updateSWRef.current(true);
+    } else if (registration && registration.waiting) {
       registration.waiting.postMessage({ type: "SKIP_WAITING" });
     } else {
       window.location.reload();

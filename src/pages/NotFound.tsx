@@ -2,6 +2,7 @@ import React from "react";
 import { Link } from "react-router-dom";
 import { School, HelpCircle, ArrowLeft } from "lucide-react";
 import { motion } from "motion/react";
+import { APP_CONFIG } from "../config/appConfig";
 
 export const NotFound: React.FC = () => {
   return (
@@ -13,7 +14,7 @@ export const NotFound: React.FC = () => {
           <div className="h-12 w-12 rounded-2xl bg-blue-600 dark:bg-blue-500 flex items-center justify-center text-white shadow-md mb-2">
             <School className="h-6 w-6" />
           </div>
-          <p className="text-[10px] text-gray-400 font-extrabold tracking-widest uppercase">SMP Alkarim Rasyid</p>
+          <p className="text-[10px] text-gray-400 font-extrabold tracking-widest uppercase">{APP_CONFIG.name} – {APP_CONFIG.schoolName}</p>
         </div>
 
         {/* 404 Visual Icon */}

@@ -1,5 +1,6 @@
 import React, { Component, ErrorInfo, ReactNode } from "react";
 import { AlertCircle, RefreshCw, School } from "lucide-react";
+import { APP_CONFIG } from "../config/appConfig";
 
 interface Props {
   children: ReactNode;
@@ -39,7 +40,7 @@ export class ErrorBoundary extends Component<Props, State> {
               <div className="h-12 w-12 rounded-2xl bg-rose-50 dark:bg-rose-950/20 flex items-center justify-center text-rose-600 dark:text-rose-400 mb-2">
                 <AlertCircle className="h-6 w-6" />
               </div>
-              <p className="text-[10px] text-gray-400 font-extrabold tracking-widest uppercase mt-1">SMP ALKARIM RASYID</p>
+              <p className="text-[10px] text-gray-400 font-extrabold tracking-widest uppercase mt-1">{APP_CONFIG.name} – {APP_CONFIG.schoolName}</p>
             </div>
 
             {/* Error Message info */}
