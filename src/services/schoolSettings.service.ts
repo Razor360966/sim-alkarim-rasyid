@@ -9,10 +9,44 @@ import {
   addDoc
 } from "firebase/firestore";
 import { db, handleFirestoreError, OperationType } from "../firebase/config";
-import { SchoolSettings } from "../types";
+import { SchoolSettings, TeachingAttendanceSettings } from "../types";
 
 const COLLECTION_NAME = "school_settings";
 const DOCUMENT_ID = "settings";
+
+export const DEFAULT_TEACHING_ATTENDANCE_SETTINGS: TeachingAttendanceSettings = {
+  checkInToleranceMinutes: 15,
+  checkOutToleranceMinutes: 15,
+  approvalMethod: "hybrid",
+  pendingValidationConditions: {
+    checkInTerlambat: true,
+    checkOutTerlambat: true,
+    checkInTerlaluAwal: true,
+    checkOutTerlaluAwal: true,
+    durasiTidakSesuai: true,
+    inputManual: true,
+    lupaCheckOut: true,
+    jadwalTidakSesuai: true,
+    scanDILuarToleransi: true,
+    scanBerulang: true
+  },
+  repeatScanRule: "allowed_across_break",
+  useBreakTimesFromSettings: true,
+  qrRules: {
+    activeScheduleOnly: true,
+    matchingClassOnly: true,
+    matchingDayOnly: true,
+    activeSemesterOnly: true
+  },
+  minTeachingDurationPercent: 80,
+  notifications: {
+    checkInSuccess: true,
+    checkOutSuccess: true,
+    pendingValidation: true,
+    approval: true,
+    rejection: true
+  }
+};
 
 export async function logSettingsActivity(
   userId: string, 
@@ -57,7 +91,8 @@ const DEFAULT_SETTINGS: SchoolSettings = {
     startTime: "07:00",
     endTime: "14:00"
   },
-  lessonPeriod: 40
+  lessonPeriod: 40,
+  teachingAttendanceSettings: DEFAULT_TEACHING_ATTENDANCE_SETTINGS
 };
 
 const HISTORY_COLLECTION = "school_settings_history";
@@ -99,6 +134,22 @@ export const schoolSettingsService = {
             endTime: data.endTime || DEFAULT_SETTINGS.endTime
           },
           lessonPeriod: data.lessonPeriod || data.jpDuration || DEFAULT_SETTINGS.lessonPeriod,
+          teachingAttendanceSettings: {
+            ...DEFAULT_TEACHING_ATTENDANCE_SETTINGS,
+            ...(data.teachingAttendanceSettings || {}),
+            pendingValidationConditions: {
+              ...DEFAULT_TEACHING_ATTENDANCE_SETTINGS.pendingValidationConditions,
+              ...(data.teachingAttendanceSettings?.pendingValidationConditions || {})
+            },
+            qrRules: {
+              ...DEFAULT_TEACHING_ATTENDANCE_SETTINGS.qrRules,
+              ...(data.teachingAttendanceSettings?.qrRules || {})
+            },
+            notifications: {
+              ...DEFAULT_TEACHING_ATTENDANCE_SETTINGS.notifications,
+              ...(data.teachingAttendanceSettings?.notifications || {})
+            }
+          },
           createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : data.createdAt,
           updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate().toISOString() : data.updatedAt
         } as SchoolSettings;

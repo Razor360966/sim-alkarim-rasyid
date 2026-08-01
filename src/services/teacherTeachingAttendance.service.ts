@@ -26,7 +26,8 @@ import { scheduleService } from "./schedule.service";
 import { academicPlanningService } from "./academicPlanning.service";
 import { lessonPeriodService } from "./lessonPeriod.service";
 import { classService } from "./classService";
-import { schoolSettingsService } from "./schoolSettings.service";
+import { schoolSettingsService, DEFAULT_TEACHING_ATTENDANCE_SETTINGS } from "./schoolSettings.service";
+import { SchoolSettings } from "../types";
 import { academicYearService } from "./academicYearService";
 import { semesterService } from "./semester.service";
 
@@ -687,7 +688,7 @@ export const teacherTeachingAttendanceService = {
     }
   },
 
-  // Save/Update single session attendance with Audit Logging
+  // Save/Update single session attendance with Audit Logging and Status Evaluation
   async saveSingleSessionAttendance(
     dateStr: string,
     item: TeacherTeachingAttendance,
@@ -721,10 +722,26 @@ export const teacherTeachingAttendanceService = {
       const isSusulan = isPastDate || (existingData && existingData.recordedByUserId !== resolvedUid);
       const previousStatus = existingData ? existingData.status : "Belum Diverifikasi";
 
+      let schoolSettings: SchoolSettings | undefined;
+      try {
+        schoolSettings = await schoolSettingsService.getSettings();
+      } catch (err) {
+        // Fallback
+      }
+
+      // Evaluate approval status automatically
+      const evalResult = this.evaluateAttendanceApprovalStatus(item, schoolSettings);
+      const finalAttendanceStatus = item.attendanceStatus || evalResult.attendanceStatus;
+      const finalPendingReason = item.attendanceStatus ? (item.pendingReason || "") : evalResult.pendingReason;
+      const finalApprovalType = item.approvalType || evalResult.approvalType;
+
       const rawPayload: any = {
         ...item,
         id: docId,
         date: dateStr,
+        attendanceStatus: finalAttendanceStatus,
+        pendingReason: finalPendingReason,
+        approvalType: finalApprovalType,
         isInputSusulan: isSusulan ? true : (item.isInputSusulan || false),
         recordedByUserId: resolvedUid,
         recordedByUserName: userName || auth?.currentUser?.displayName || "Pengguna",
@@ -738,9 +755,9 @@ export const teacherTeachingAttendanceService = {
       console.log("==================================================");
       console.log("[Firestore Save Audit] Saving Single Session Attendance");
       console.log("[Firestore Save Audit] Passed userId parameter:", userId);
-      console.log("[Firestore Save Audit] auth.currentUser:", auth?.currentUser ? { uid: auth.currentUser.uid, email: auth.currentUser.email } : null);
       console.log("[Firestore Save Audit] Final recordedByUserId:", payload.recordedByUserId);
-      console.log("[Firestore Save Audit] Sanitized payload object:", payload);
+      console.log("[Firestore Save Audit] Final attendanceStatus:", payload.attendanceStatus);
+      console.log("[Firestore Save Audit] Final approvalType:", payload.approvalType);
       console.log("==================================================");
 
       await setDoc(ref, payload, { merge: true });
@@ -768,8 +785,133 @@ export const teacherTeachingAttendanceService = {
 
       await logActivity(resolvedUid, userName, "Save Single Session Attendance", `Menyimpan absensi sesi ${item.teacherName} - ${item.subjectName} (${item.className}) tanggal ${dateStr}`);
     } catch (error) {
-      return handleFirestoreError(error, OperationType.WRITE, COLLECTION_NAME);
+      console.error("Error saving single session attendance:", error);
+      throw error;
     }
+  },
+
+  // Helper to evaluate approval status (Approved vs Pending)
+  evaluateAttendanceApprovalStatus(
+    item: TeacherTeachingAttendance,
+    schoolSettings?: SchoolSettings
+  ): {
+    attendanceStatus: "Pending" | "Approved" | "Rejected";
+    pendingReason?: string;
+    approvalType: "Automatic" | "Manual";
+  } {
+    const tas = schoolSettings?.teachingAttendanceSettings || DEFAULT_TEACHING_ATTENDANCE_SETTINGS;
+    const conds = tas.pendingValidationConditions || DEFAULT_TEACHING_ATTENDANCE_SETTINGS.pendingValidationConditions;
+
+    // If already manually validated by Waka/Admin, preserve manual decision
+    if (item.validatedByUserId && (item.attendanceStatus === "Approved" || item.attendanceStatus === "Rejected")) {
+      return {
+        attendanceStatus: item.attendanceStatus,
+        pendingReason: item.pendingReason || "",
+        approvalType: "Manual"
+      };
+    }
+
+    if (!item.checkInTime) {
+      return { attendanceStatus: "Pending", pendingReason: "Belum Melakukan Check-in", approvalType: "Manual" };
+    }
+
+    if (!item.checkOutTime) {
+      return { attendanceStatus: "Pending", pendingReason: "Belum Melakukan Check-out", approvalType: "Manual" };
+    }
+
+    // Check approval method
+    if (tas.approvalMethod === "manual") {
+      return {
+        attendanceStatus: "Pending",
+        pendingReason: "Memerlukan Validasi Manual Waka Kurikulum (Kebijakan Manual Approval)",
+        approvalType: "Manual"
+      };
+    }
+
+    const pendingReasons: string[] = [];
+
+    if (item.isManualCheckOut && conds.lupaCheckOut) {
+      pendingReasons.push(item.manualCheckOutReason ? `Check-out Manual Wakakur: ${item.manualCheckOutReason}` : "Check-out Manual Wakakur");
+    }
+
+    if (item.status !== "Hadir Mengajar" && item.status !== "Terlambat") {
+      pendingReasons.push(`Status Kehadiran Khusus (${item.status})`);
+    }
+
+    if (item.checkInType && item.checkInType !== "Scan QR" && conds.inputManual) {
+      pendingReasons.push(`Input Non-QR (${item.checkInType})`);
+    }
+
+    let startM = 0;
+    let endM = 0;
+    if (item.timeSlot && item.timeSlot.includes("-")) {
+      const [s, e] = item.timeSlot.split("-").map(x => x.trim());
+      startM = parseTimeToMinutes(s);
+      endM = parseTimeToMinutes(e);
+    } else {
+      startM = 450 + (item.sequence - 1) * 45;
+      endM = startM + 45;
+    }
+
+    const checkInM = parseTimeToMinutes(item.checkInTime);
+    const checkOutM = parseTimeToMinutes(item.checkOutTime);
+
+    const checkInTol = tas.checkInToleranceMinutes ?? 15;
+    const checkOutTol = tas.checkOutToleranceMinutes ?? 15;
+
+    // Tolerance Check-In
+    if (checkInM < startM - checkInTol) {
+      if (conds.checkInTerlaluAwal) {
+        pendingReasons.push(`Check-in terlalu awal (${item.checkInTime}, jam mulai ${formatMinutesToTime(startM)}, tol: ${checkInTol}m)`);
+      }
+    } else if (checkInM > startM + checkInTol) {
+      if (conds.checkInTerlambat) {
+        pendingReasons.push(`Terlambat Check-in (${item.checkInTime}, jam mulai ${formatMinutesToTime(startM)}, tol: ${checkInTol}m)`);
+      }
+    }
+
+    // Tolerance Check-Out
+    if (checkOutM < endM - checkOutTol) {
+      if (conds.checkOutTerlaluAwal) {
+        pendingReasons.push(`Check-out terlalu cepat (${item.checkOutTime}, jam selesai ${formatMinutesToTime(endM)}, tol: ${checkOutTol}m)`);
+      }
+    } else if (checkOutM > endM + checkOutTol) {
+      if (conds.checkOutTerlambat) {
+        pendingReasons.push(`Check-out terlambat (${item.checkOutTime}, jam selesai ${formatMinutesToTime(endM)}, tol: ${checkOutTol}m)`);
+      }
+    }
+
+    // Teaching Duration Check
+    const expectedDuration = endM - startM;
+    const actualDuration = item.teachingDurationMinutes || (checkOutM - checkInM);
+    const minPercent = tas.minTeachingDurationPercent ?? 80;
+    const minRequiredMinutes = Math.floor(expectedDuration * (minPercent / 100));
+
+    if (expectedDuration > 0 && actualDuration < minRequiredMinutes && conds.durasiTidakSesuai) {
+      pendingReasons.push(`Durasi mengajar tidak sesuai (${actualDuration} mnt dari estimasi ${expectedDuration} mnt, min ${minPercent}%)`);
+    }
+
+    if (tas.approvalMethod === "automatic" && pendingReasons.length === 0) {
+      return {
+        attendanceStatus: "Approved",
+        pendingReason: "",
+        approvalType: "Automatic"
+      };
+    }
+
+    if (pendingReasons.length > 0) {
+      return {
+        attendanceStatus: "Pending",
+        pendingReason: pendingReasons.join("; "),
+        approvalType: "Manual"
+      };
+    }
+
+    return {
+      attendanceStatus: "Approved",
+      pendingReason: "",
+      approvalType: "Automatic"
+    };
   },
 
   // Save/Update daily attendance batch with Audit Logging for Back-dating
@@ -1467,6 +1609,14 @@ export const teacherTeachingAttendanceService = {
       }
 
       // 8. Session Selection (Active Check-In Check & Time Slot Matching)
+      let schoolSettings: any = null;
+      try {
+        schoolSettings = await schoolSettingsService.getSettings();
+      } catch (e) {
+        console.warn("[QR Audit Step 8] Failed to load school settings:", e);
+      }
+      const breakTimes = schoolSettings?.breakTimes || [];
+
       let selectedScheduleItem: TeacherTeachingAttendance | null = null;
       let isLateCheckIn = false;
 
@@ -1498,7 +1648,7 @@ export const teacherTeachingAttendanceService = {
             endM = startM + 45;
           }
 
-          const earliestCheckInM = startM - 20; // 20 mins tolerance before period
+          const earliestCheckInM = startM - 15; // Strict 15 mins tolerance before period start
           const latestValidM = endM + 60; // Up to 60 mins tolerance after period end
 
           if (currentM >= earliestCheckInM && currentM <= latestValidM) {
@@ -1512,7 +1662,7 @@ export const teacherTeachingAttendanceService = {
         }
 
         if (!selectedScheduleItem) {
-          // If no session matched exact window, pick first uncompleted session in this class
+          // If no session matched exact window, check uncompleted session
           const uncompleted = classTeacherItems.find(i => !i.checkOutTime);
           if (uncompleted) {
             let startStr = "07:30";
@@ -1520,11 +1670,11 @@ export const teacherTeachingAttendanceService = {
               startStr = uncompleted.timeSlot.split("-")[0].trim();
             }
             const startM = parseTimeToMinutes(startStr);
-            if (currentM < startM - 20) {
+            if (currentM < startM - 15) {
               console.warn("[QR Audit Step 8 FAILED] Check-in attempted too early");
               return {
                 success: false,
-                message: `Terlalu awal. Check-In kelas ${uncompleted.className} (${uncompleted.jp}) baru dapat dilakukan 20 menit sebelum jam ${startStr}.`
+                message: `Terlalu awal. Check-In untuk kelas ${uncompleted.className} (${uncompleted.jp}) baru dapat dilakukan 15 menit sebelum jam ${startStr} (mulai ${formatMinutesToTime(startM - 15)} WIB).`
               };
             }
             selectedScheduleItem = uncompleted;
@@ -1546,17 +1696,60 @@ export const teacherTeachingAttendanceService = {
         };
       }
 
-      // 9. Execute Check-In or Check-Out Transaction
+      // Check schedule start time tolerance for new check-in
+      let scheduleStartM = 0;
+      let scheduleEndM = 0;
+      let startStr = "07:30";
+      let endStr = "08:15";
+      if (selectedScheduleItem.timeSlot && selectedScheduleItem.timeSlot.includes("-")) {
+        const parts = selectedScheduleItem.timeSlot.split("-").map(s => s.trim());
+        startStr = parts[0];
+        endStr = parts[1];
+        scheduleStartM = parseTimeToMinutes(startStr);
+        scheduleEndM = parseTimeToMinutes(endStr);
+      } else {
+        scheduleStartM = 450 + (selectedScheduleItem.sequence - 1) * 45;
+        scheduleEndM = scheduleStartM + 45;
+        startStr = formatMinutesToTime(scheduleStartM);
+        endStr = formatMinutesToTime(scheduleEndM);
+      }
+
+      // Check break time intersection for this schedule slot
+      const spanningBreak = breakTimes.find((b: any) => {
+        const bStartM = parseTimeToMinutes(b.start);
+        const bEndM = parseTimeToMinutes(b.end || b.start);
+        return scheduleStartM < bStartM && scheduleEndM > bEndM;
+      });
+
+      // 9. Execute Check-In or Check-Out Transaction & Handle Duplicate Scan Prevention
       const logs = selectedScheduleItem.checkInLogs || [];
       const activeLogIndex = logs.findIndex(l => !l.checkOut);
+
+      // Check if Check-In attempted too early (more than 15 mins before schedule start)
+      if (logs.length === 0 && currentM < scheduleStartM - 15) {
+        return {
+          success: false,
+          message: `Terlalu awal. Check-In untuk kelas ${selectedScheduleItem.className} (${selectedScheduleItem.jp}) baru dapat dilakukan 15 menit sebelum jam ${startStr} (mulai ${formatMinutesToTime(scheduleStartM - 15)} WIB).`
+        };
+      }
 
       let action: "CHECK_IN" | "CHECK_OUT" = "CHECK_IN";
       let returnMsg = "";
 
       if (activeLogIndex >= 0) {
         // --- CHECK OUT FLOW ---
-        action = "CHECK_OUT";
         const activeLog = logs[activeLogIndex];
+        const lastCheckInM = parseTimeToMinutes(activeLog.checkIn);
+
+        // Duplicate scan check: if user scans again immediately (< 2 mins after check-in) and not near end time
+        if (currentM - lastCheckInM < 2 && currentM < scheduleEndM - 15) {
+          return {
+            success: false,
+            message: `Check-in pada sesi ini telah tercatat (${activeLog.checkIn} WIB).`
+          };
+        }
+
+        action = "CHECK_OUT";
         const duration = calculateDurationInMinutes(activeLog.checkIn, currentTimeStr);
 
         activeLog.checkOut = currentTimeStr;
@@ -1567,10 +1760,40 @@ export const teacherTeachingAttendanceService = {
         selectedScheduleItem.checkInLogs = logs;
         selectedScheduleItem.updatedAt = new Date().toISOString();
 
-        returnMsg = `CHECK OUT Berhasil di Kelas ${selectedScheduleItem.className} (${selectedScheduleItem.jp} - ${selectedScheduleItem.subjectName}). Durasi mengajar: ${duration} menit.`;
+        if (spanningBreak) {
+          returnMsg = `CHECK OUT Segmen Sebelum Istirahat Berhasil di Kelas ${selectedScheduleItem.className} (${selectedScheduleItem.jp} - ${selectedScheduleItem.subjectName}). Durasi: ${duration} menit. Silakan Check-In kembali setelah istirahat.`;
+        } else {
+          returnMsg = `CHECK OUT Berhasil di Kelas ${selectedScheduleItem.className} (${selectedScheduleItem.jp} - ${selectedScheduleItem.subjectName}). Durasi mengajar: ${duration} menit.`;
+        }
         console.log("[QR Audit Step 9] CHECK OUT SUCCESS:", returnMsg);
       } else {
         // --- CHECK IN FLOW ---
+        // Duplicate scan check when no active check-in exists:
+        if (!spanningBreak && logs.length > 0 && logs.every(l => l.checkOut)) {
+          // Completed session scan attempt
+          return {
+            success: false,
+            message: `Check-out pada sesi ini telah tercatat (${selectedScheduleItem.checkOutTime} WIB).`
+          };
+        }
+
+        if (spanningBreak && logs.length >= 2 && logs.every(l => l.checkOut)) {
+          return {
+            success: false,
+            message: `Check-out pada sesi ini (termasuk segmen setelah istirahat) telah tercatat.`
+          };
+        }
+
+        if (spanningBreak && logs.length === 1 && logs[0].checkOut) {
+          const bEndM = parseTimeToMinutes(spanningBreak.end);
+          if (currentM < bEndM - 15) {
+            return {
+              success: false,
+              message: `Check-out segmen sebelum istirahat telah tercatat (${logs[0].checkOut} WIB). Check-In segmen kedua dapat dilakukan setelah istirahat (mulai jam ${formatMinutesToTime(bEndM - 15)} WIB).`
+            };
+          }
+        }
+
         action = "CHECK_IN";
         const newLog = { checkIn: currentTimeStr };
         logs.push(newLog);
@@ -1581,7 +1804,11 @@ export const teacherTeachingAttendanceService = {
         selectedScheduleItem.status = isLateCheckIn ? "Terlambat" : "Hadir Mengajar";
         selectedScheduleItem.updatedAt = new Date().toISOString();
 
-        returnMsg = `CHECK IN Berhasil di Kelas ${selectedScheduleItem.className} (${selectedScheduleItem.jp} - ${selectedScheduleItem.subjectName})${isLateCheckIn ? " [Status: Terlambat]" : ""}.`;
+        if (spanningBreak && logs.length === 2) {
+          returnMsg = `CHECK IN Segmen Kedua (Setelah Istirahat) Berhasil di Kelas ${selectedScheduleItem.className} (${selectedScheduleItem.jp} - ${selectedScheduleItem.subjectName}).`;
+        } else {
+          returnMsg = `CHECK IN Berhasil di Kelas ${selectedScheduleItem.className} (${selectedScheduleItem.jp} - ${selectedScheduleItem.subjectName})${isLateCheckIn ? " [Status: Terlambat]" : ""}.`;
+        }
         console.log("[QR Audit Step 9] CHECK IN SUCCESS:", returnMsg);
       }
 
@@ -1610,6 +1837,108 @@ export const teacherTeachingAttendanceService = {
         message: `Gagal memproses QR Code: ${error?.message || "Terjadi kesalahan internal server."}`
       };
     }
+  },
+
+  // Validate Attendance (Approve / Reject) by Wakakur / Admin
+  async validateAttendance(params: {
+    attendanceId: string;
+    dateStr?: string;
+    status: "Approved" | "Rejected";
+    validationNote?: string;
+    validatorUserId: string;
+    validatorUserName: string;
+  }): Promise<void> {
+    const resolvedUid = resolveUserId(params.validatorUserId);
+    if (!resolvedUid) {
+      throw new Error("Gagal memvalidasi absensi: Identitas Pengguna (Firebase Auth UID) tidak ditemukan.");
+    }
+
+    const docRef = doc(db, COLLECTION_NAME, params.attendanceId);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) {
+      throw new Error("Data absensi tidak ditemukan.");
+    }
+
+    const now = new Date().toISOString();
+    const updates: Partial<TeacherTeachingAttendance> = {
+      attendanceStatus: params.status,
+      validatedBy: params.validatorUserName,
+      validatedByUserId: resolvedUid,
+      validatedAt: now,
+      validationNote: params.validationNote || (params.status === "Approved" ? "Disetujui Waka Kurikulum" : "Ditolak Waka Kurikulum"),
+      approvalType: "Manual",
+      updatedAt: now
+    };
+
+    await updateDoc(docRef, sanitizeFirestorePayload(updates));
+
+    const data = snap.data();
+    const auditColRef = collection(db, AUDIT_LOGS_COLLECTION);
+    await addDoc(auditColRef, sanitizeFirestorePayload({
+      attendanceDate: params.dateStr || data.date,
+      inputTimestamp: now,
+      userId: resolvedUid,
+      userName: params.validatorUserName,
+      scheduleId: data.scheduleId,
+      teacherName: data.teacherName,
+      className: data.className,
+      subjectName: data.subjectName,
+      jp: data.jp,
+      previousStatus: data.attendanceStatus || "Pending",
+      newStatus: params.status,
+      reason: `Validasi Waka Kurikulum: ${params.status} (${params.validationNote || "-"})`,
+      isLateInput: false
+    }));
+  },
+
+  // Get Validation Statistics
+  async getAttendanceValidationStats(
+    dateStr?: string,
+    academicYearId?: string,
+    semesterId?: string
+  ): Promise<{
+    pendingCount: number;
+    approvedCount: number;
+    rejectedCount: number;
+    automaticApprovalCount: number;
+    manualApprovalCount: number;
+    totalCount: number;
+  }> {
+    const targetDate = dateStr || getTodayDateStr();
+    const { items } = await this.getAttendanceForDate(targetDate, academicYearId || "", semesterId || "");
+
+    let pendingCount = 0;
+    let approvedCount = 0;
+    let rejectedCount = 0;
+    let automaticApprovalCount = 0;
+    let manualApprovalCount = 0;
+
+    items.forEach(item => {
+      if (item.status === "KBM Ditiadakan") return;
+
+      const evalRes = this.evaluateAttendanceApprovalStatus(item);
+      const status = item.attendanceStatus || evalRes.attendanceStatus;
+      const type = item.approvalType || evalRes.approvalType;
+
+      if (status === "Approved") {
+        approvedCount++;
+        if (type === "Automatic") automaticApprovalCount++;
+        else manualApprovalCount++;
+      } else if (status === "Rejected") {
+        rejectedCount++;
+      } else {
+        pendingCount++;
+      }
+    });
+
+    return {
+      pendingCount,
+      approvedCount,
+      rejectedCount,
+      automaticApprovalCount,
+      manualApprovalCount,
+      totalCount: items.length
+    };
   },
 
   // Perform Manual Check Out by Wakakur / Admin
@@ -1774,5 +2103,11 @@ function calculateDurationInMinutes(startStr: string, endStr: string): number {
   const startM = parseTimeToMinutes(startStr);
   const endM = parseTimeToMinutes(endStr);
   return Math.max(0, endM - startM);
+}
+
+function formatMinutesToTime(totalM: number): string {
+  const h = Math.floor(totalM / 60) % 24;
+  const m = totalM % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 

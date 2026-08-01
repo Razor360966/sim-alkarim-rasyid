@@ -107,7 +107,14 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
   // Default date = today's YYYY-MM-DD
   const todayStr = getTodayDateStr();
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
-  const [activeTab, setActiveTab] = useState<"input" | "rekap">("input");
+  const [activeTab, setActiveTab] = useState<"input" | "validasi" | "rekap">("input");
+
+  // Validation State
+  const [validationSearchQuery, setValidationSearchQuery] = useState<string>("");
+  const [validationStatusFilter, setValidationStatusFilter] = useState<"ALL" | "Pending" | "Approved" | "Rejected">("Pending");
+  const [rejectModalItem, setRejectModalItem] = useState<{ id: string; dateStr: string; teacherName: string; subjectName: string; className: string } | null>(null);
+  const [rejectReason, setRejectReason] = useState<string>("");
+  const [selectedValidationIds, setSelectedValidationIds] = useState<string[]>([]);
 
   // Load Master Data (Academic Years, Semesters, Teachers, Subjects, Classes)
   const { data: academicYears = [] } = useQuery({
@@ -158,6 +165,64 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
       setSelectedSemesterId(activeSem.id);
     }
   }, [activeSem, selectedSemesterId]);
+
+  const { data: validationStats, refetch: refetchValidationStats } = useQuery({
+    queryKey: ["attendanceValidationStats", selectedDate, selectedAyId, selectedSemesterId],
+    queryFn: () => teacherTeachingAttendanceService.getAttendanceValidationStats(selectedDate, selectedAyId, selectedSemesterId)
+  });
+
+  const validateMutation = useMutation({
+    mutationFn: async (params: { id: string; dateStr: string; status: "Approved" | "Rejected"; validationNote?: string }) => {
+      if (!user) throw new Error("Belum diautentikasi");
+      await teacherTeachingAttendanceService.validateAttendance({
+        attendanceId: params.id,
+        dateStr: params.dateStr,
+        status: params.status,
+        validationNote: params.validationNote,
+        validatorUserId: user.uid,
+        validatorUserName: user.displayName || user.name || "Wakakur"
+      });
+    },
+    onSuccess: () => {
+      toast("Validasi absensi berhasil disimpan!", "success");
+      queryClient.invalidateQueries({ queryKey: ["teacherTeachingAttendance"] });
+      queryClient.invalidateQueries({ queryKey: ["attendanceValidationStats"] });
+      queryClient.invalidateQueries({ queryKey: ["qrMonitoringStats"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherAttendanceRecap"] });
+      setRejectModalItem(null);
+      setRejectReason("");
+    },
+    onError: (err: any) => {
+      toast("Gagal memvalidasi absensi: " + err.message, "error");
+    }
+  });
+
+  const batchApproveMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      if (!user) throw new Error("Belum diautentikasi");
+      for (const id of ids) {
+        await teacherTeachingAttendanceService.validateAttendance({
+          attendanceId: id,
+          dateStr: selectedDate,
+          status: "Approved",
+          validationNote: "Persetujuan Masal Waka Kurikulum",
+          validatorUserId: user.uid,
+          validatorUserName: user.displayName || user.name || "Wakakur"
+        });
+      }
+    },
+    onSuccess: () => {
+      toast(`Berhasil menyetujui ${selectedValidationIds.length} catatan absensi!`, "success");
+      setSelectedValidationIds([]);
+      queryClient.invalidateQueries({ queryKey: ["teacherTeachingAttendance"] });
+      queryClient.invalidateQueries({ queryKey: ["attendanceValidationStats"] });
+      queryClient.invalidateQueries({ queryKey: ["qrMonitoringStats"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherAttendanceRecap"] });
+    },
+    onError: (err: any) => {
+      toast("Gagal menyetujui masal: " + err.message, "error");
+    }
+  });
 
   // Incomplete Attendance Dates alert query
   const { data: incompleteDates = [] } = useQuery({
@@ -1080,6 +1145,22 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
             Monitoring Sesi Mengajar Hari Ini
           </button>
           <button
+            onClick={() => setActiveTab("validasi")}
+            className={`px-4 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              activeTab === "validasi"
+                ? "bg-amber-600 text-white shadow-md"
+                : "bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300 hover:bg-slate-200 dark:hover:bg-zinc-700"
+            }`}
+          >
+            <ShieldAlert className="w-4 h-4" />
+            Validasi Absensi Mengajar
+            {!!validationStats?.pendingCount && (
+              <span className="ml-1 px-2 py-0.5 rounded-full text-xs bg-rose-500 text-white font-extrabold animate-pulse">
+                {validationStats.pendingCount}
+              </span>
+            )}
+          </button>
+          <button
             onClick={() => setActiveTab("rekap")}
             className={`px-4 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 cursor-pointer ${
               activeTab === "rekap"
@@ -1788,7 +1869,463 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
       )}
 
       {/* ========================================================= */}
-      {/* TAB 2: DASHBOARD REKAP ABSENSI GURU (EXCEPTION FIRST)     */}
+      {/* TAB 2: VALIDASI ABSENSI MENGAJAR (WAKA KURIKULUM)         */}
+      {/* ========================================================= */}
+      {activeTab === "validasi" && (
+        <div className="space-y-6">
+          {/* Header Banner */}
+          <div className="bg-gradient-to-r from-amber-600 via-orange-600 to-indigo-700 text-white p-5 sm:p-6 rounded-2xl shadow-lg border border-amber-400/30 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-start sm:items-center gap-4">
+              <div className="p-3.5 bg-white/20 rounded-2xl backdrop-blur-md shrink-0 shadow-inner">
+                <ShieldAlert className="w-7 h-7 text-white" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2.5 py-0.5 bg-white/25 text-white rounded-full text-[10px] font-black uppercase tracking-wider border border-white/30">
+                    Workflow Waka Kurikulum
+                  </span>
+                  <span className="text-xs font-extrabold uppercase tracking-wide text-amber-100">
+                    Validasi Manual & Persetujuan Otomatis Sesi Mengajar
+                  </span>
+                </div>
+                <h2 className="text-lg font-black text-white mt-1">
+                  Persetujuan Kehadiran & Sesi Mengajar Guru
+                </h2>
+                <p className="text-xs text-amber-100 font-medium mt-1 leading-relaxed max-w-3xl">
+                  Sistem mengevaluasi absensi secara otomatis. Sesi yang berada di luar batas toleransi check-in/check-out (15 menit), lupa check-out, atau berstatus khusus ditandai sebagai <strong className="underline font-bold text-white">Pending</strong> dan memerlukan persetujuan Waka Kurikulum.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  refetchValidationStats();
+                  refetchAttendance();
+                  toast("Data statistik validasi diperbarui", "info");
+                }}
+                className="px-3.5 py-2 bg-white/20 hover:bg-white/30 text-white font-bold text-xs rounded-xl transition-all border border-white/40 flex items-center gap-1.5 cursor-pointer shadow-sm"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Refresh
+              </button>
+            </div>
+          </div>
+
+          {/* Validation Statistics Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+            <div className="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-slate-200 dark:border-zinc-800 shadow-xs">
+              <div className="flex items-center justify-between text-slate-500 dark:text-zinc-400 mb-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider">Total Sesi</span>
+                <div className="p-2 bg-blue-50 dark:bg-blue-950/60 rounded-xl text-blue-600 dark:text-blue-400">
+                  <ClipboardList className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="text-2xl font-black text-slate-900 dark:text-zinc-100">
+                {validationStats?.totalCount || 0}
+              </div>
+              <p className="text-[10px] text-slate-400 font-medium mt-0.5">Sesi mengajar terdaftar</p>
+            </div>
+
+            <div className="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-amber-200 dark:border-amber-900/60 shadow-xs relative overflow-hidden">
+              <div className="flex items-center justify-between text-amber-600 dark:text-amber-400 mb-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider">Pending</span>
+                <div className="p-2 bg-amber-50 dark:bg-amber-950/60 rounded-xl text-amber-600 dark:text-amber-400">
+                  <AlertTriangle className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="text-2xl font-black text-amber-600 dark:text-amber-400 flex items-center gap-2">
+                {validationStats?.pendingCount || 0}
+                {!!validationStats?.pendingCount && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] bg-amber-500 text-white font-extrabold animate-pulse">
+                    Perlu Tindakan
+                  </span>
+                )}
+              </div>
+              <p className="text-[10px] text-amber-600/80 dark:text-amber-400/80 font-medium mt-0.5">Memerlukan persetujuan</p>
+            </div>
+
+            <div className="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-emerald-200 dark:border-emerald-900/60 shadow-xs">
+              <div className="flex items-center justify-between text-emerald-600 dark:text-emerald-400 mb-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider">Approved (Auto)</span>
+                <div className="p-2 bg-emerald-50 dark:bg-emerald-950/60 rounded-xl text-emerald-600 dark:text-emerald-400">
+                  <CheckCircle2 className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">
+                {validationStats?.automaticApprovalCount || 0}
+              </div>
+              <p className="text-[10px] text-emerald-600/80 dark:text-emerald-400/80 font-medium mt-0.5">Sesuai batas toleransi</p>
+            </div>
+
+            <div className="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-indigo-200 dark:border-indigo-900/60 shadow-xs">
+              <div className="flex items-center justify-between text-indigo-600 dark:text-indigo-400 mb-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider">Approved (Manual)</span>
+                <div className="p-2 bg-indigo-50 dark:bg-indigo-950/60 rounded-xl text-indigo-600 dark:text-indigo-400">
+                  <UserCheck className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="text-2xl font-black text-indigo-600 dark:text-indigo-400">
+                {validationStats?.manualApprovalCount || 0}
+              </div>
+              <p className="text-[10px] text-indigo-600/80 dark:text-indigo-400/80 font-medium mt-0.5">Disetujui Waka Kurikulum</p>
+            </div>
+
+            <div className="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-rose-200 dark:border-rose-900/60 shadow-xs">
+              <div className="flex items-center justify-between text-rose-600 dark:text-rose-400 mb-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider">Ditolak</span>
+                <div className="p-2 bg-rose-50 dark:bg-rose-950/60 rounded-xl text-rose-600 dark:text-rose-400">
+                  <UserX className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="text-2xl font-black text-rose-600 dark:text-rose-400">
+                {validationStats?.rejectedCount || 0}
+              </div>
+              <p className="text-[10px] text-rose-600/80 dark:text-rose-400/80 font-medium mt-0.5">Absensi ditolak</p>
+            </div>
+          </div>
+
+          {/* Validation Filter Bar & Table */}
+          <div className="bg-white dark:bg-zinc-900 p-5 rounded-2xl border border-slate-200 dark:border-zinc-800 shadow-xs space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-2 border-b border-slate-150 dark:border-zinc-800">
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-2 bg-slate-100 dark:bg-zinc-800 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-zinc-700">
+                  <Calendar className="w-4 h-4 text-amber-600" />
+                  <span className="text-xs font-bold text-slate-600 dark:text-zinc-300">Tanggal:</span>
+                  <input
+                    type="date"
+                    value={selectedDate}
+                    onChange={(e) => setSelectedDate(e.target.value)}
+                    className="bg-transparent font-bold text-xs text-slate-800 dark:text-zinc-100 focus:outline-hidden cursor-pointer"
+                  />
+                </div>
+
+                <div className="relative min-w-[240px]">
+                  <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Cari guru, mapel, atau kelas..."
+                    value={validationSearchQuery}
+                    onChange={(e) => setValidationSearchQuery(e.target.value)}
+                    className="w-full pl-9 pr-3 py-1.5 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-xl text-xs font-medium text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+              </div>
+
+              {/* Status Filter Sub-Tabs */}
+              <div className="flex items-center gap-1 bg-slate-100 dark:bg-zinc-800 p-1 rounded-xl flex-wrap">
+                {[
+                  { id: "Pending", label: "Pending Validasi", icon: AlertTriangle, color: "text-amber-600" },
+                  { id: "Approved", label: "Disetujui", icon: CheckCircle2, color: "text-emerald-600" },
+                  { id: "Rejected", label: "Ditolak", icon: UserX, color: "text-rose-600" },
+                  { id: "ALL", label: "Semua Sesi", icon: Layers, color: "text-slate-600" }
+                ].map(tab => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setValidationStatusFilter(tab.id as any)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                      validationStatusFilter === tab.id
+                        ? "bg-amber-600 text-white shadow-xs"
+                        : "text-slate-600 dark:text-zinc-400 hover:bg-slate-200/70 dark:hover:bg-zinc-700/60"
+                    }`}
+                  >
+                    <tab.icon className="w-3.5 h-3.5" />
+                    <span>{tab.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Batch Approve Action Bar if rows selected */}
+            {selectedValidationIds.length > 0 && (
+              <div className="p-3 bg-amber-50 dark:bg-amber-950/40 rounded-xl border border-amber-200 dark:border-amber-900/60 flex items-center justify-between gap-3">
+                <span className="text-xs font-bold text-amber-900 dark:text-amber-200">
+                  {selectedValidationIds.length} catatan absensi terpilih
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedValidationIds([])}
+                    className="px-3 py-1.5 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 text-slate-700 dark:text-zinc-200 rounded-lg text-xs font-bold cursor-pointer transition-all"
+                  >
+                    Batal Pilih
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => batchApproveMutation.mutate(selectedValidationIds)}
+                    disabled={batchApproveMutation.isPending}
+                    className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs cursor-pointer transition-all flex items-center gap-1.5"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Setujui Masal ({selectedValidationIds.length})
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Validation Table */}
+            {isLoadingAttendance ? (
+              <div className="p-12 text-center">
+                <Loading />
+              </div>
+            ) : (() => {
+              const allItems = localAttendanceItems.filter(item => {
+                if (item.status === "KBM Ditiadakan") return false;
+                const evalRes = teacherTeachingAttendanceService.evaluateAttendanceApprovalStatus(item);
+                const currentStatus = item.attendanceStatus || evalRes.attendanceStatus;
+
+                if (validationStatusFilter !== "ALL" && currentStatus !== validationStatusFilter) {
+                  return false;
+                }
+
+                if (validationSearchQuery.trim()) {
+                  const q = validationSearchQuery.toLowerCase();
+                  const matchTeacher = item.teacherName?.toLowerCase().includes(q);
+                  const matchSubject = item.subjectName?.toLowerCase().includes(q);
+                  const matchClass = item.className?.toLowerCase().includes(q);
+                  return matchTeacher || matchSubject || matchClass;
+                }
+                return true;
+              });
+
+              if (allItems.length === 0) {
+                return (
+                  <div className="p-12 text-center text-xs text-slate-400 bg-slate-50 dark:bg-zinc-950/60 rounded-xl border border-dashed border-slate-200 dark:border-zinc-800">
+                    Tidak ada catatan absensi yang sesuai dengan kriteria filter validasi ({validationStatusFilter}).
+                  </div>
+                );
+              }
+
+              return (
+                <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-zinc-800">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-100 dark:bg-zinc-950 border-b border-slate-200 dark:border-zinc-800 text-slate-600 dark:text-zinc-400 font-bold uppercase tracking-wider">
+                        <th className="py-3 px-3 text-center w-10">
+                          <input
+                            type="checkbox"
+                            checked={selectedValidationIds.length > 0 && selectedValidationIds.length === allItems.length}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedValidationIds(allItems.map(i => i.id).filter(Boolean) as string[]);
+                              } else {
+                                setSelectedValidationIds([]);
+                              }
+                            }}
+                            className="rounded border-slate-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                          />
+                        </th>
+                        <th className="py-3 px-3">Tanggal & Sesi</th>
+                        <th className="py-3 px-3">Nama Guru</th>
+                        <th className="py-3 px-3">Mapel & Kelas</th>
+                        <th className="py-3 px-3">Check-In / Check-Out</th>
+                        <th className="py-3 px-3">Durasi</th>
+                        <th className="py-3 px-3">Status & Alasan Pending</th>
+                        <th className="py-3 px-3">Tipe Approval</th>
+                        <th className="py-3 px-3 text-center">Aksi Wakakur</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-150 dark:divide-zinc-800 font-medium text-slate-800 dark:text-zinc-200">
+                      {allItems.map((item, idx) => {
+                        const evalRes = teacherTeachingAttendanceService.evaluateAttendanceApprovalStatus(item);
+                        const currentStatus = item.attendanceStatus || evalRes.attendanceStatus;
+                        const pendingReason = item.pendingReason || evalRes.pendingReason;
+                        const approvalType = item.approvalType || evalRes.approvalType;
+                        const isChecked = !!item.id && selectedValidationIds.includes(item.id);
+
+                        return (
+                          <tr key={item.id || idx} className="hover:bg-slate-50 dark:hover:bg-zinc-800/40">
+                            <td className="py-3 px-3 text-center">
+                              {item.id ? (
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setSelectedValidationIds(prev => [...prev, item.id!]);
+                                    } else {
+                                      setSelectedValidationIds(prev => prev.filter(id => id !== item.id));
+                                    }
+                                  }}
+                                  className="rounded border-slate-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                                />
+                              ) : null}
+                            </td>
+                            <td className="py-3 px-3">
+                              <div className="font-bold text-slate-900 dark:text-zinc-100">{item.date}</div>
+                              <div className="text-[10px] font-semibold text-blue-600 dark:text-blue-400">{item.jp} ({item.timeSlot})</div>
+                            </td>
+                            <td className="py-3 px-3">
+                              <div className="font-bold text-slate-900 dark:text-zinc-100">{item.teacherName}</div>
+                              <div className="text-[10px] text-slate-500">{item.status}</div>
+                            </td>
+                            <td className="py-3 px-3">
+                              <div className="font-bold text-slate-800 dark:text-zinc-200">{item.subjectName}</div>
+                              <div className="text-[10px] text-slate-500 font-semibold">Kelas {item.className}</div>
+                            </td>
+                            <td className="py-3 px-3">
+                              <div className="flex items-center gap-1.5 text-xs">
+                                <span className={`font-bold ${item.checkInTime ? "text-emerald-600 dark:text-emerald-400" : "text-rose-500"}`}>
+                                  IN: {item.checkInTime || "-"}
+                                </span>
+                                <span className="text-slate-300">|</span>
+                                <span className={`font-bold ${item.checkOutTime ? "text-blue-600 dark:text-blue-400" : "text-amber-500"}`}>
+                                  OUT: {item.checkOutTime || "-"}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="py-3 px-3 font-bold text-slate-700 dark:text-zinc-300">
+                              {item.teachingDurationMinutes ? `${item.teachingDurationMinutes}m` : "-"}
+                            </td>
+                            <td className="py-3 px-3">
+                              <div className="space-y-1">
+                                <span className={`px-2 py-0.5 rounded-md font-bold text-[10px] inline-flex items-center gap-1 ${
+                                  currentStatus === "Approved" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" :
+                                  currentStatus === "Rejected" ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300" :
+                                  "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                                }`}>
+                                  {currentStatus === "Approved" && <CheckCircle2 className="w-3 h-3 text-emerald-600" />}
+                                  {currentStatus === "Rejected" && <UserX className="w-3 h-3 text-rose-600" />}
+                                  {currentStatus === "Pending" && <AlertTriangle className="w-3 h-3 text-amber-600" />}
+                                  {currentStatus}
+                                </span>
+                                {pendingReason && currentStatus === "Pending" && (
+                                  <div className="text-[10px] font-medium text-amber-700 dark:text-amber-300 leading-tight">
+                                    ⚠️ {pendingReason}
+                                  </div>
+                                )}
+                                {item.validationNote && currentStatus !== "Pending" && (
+                                  <div className="text-[10px] text-slate-500 dark:text-zinc-400 italic">
+                                    Catatan: {item.validationNote}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                            <td className="py-3 px-3">
+                              <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                                approvalType === "Automatic" ? "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300" : "bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300"
+                              }`}>
+                                {approvalType}
+                              </span>
+                              {item.validatedBy && (
+                                <div className="text-[9px] text-slate-400 mt-0.5">Oleh: {item.validatedBy}</div>
+                              )}
+                            </td>
+                            <td className="py-3 px-3 text-center">
+                              {isWakakurOrAdmin && item.id ? (
+                                <div className="flex items-center justify-center gap-1.5">
+                                  {currentStatus !== "Approved" && (
+                                    <button
+                                      type="button"
+                                      disabled={validateMutation.isPending}
+                                      onClick={() => validateMutation.mutate({
+                                        id: item.id!,
+                                        dateStr: item.date,
+                                        status: "Approved",
+                                        validationNote: "Disetujui Waka Kurikulum"
+                                      })}
+                                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold shadow-2xs transition-all cursor-pointer flex items-center gap-1"
+                                      title="Setujui Absensi Sesi Ini"
+                                    >
+                                      <CheckCircle2 className="w-3 h-3" />
+                                      Setujui
+                                    </button>
+                                  )}
+                                  {currentStatus !== "Rejected" && (
+                                    <button
+                                      type="button"
+                                      disabled={validateMutation.isPending}
+                                      onClick={() => {
+                                        setRejectModalItem({
+                                          id: item.id!,
+                                          dateStr: item.date,
+                                          teacherName: item.teacherName,
+                                          subjectName: item.subjectName,
+                                          className: item.className
+                                        });
+                                        setRejectReason("");
+                                      }}
+                                      className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-[11px] font-bold shadow-2xs transition-all cursor-pointer flex items-center gap-1"
+                                      title="Tolak Absensi Sesi Ini"
+                                    >
+                                      <UserX className="w-3 h-3" />
+                                      Tolak
+                                    </button>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-slate-400 text-[10px]">-</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Modal Penolakan Absensi */}
+          {rejectModalItem && (
+            <Dialog
+              isOpen={true}
+              onClose={() => setRejectModalItem(null)}
+              title="Tolak Absensi Sesi Mengajar"
+            >
+              <div className="space-y-4 text-xs">
+                <div className="p-3 bg-rose-50 dark:bg-rose-950/40 rounded-xl border border-rose-200 dark:border-rose-900/60 text-rose-900 dark:text-rose-200">
+                  <div className="font-bold text-sm mb-1">Konfirmasi Penolakan Absensi</div>
+                  <div>Guru: <strong>{rejectModalItem.teacherName}</strong></div>
+                  <div>Mata Pelajaran: <strong>{rejectModalItem.subjectName}</strong> (Kelas {rejectModalItem.className})</div>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-zinc-200 mb-1">
+                    Alasan Penolakan <span className="text-rose-500">*</span>
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="Masukkan alasan spesifik penolakan absensi ini..."
+                    value={rejectReason}
+                    onChange={(e) => setRejectReason(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-xl font-medium focus:ring-2 focus:ring-rose-500 text-slate-800 dark:text-zinc-100"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setRejectModalItem(null)}
+                    className="px-4 py-2 bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 text-slate-700 dark:text-zinc-200 rounded-xl font-bold transition-all cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!rejectReason.trim() || validateMutation.isPending}
+                    onClick={() => validateMutation.mutate({
+                      id: rejectModalItem.id,
+                      dateStr: rejectModalItem.dateStr,
+                      status: "Rejected",
+                      validationNote: rejectReason
+                    })}
+                    className="px-4 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded-xl font-bold shadow-md transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    <UserX className="w-4 h-4" />
+                    Konfirmasi Penolakan
+                  </button>
+                </div>
+              </div>
+            </Dialog>
+          )}
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* TAB 3: DASHBOARD REKAP ABSENSI GURU (EXCEPTION FIRST)     */}
       {/* ========================================================= */}
       {activeTab === "rekap" && (
         <div className="space-y-6">
@@ -2386,135 +2923,154 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
             )}
           </div>
 
-          {/* 6. MODAL RINCIAN EXCEPTION (ACTIONABLE CARD DETAIL POPUP) */}
-          {cardDetailModal && cardDetailModal.isOpen && (
-            <Dialog
-              isOpen={cardDetailModal.isOpen}
-              onClose={() => setCardDetailModal(null)}
-              title={cardDetailModal.title}
-              size="lg"
-            >
-              <div className="space-y-4 max-h-[78vh] overflow-y-auto pr-1">
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-slate-50 dark:bg-zinc-800/80 p-3 rounded-2xl border border-slate-200 dark:border-zinc-700">
-                  <div className="relative flex-1 w-full">
-                    <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-                    <input
-                      type="text"
-                      placeholder="Cari nama guru, mapel, kelas, atau catatan..."
-                      value={cardModalSearch}
-                      onChange={(e) => setCardModalSearch(e.target.value)}
-                      className="w-full pl-9 pr-3 py-1.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs text-slate-800 dark:text-zinc-100"
-                    />
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-xs font-bold text-slate-600 dark:text-zinc-300">
-                      Total: <strong className="text-blue-600">{filteredModalRecords.length} Sesi</strong>
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleExportModalExcel(cardDetailModal.title, filteredModalRecords)}
-                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
-                    >
-                      <FileSpreadsheet className="w-3.5 h-3.5" />
-                      Export Excel
-                    </button>
-                  </div>
-                </div>
+        </div>
+      )}
 
-                {filteredModalRecords.length === 0 ? (
-                  <div className="p-8 text-center text-xs text-slate-400 bg-slate-50 dark:bg-zinc-900/60 rounded-2xl border border-dashed border-slate-200 dark:border-zinc-800">
-                    Tidak ada data sesi ditemukan untuk kategori ini.
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-zinc-800">
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead>
-                        <tr className="bg-slate-100 dark:bg-zinc-950 border-b border-slate-200 dark:border-zinc-800 text-slate-600 dark:text-zinc-400 font-bold uppercase tracking-wider">
-                          <th className="py-2.5 px-3">Tanggal & Hari</th>
-                          <th className="py-2.5 px-3">Nama Guru</th>
-                          <th className="py-2.5 px-3">Mata Pelajaran</th>
-                          <th className="py-2.5 px-3">Kelas</th>
-                          <th className="py-2.5 px-3">JP / Jam</th>
-                          <th className="py-2.5 px-3">Status</th>
-                          <th className="py-2.5 px-3">Pengganti / Penukar</th>
-                          <th className="py-2.5 px-3">Alasan / Catatan</th>
-                          <th className="py-2.5 px-3 text-right">Aksi</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-150 dark:divide-zinc-800 font-medium text-slate-800 dark:text-zinc-200">
-                        {filteredModalRecords.map((r, idx) => (
-                          <tr key={r.id || idx} className="hover:bg-slate-50 dark:hover:bg-zinc-800/40">
-                            <td className="py-2.5 px-3">
-                              <div className="font-bold text-slate-900 dark:text-zinc-100">{r.date}</div>
-                              <div className="text-[10px] text-slate-500">{r.day}</div>
-                            </td>
-                            <td className="py-2.5 px-3 font-bold text-slate-800 dark:text-zinc-100">{r.teacherName}</td>
-                            <td className="py-2.5 px-3 text-slate-700 dark:text-zinc-200">{r.subjectName}</td>
-                            <td className="py-2.5 px-3 font-semibold">{r.className}</td>
-                            <td className="py-2.5 px-3 font-bold text-blue-600 dark:text-blue-400">
-                              {r.jp} {r.timeSlot ? `(${r.timeSlot})` : ""}
-                            </td>
-                            <td className="py-2.5 px-3">
-                              <span className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
-                                r.status === "Hadir Mengajar" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" :
-                                r.status === "Tidak Hadir" ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300" :
-                                r.status === "Izin" ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-950 dark:text-yellow-300" :
-                                r.status === "Sakit" ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" :
-                                r.status === "Digantikan Guru Lain" ? "bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300" :
-                                r.status === "Tukar Jadwal" ? "bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300" :
-                                r.status === "Tugas Dinas" ? "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300" :
-                                "bg-slate-100 text-slate-700 dark:bg-zinc-800 dark:text-zinc-300"
-                              }`}>
-                                {r.status}
-                              </span>
-                            </td>
-                            <td className="py-2.5 px-3">
-                              {r.substituteTeacherName ? (
-                                <span className="font-bold text-orange-700 dark:text-orange-300 flex items-center gap-1">
-                                  <RefreshCw className="w-3 h-3 text-orange-500" />
-                                  {r.substituteTeacherName}
-                                </span>
-                              ) : r.exchangedWithTeacherName ? (
-                                <span className="font-bold text-purple-700 dark:text-purple-300 flex items-center gap-1">
-                                  <ArrowRightLeft className="w-3 h-3 text-purple-500" />
-                                  {r.exchangedWithTeacherName}
-                                </span>
-                              ) : r.status === "Digantikan Guru Lain" ? (
-                                <span className="text-rose-600 dark:text-rose-400 font-extrabold italic animate-pulse">
-                                  ⚠️ Belum Ditentukan
-                                </span>
-                              ) : (
-                                <span className="text-slate-400">-</span>
-                              )}
-                            </td>
-                            <td className="py-2.5 px-3 text-slate-600 dark:text-zinc-300">
-                              {r.notes || "-"}
-                            </td>
-                            <td className="py-2.5 px-3 text-right">
+      {/* MODAL RINCIAN EXCEPTION (ACTIONABLE CARD DETAIL POPUP) */}
+      {cardDetailModal && cardDetailModal.isOpen && (
+        <Dialog
+          isOpen={cardDetailModal.isOpen}
+          onClose={() => setCardDetailModal(null)}
+          title={cardDetailModal.title}
+          size="lg"
+        >
+          <div className="space-y-4 max-h-[78vh] overflow-y-auto pr-1">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-slate-50 dark:bg-zinc-800/80 p-3 rounded-2xl border border-slate-200 dark:border-zinc-700">
+              <div className="relative flex-1 w-full">
+                <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Cari nama guru, mapel, kelas, atau catatan..."
+                  value={cardModalSearch}
+                  onChange={(e) => setCardModalSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-1.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs text-slate-800 dark:text-zinc-100"
+                />
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-xs font-bold text-slate-600 dark:text-zinc-300">
+                  Total: <strong className="text-blue-600">{filteredModalRecords.length} Sesi</strong>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleExportModalExcel(cardDetailModal.title, filteredModalRecords)}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  Export Excel
+                </button>
+              </div>
+            </div>
+
+            {filteredModalRecords.length === 0 ? (
+              <div className="p-8 text-center text-xs text-slate-400 bg-slate-50 dark:bg-zinc-900/60 rounded-2xl border border-dashed border-slate-200 dark:border-zinc-800">
+                Tidak ada data sesi ditemukan untuk kategori ini.
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-zinc-800">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-100 dark:bg-zinc-950 border-b border-slate-200 dark:border-zinc-800 text-slate-600 dark:text-zinc-400 font-bold uppercase tracking-wider">
+                      <th className="py-2.5 px-3">Tanggal & Hari</th>
+                      <th className="py-2.5 px-3">Nama Guru</th>
+                      <th className="py-2.5 px-3">Mata Pelajaran</th>
+                      <th className="py-2.5 px-3">Kelas</th>
+                      <th className="py-2.5 px-3">JP / Jam</th>
+                      <th className="py-2.5 px-3">Status</th>
+                      <th className="py-2.5 px-3">Pengganti / Penukar</th>
+                      <th className="py-2.5 px-3">Alasan / Catatan</th>
+                      <th className="py-2.5 px-3 text-right">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-150 dark:divide-zinc-800 font-medium text-slate-800 dark:text-zinc-200">
+                    {filteredModalRecords.map((r, idx) => (
+                      <tr key={r.id || idx} className="hover:bg-slate-50 dark:hover:bg-zinc-800/40">
+                        <td className="py-2.5 px-3">
+                          <div className="font-bold text-slate-900 dark:text-zinc-100">{r.date}</div>
+                          <div className="text-[10px] text-slate-500">{r.day}</div>
+                        </td>
+                        <td className="py-2.5 px-3 font-bold text-slate-800 dark:text-zinc-100">{r.teacherName}</td>
+                        <td className="py-2.5 px-3 text-slate-700 dark:text-zinc-200">{r.subjectName}</td>
+                        <td className="py-2.5 px-3 font-semibold">{r.className}</td>
+                        <td className="py-2.5 px-3 font-bold text-blue-600 dark:text-blue-400">
+                          {r.jp} {r.timeSlot ? `(${r.timeSlot})` : ""}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <span className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
+                            r.status === "Hadir Mengajar" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" :
+                            r.status === "Tidak Hadir" ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300" :
+                            r.status === "Izin" ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-950 dark:text-yellow-300" :
+                            r.status === "Sakit" ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" :
+                            r.status === "Digantikan Guru Lain" ? "bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300" :
+                            r.status === "Tukar Jadwal" ? "bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300" :
+                            r.status === "Tugas Dinas" ? "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300" :
+                            "bg-slate-100 text-slate-700 dark:bg-zinc-800 dark:text-zinc-300"
+                          }`}>
+                            {r.status}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3">
+                          {r.substituteTeacherName ? (
+                            <span className="font-bold text-orange-700 dark:text-orange-300 flex items-center gap-1">
+                              <RefreshCw className="w-3 h-3 text-orange-500" />
+                              {r.substituteTeacherName}
+                            </span>
+                          ) : r.exchangedWithTeacherName ? (
+                            <span className="font-bold text-purple-700 dark:text-purple-300 flex items-center gap-1">
+                              <ArrowRightLeft className="w-3 h-3 text-purple-500" />
+                              {r.exchangedWithTeacherName}
+                            </span>
+                          ) : r.status === "Digantikan Guru Lain" ? (
+                            <span className="text-rose-600 dark:text-rose-400 font-extrabold italic animate-pulse">
+                              ⚠️ Belum Ditentukan
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">-</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-600 dark:text-zinc-300">
+                          {r.notes || "-"}
+                        </td>
+                        <td className="py-2.5 px-3 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {isWakakurOrAdmin && r.checkInTime && !r.checkOutTime && (
                               <button
                                 type="button"
                                 onClick={() => {
-                                  setSelectedDate(r.date);
-                                  setActiveTab("input");
-                                  setCardDetailModal(null);
+                                  setManualCheckOutModal({
+                                    isOpen: true,
+                                    item: r,
+                                    checkOutTime: "08:15",
+                                    reason: ""
+                                  });
                                 }}
-                                className="px-2.5 py-1 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 text-blue-700 dark:text-blue-300 rounded-lg text-[11px] font-bold transition-all border border-blue-200/60 cursor-pointer"
-                                title="Buka Halaman Input/Edit untuk Tanggal Ini"
+                                className="px-2.5 py-1 bg-amber-50 dark:bg-amber-950/60 hover:bg-amber-100 text-amber-800 dark:text-amber-200 rounded-lg text-[11px] font-bold transition-all border border-amber-200/60 cursor-pointer"
+                                title="Check Out Manual"
                               >
-                                Buka Sesi
+                                Check-Out Manual
                               </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedDate(r.date);
+                                setActiveTab("input");
+                                setCardDetailModal(null);
+                              }}
+                              className="px-2.5 py-1 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 text-blue-700 dark:text-blue-300 rounded-lg text-[11px] font-bold transition-all border border-blue-200/60 cursor-pointer"
+                              title="Buka Halaman Input/Edit untuk Tanggal Ini"
+                            >
+                              Buka Sesi
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            </Dialog>
-          )}
-
-        </div>
+            )}
+          </div>
+        </Dialog>
       )}
 
       {/* Detail History Modal */}

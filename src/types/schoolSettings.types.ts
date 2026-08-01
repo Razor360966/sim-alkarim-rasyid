@@ -49,6 +49,40 @@ export interface SchoolAgenda {
   updatedAt?: string;
 }
 
+export interface TeachingAttendanceSettings {
+  checkInToleranceMinutes: number; // 5, 10, 15, 20, 30
+  checkOutToleranceMinutes: number; // 5, 10, 15, 20, 30
+  approvalMethod: "automatic" | "manual" | "hybrid";
+  pendingValidationConditions: {
+    checkInTerlambat: boolean;
+    checkOutTerlambat: boolean;
+    checkInTerlaluAwal: boolean;
+    checkOutTerlaluAwal: boolean;
+    durasiTidakSesuai: boolean;
+    inputManual: boolean;
+    lupaCheckOut: boolean;
+    jadwalTidakSesuai: boolean;
+    scanDILuarToleransi: boolean;
+    scanBerulang: boolean;
+  };
+  repeatScanRule: "never_allowed" | "allowed_across_break" | "always_allowed";
+  useBreakTimesFromSettings: boolean;
+  qrRules: {
+    activeScheduleOnly: boolean;
+    matchingClassOnly: boolean;
+    matchingDayOnly: boolean;
+    activeSemesterOnly: boolean;
+  };
+  minTeachingDurationPercent: number; // e.g. 80
+  notifications: {
+    checkInSuccess: boolean;
+    checkOutSuccess: boolean;
+    pendingValidation: boolean;
+    approval: boolean;
+    rejection: boolean;
+  };
+}
+
 export interface SchoolSettings {
   settingId: string; // "settings"
   activeDays: string[]; // e.g. ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"]
@@ -69,4 +103,5 @@ export interface SchoolSettings {
     endTime: string;
   };
   lessonPeriod?: number;
+  teachingAttendanceSettings?: TeachingAttendanceSettings;
 }

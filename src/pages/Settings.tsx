@@ -42,6 +42,7 @@ import {
 } from "lucide-react";
 import { generateDailySchedule, TimelineBlock, minutesToTime, timeToMinutes } from "../utils/scheduleCalculator";
 import { SchoolSettings, BreakTime, RoutineActivity } from "../types";
+import { TeachingAttendanceSettingsPanel } from "../components/TeachingAttendanceSettingsPanel";
 
 const DAYS_OF_WEEK = ["Sabtu", "Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat"];
 
@@ -109,7 +110,7 @@ export default function Settings() {
 
   // Menu Tabs for sections
   const [activeTab, setActiveTab] = useState<
-    "identitas-sekolah" | "hari-aktif" | "jam-sekolah" | "kegiatan-rutin" | "waktu-istirahat" | "struktur-jp" | "hari-libur" | "simpan" | "riwayat"
+    "identitas-sekolah" | "hari-aktif" | "jam-sekolah" | "kegiatan-rutin" | "waktu-istirahat" | "struktur-jp" | "absensi-mengajar" | "hari-libur" | "simpan" | "riwayat"
   >("identitas-sekolah");
 
   // School Identity form state
@@ -245,7 +246,18 @@ export default function Settings() {
     }
   }, [activeTab]);
 
-  const hasWriteAccess = user?.role === "admin" || user?.role === "operator" || user?.role === "tata usaha";
+  const userRole = (user?.role || "").toLowerCase();
+  const userRoles = (user?.roles || []).map((r: string) => r.toLowerCase());
+
+  const isAdmin = userRole === "admin" || userRole === "operator" || userRole === "tata usaha" || userRoles.includes("admin") || userRoles.includes("operator");
+  const isKepalaSekolah = userRole === "kepala sekolah" || userRole === "pimpinan" || userRoles.includes("kepala sekolah") || userRoles.includes("pimpinan");
+  const isWakakur = userRole === "wakil kepala sekolah" || userRole === "wakakur" || userRoles.includes("wakil kepala sekolah") || userRoles.includes("wakakur");
+  const isGuruOnly = (userRole === "guru" || userRoles.includes("guru")) && !isAdmin && !isKepalaSekolah && !isWakakur;
+
+  const canAccessTeachingSettings = (isAdmin || isKepalaSekolah || isWakakur) && !isGuruOnly;
+  const canEditTeachingSettings = isAdmin || isKepalaSekolah;
+
+  const hasWriteAccess = isAdmin || user?.role === "operator" || user?.role === "tata usaha";
 
   if (manualLoading) {
     return (
@@ -660,10 +672,11 @@ export default function Settings() {
     { id: "struktur-jp", label: "3. Struktur JP", icon: Sliders },
     { id: "kegiatan-rutin", label: "4. Kegiatan Rutin", icon: Volume2 },
     { id: "waktu-istirahat", label: "5. Waktu Istirahat", icon: Coffee },
-    { id: "hari-libur", label: "6. Hari Libur Khusus", icon: ShieldAlert },
-    { id: "simpan", label: "7. Simpan Pengaturan", icon: Save },
-    { id: "riwayat", label: "8. Riwayat & Rollback", icon: RotateCcw },
-  ] as const;
+    ...(canAccessTeachingSettings ? [{ id: "absensi-mengajar", label: "6. Kebijakan Absensi Mengajar", icon: UserCheck }] : []),
+    { id: "hari-libur", label: "7. Hari Libur Khusus", icon: ShieldAlert },
+    { id: "simpan", label: "8. Simpan Pengaturan", icon: Save },
+    { id: "riwayat", label: "9. Riwayat & Rollback", icon: RotateCcw },
+  ];
 
   return (
     <div className="flex-1 overflow-y-auto bg-slate-50 p-4 md:p-6 lg:p-8 dark:bg-zinc-950 text-slate-900 dark:text-zinc-50 font-sans">
@@ -1755,7 +1768,18 @@ export default function Settings() {
                 </div>
               )}
 
-              {/* 6. HARI LIBUR KHUSUS PLACEHOLDER */}
+              {/* 6. KEBIJAKAN ABSENSI MENGAJAR */}
+              {activeTab === "absensi-mengajar" && canAccessTeachingSettings && localSettings && (
+                <TeachingAttendanceSettingsPanel
+                  localSettings={localSettings}
+                  setLocalSettings={setLocalSettings}
+                  canEdit={canEditTeachingSettings}
+                  userRoleDisplay={isKepalaSekolah ? "Kepala Sekolah" : isWakakur ? "Waka Kurikulum" : "Administrator"}
+                  historyItems={historyItems}
+                />
+              )}
+
+              {/* 7. HARI LIBUR KHUSUS PLACEHOLDER */}
               {activeTab === "hari-libur" && (
                 <div className="space-y-4">
                   <div className="border-b border-slate-100 dark:border-zinc-850 pb-3">
@@ -1827,6 +1851,12 @@ export default function Settings() {
                         <span>Jumlah Kegiatan Rutin Aktif:</span>
                         <strong className="text-slate-800 dark:text-zinc-200">
                           {localSettings.routineActivities?.filter(r => r.enabled).length || 0} Terjadwal
+                        </strong>
+                      </li>
+                      <li className="flex justify-between border-b border-slate-100 dark:border-zinc-900 pb-1.5">
+                        <span>Kebijakan Absensi Mengajar:</span>
+                        <strong className="text-indigo-600 dark:text-indigo-400 capitalize">
+                          Toleransi {localSettings.teachingAttendanceSettings?.checkInToleranceMinutes || 15}m ({localSettings.teachingAttendanceSettings?.approvalMethod || 'hybrid'})
                         </strong>
                       </li>
                     </ul>

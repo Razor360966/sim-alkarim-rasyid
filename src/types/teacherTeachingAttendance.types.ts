@@ -10,6 +10,9 @@ export type AttendanceTeachingStatus =
   | "KBM Ditiadakan"
   | "Belum Diverifikasi";
 
+export type AttendanceApprovalStatus = "Pending" | "Approved" | "Rejected";
+export type AttendanceApprovalType = "Automatic" | "Manual";
+
 export interface TeacherTeachingAttendance {
   id?: string; // Firestore Document ID (usually `${date}_${scheduleId}`)
   date: string; // YYYY-MM-DD
@@ -40,6 +43,15 @@ export interface TeacherTeachingAttendance {
   exchangedWithTeacherName?: string;
   exchangedScheduleId?: string;
   notes?: string;
+
+  // Validation & Approval fields
+  attendanceStatus?: AttendanceApprovalStatus; // "Pending" | "Approved" | "Rejected"
+  pendingReason?: string;
+  validatedBy?: string;
+  validatedByUserId?: string;
+  validatedAt?: string;
+  validationNote?: string;
+  approvalType?: AttendanceApprovalType; // "Automatic" | "Manual"
 
   // QR Teaching Check-in & Check-out Data
   checkInTime?: string; // e.g. "07:32:10"
