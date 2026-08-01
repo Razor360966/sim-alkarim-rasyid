@@ -27,6 +27,8 @@ import { academicPlanningService } from "./academicPlanning.service";
 import { lessonPeriodService } from "./lessonPeriod.service";
 import { classService } from "./classService";
 import { schoolSettingsService } from "./schoolSettings.service";
+import { academicYearService } from "./academicYearService";
+import { semesterService } from "./semester.service";
 
 const COLLECTION_NAME = "teacher_teaching_attendances";
 const AUDIT_LOGS_COLLECTION = "teacher_attendance_audit_logs";
@@ -39,6 +41,31 @@ export function getIndonesianDayName(dateStr: string): string {
   const dayIndex = date.getDay();
   const days = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
   return days[dayIndex] || "Senin";
+}
+
+// Helper to normalize teacher names for fuzzy matching (stripping titles like Drs, Ir, M.Pd, etc.)
+export function normalizeTeacherName(name?: string): string {
+  if (!name) return "";
+  return name
+    .toLowerCase()
+    .replace(/(drs\.|dr\.|dra\.|ir\.|h\.|hj\.|m\.pd|s\.pd|s\.ag|m\.ag|s\.kom|m\.kom|s\.t|m\.t|s\.si|m\.si|lcm|lch|lc|m\.a|s\.h|m\.h|ph\.d)/gi, "")
+    .replace(/[^a-z0-9]/g, "")
+    .trim();
+}
+
+// Helper to normalize class names (converting Roman numerals like VII -> 7, IX -> 9, removing 'Kelas')
+export function normalizeClassName(clsName?: string): string {
+  if (!clsName) return "";
+  let clean = clsName.toLowerCase().replace(/kelas\s*/gi, "").trim();
+  clean = clean
+    .replace(/^7\b/g, "vii")
+    .replace(/^8\b/g, "viii")
+    .replace(/^9\b/g, "ix")
+    .replace(/^10\b/g, "x")
+    .replace(/^11\b/g, "xi")
+    .replace(/^12\b/g, "xii")
+    .replace(/[^a-z0-9]/g, "");
+  return clean;
 }
 
 export function getTodayDateStr(timeZone = "Asia/Jakarta"): string {
@@ -1147,6 +1174,28 @@ export const teacherTeachingAttendanceService = {
     record?: TeacherTeachingAttendance;
   }> {
     try {
+      console.log("==================================================");
+      console.log("[QR Audit Step 1] Inisiasi Scan QR Check-In / Check-Out");
+      console.log("[QR Audit Step 1] User Current:", params.currentUser);
+      console.log("[QR Audit Step 1] Raw Scanned Content:", params.scannedContent);
+      console.log("[QR Audit Step 1] Context AY:", params.academicYearId, "Semester:", params.semesterId);
+
+      if (!params.currentUser || (!params.currentUser.id && !params.currentUser.teacherId)) {
+        console.warn("[QR Audit Step 1 FAILED] User session invalid or missing ID");
+        return {
+          success: false,
+          message: "Sesi pengguna tidak valid. Silakan login ulang."
+        };
+      }
+
+      if (!params.scannedContent || !params.scannedContent.trim()) {
+        console.warn("[QR Audit Step 1 FAILED] Scanned QR content is empty");
+        return {
+          success: false,
+          message: "QR Code tidak valid atau data QR kosong."
+        };
+      }
+
       const todayStr = getTodayDateStr();
       const now = new Date();
       let defaultTimeStr = "";
@@ -1158,15 +1207,50 @@ export const teacherTeachingAttendanceService = {
       const currentTimeStr = params.customTimeStr || defaultTimeStr;
       const currentM = parseTimeToMinutes(currentTimeStr);
 
-      // 1. Parse scanned QR code to extract target class identifier
-      let targetClassIdentifier = params.scannedContent.trim();
+      console.log("[QR Audit Step 1] Waktu transaksi:", todayStr, currentTimeStr, `(${currentM} menit)`);
+
+      // 2. Academic Year & Semester Validation
+      let ayId = params.academicYearId || "";
+      let semId = params.semesterId || "";
+
+      if (!ayId || !semId) {
+        console.log("[QR Audit Step 2] AcademicYearId / SemesterId not provided, looking up active ones...");
+        try {
+          const [ays, sems] = await Promise.all([
+            academicYearService.getAcademicYears(),
+            semesterService.getSemesters()
+          ]);
+          const activeAy = ays.find(a => a.isActive);
+          const activeSem = sems.find(s => s.isActive);
+          if (activeAy) ayId = activeAy.id;
+          if (activeSem) semId = activeSem.id;
+        } catch (e) {
+          console.error("[QR Audit Step 2] Failed looking up active academic year/semester:", e);
+        }
+      }
+
+      console.log("[QR Audit Step 2] Resolved Active Academic Year ID:", ayId, "Semester ID:", semId);
+
+      if (!ayId || !semId) {
+        console.warn("[QR Audit Step 2 FAILED] Active Academic Year or Semester is not set in system");
+        return {
+          success: false,
+          message: "Tahun Ajaran atau Semester aktif belum dikonfigurasi dalam sistem."
+        };
+      }
+
+      // 3. Parse scanned QR content
+      let rawContent = params.scannedContent.trim();
+      let parsedJson: any = null;
+      let targetClassIdentifier = rawContent;
+
       try {
-        if (targetClassIdentifier.startsWith("{") && targetClassIdentifier.endsWith("}")) {
-          const parsedJson = JSON.parse(targetClassIdentifier);
+        if ((rawContent.startsWith("{") && rawContent.endsWith("}")) || rawContent.includes("SCHOOL_CLASS_QR")) {
+          parsedJson = JSON.parse(rawContent);
           targetClassIdentifier = parsedJson.className || parsedJson.classId || parsedJson.code || targetClassIdentifier;
         }
       } catch (err) {
-        // Not JSON, continue with raw string
+        console.log("[QR Audit Step 3] Scanned content is plain text, not JSON");
       }
 
       if (targetClassIdentifier.toUpperCase().startsWith("CLASS_QR:")) {
@@ -1174,27 +1258,52 @@ export const teacherTeachingAttendanceService = {
       }
 
       const cleanTarget = targetClassIdentifier.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const normTargetClass = normalizeClassName(targetClassIdentifier);
 
-      // 2. Fetch classes to verify class existence
+      console.log("[QR Audit Step 3] QR Content Parsed:", {
+        rawContent,
+        parsedJson,
+        targetClassIdentifier,
+        cleanTarget,
+        normTargetClass
+      });
+
+      // 4. Fetch Master Classes to Verify Class Existence
       const classes = await classService.getClasses();
       const matchedClass = classes.find(c => {
+        if (parsedJson?.classId && (c.id === parsedJson.classId || (c as any).classId === parsedJson.classId)) {
+          return true;
+        }
         const cNameClean = (c.name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
         const cCodeClean = (c.code || "").toLowerCase().replace(/[^a-z0-9]/g, "");
         const cIdClean = (c.id || "").toLowerCase().replace(/[^a-z0-9]/g, "");
         const cRoomClean = (c.roomCode || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-        return cNameClean === cleanTarget || cCodeClean === cleanTarget || cIdClean === cleanTarget || (cRoomClean && cRoomClean === cleanTarget);
+        const cNorm = normalizeClassName(c.name);
+
+        return (
+          cNameClean === cleanTarget ||
+          cCodeClean === cleanTarget ||
+          cIdClean === cleanTarget ||
+          (cRoomClean && cRoomClean === cleanTarget) ||
+          cNorm === normTargetClass
+        );
       });
 
-      const targetClassName = matchedClass?.name || targetClassIdentifier;
+      const targetClassName = matchedClass?.name || parsedJson?.className || targetClassIdentifier;
 
-      // 3. Fetch today's attendance entries derived from active schedules
+      console.log("[QR Audit Step 4] Master Class Match Result:", matchedClass ? `Found: ${matchedClass.name} (ID: ${matchedClass.id})` : `Not explicitly matched in master classes, using string: '${targetClassName}'`);
+
+      // 5. Fetch Today's Attendance Schedules & Check Kaldik Status
       const { items, isKbmDisabled, lockReason } = await this.getAttendanceForDate(
         todayStr,
-        params.academicYearId || "",
-        params.semesterId || ""
+        ayId,
+        semId
       );
 
+      console.log("[QR Audit Step 5] Today's Schedules Count:", items.length, "Kaldik Disabled:", isKbmDisabled);
+
       if (isKbmDisabled) {
+        console.warn("[QR Audit Step 5 FAILED] KBM Disabled by Kalender Akademik:", lockReason);
         return {
           success: false,
           message: `Check-in tidak dapat dilakukan: ${lockReason || "KBM Ditiadakan Hari Ini"}.`
@@ -1202,106 +1311,158 @@ export const teacherTeachingAttendanceService = {
       }
 
       if (items.length === 0) {
+        console.warn("[QR Audit Step 5 FAILED] No schedules found for today (Day:", getIndonesianDayName(todayStr), ")");
         return {
           success: false,
-          message: "Tidak ada jadwal pelajaran yang terdaftar untuk hari ini."
+          message: `Tidak ada jadwal pelajaran master yang terdaftar untuk hari ${getIndonesianDayName(todayStr)}.`
         };
       }
 
-      // 4. Find schedules matching current logged in teacher
-      const currentTeacherNameClean = (params.currentUser.name || "").toLowerCase().trim();
+      // 6. Filter Today's Schedules for Logged-In Teacher
+      const currentTeacherName = (params.currentUser.name || "").trim();
+      const currentTeacherNameNorm = normalizeTeacherName(currentTeacherName);
       const currentTeacherId = params.currentUser.teacherId || params.currentUser.id;
 
+      console.log("[QR Audit Step 6] Matching Teacher Schedule for:", {
+        currentTeacherName,
+        currentTeacherNameNorm,
+        currentTeacherId,
+        userId: params.currentUser.id
+      });
+
       const teacherTodayItems = items.filter(item => {
-        const matchesId = (item.teacherId && item.teacherId === currentTeacherId) || (item.substituteTeacherId && item.substituteTeacherId === currentTeacherId);
-        const matchesName = (item.teacherName || "").toLowerCase().trim() === currentTeacherNameClean || (item.substituteTeacherName || "").toLowerCase().trim() === currentTeacherNameClean;
+        const itemTeacherId = item.teacherId || "";
+        const itemSubTeacherId = item.substituteTeacherId || "";
+        const matchesId =
+          itemTeacherId === currentTeacherId ||
+          itemSubTeacherId === currentTeacherId ||
+          itemTeacherId === params.currentUser.id ||
+          itemSubTeacherId === params.currentUser.id;
+
+        const itemTeacherNameNorm = normalizeTeacherName(item.teacherName);
+        const itemSubTeacherNameNorm = normalizeTeacherName(item.substituteTeacherName);
+
+        const matchesName =
+          (itemTeacherNameNorm && (itemTeacherNameNorm === currentTeacherNameNorm || itemTeacherNameNorm.includes(currentTeacherNameNorm) || currentTeacherNameNorm.includes(itemTeacherNameNorm))) ||
+          (itemSubTeacherNameNorm && (itemSubTeacherNameNorm === currentTeacherNameNorm || itemSubTeacherNameNorm.includes(currentTeacherNameNorm) || currentTeacherNameNorm.includes(itemSubTeacherNameNorm)));
+
         return matchesId || matchesName;
       });
 
+      console.log("[QR Audit Step 6] Teacher's Today Schedules Count:", teacherTodayItems.length);
+
       if (teacherTodayItems.length === 0) {
+        console.warn("[QR Audit Step 6 FAILED] Teacher has no schedules today:", currentTeacherName);
         return {
           success: false,
-          message: `Akun Anda (${params.currentUser.name}) tidak memiliki jadwal mengajar pada hari ini.`
+          message: `Akun Anda (${currentTeacherName}) tidak memiliki jadwal mengajar terdaftar pada hari ${getIndonesianDayName(todayStr)}.`
         };
       }
 
-      // 5. Validate whether teacher has schedule in the SCANNED class today
+      // 7. Validate Teacher Schedule in the SCANNED Class
       const classTeacherItems = teacherTodayItems.filter(item => {
         if (matchedClass) {
-          if (item.classId === matchedClass.id) return true;
+          if (item.classId === matchedClass.id || (matchedClass as any).classId === item.classId) return true;
         }
-        const itemClassClean = (item.className || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-        return itemClassClean === cleanTarget || itemClassClean.includes(cleanTarget) || cleanTarget.includes(itemClassClean);
+        if (parsedJson?.classId && item.classId === parsedJson.classId) return true;
+
+        const itemClassNorm = normalizeClassName(item.className);
+        const targetClassNorm = normTargetClass;
+
+        return itemClassNorm === targetClassNorm || itemClassNorm.includes(targetClassNorm) || targetClassNorm.includes(itemClassNorm);
       });
 
+      console.log("[QR Audit Step 7] Scanned Class Schedule Count for Teacher:", classTeacherItems.length, "in Class:", targetClassName);
+
       if (classTeacherItems.length === 0) {
+        console.warn("[QR Audit Step 7 FAILED] Teacher has no schedule in class:", targetClassName);
         return {
           success: false,
-          message: `Anda tidak memiliki jadwal mengajar pada kelas ${targetClassName}.`
+          message: `Anda (${currentTeacherName}) tidak memiliki jadwal mengajar pada kelas ${targetClassName} pada hari ${getIndonesianDayName(todayStr)}.`
         };
       }
 
-      // 6. Validate current time against schedule time slots
+      // 8. Session Selection (Active Check-In Check & Time Slot Matching)
       let selectedScheduleItem: TeacherTeachingAttendance | null = null;
       let isLateCheckIn = false;
 
-      for (const item of classTeacherItems) {
-        let startM = 0;
-        let endM = 0;
+      // Check if there is an active checked-in session in this class that needs Check-Out
+      const activeCheckedInItem = classTeacherItems.find(item => {
+        if (item.checkInLogs && item.checkInLogs.length > 0) {
+          return item.checkInLogs.some(l => !l.checkOut);
+        }
+        return item.checkInTime && !item.checkOutTime;
+      });
 
-        if (item.timeSlot && item.timeSlot.includes("-")) {
-          const [startStr, endStr] = item.timeSlot.split("-").map(s => s.trim());
-          startM = parseTimeToMinutes(startStr);
-          endM = parseTimeToMinutes(endStr);
-        } else {
-          // Default period time estimations based on sequence if timeSlot is missing
-          const defaultStartHour = 7 + Math.floor((item.sequence - 1) * 0.75);
-          const defaultStartMin = ((item.sequence - 1) * 45) % 60;
-          startM = defaultStartHour * 60 + defaultStartMin;
-          endM = startM + 45;
+      if (activeCheckedInItem) {
+        selectedScheduleItem = activeCheckedInItem;
+        console.log("[QR Audit Step 8] Found active checked-in session needing CHECK-OUT:", selectedScheduleItem.className, selectedScheduleItem.jp);
+      } else {
+        // Evaluate time slots for new CHECK-IN
+        for (const item of classTeacherItems) {
+          let startM = 0;
+          let endM = 0;
+
+          if (item.timeSlot && item.timeSlot.includes("-")) {
+            const [startStr, endStr] = item.timeSlot.split("-").map(s => s.trim());
+            startM = parseTimeToMinutes(startStr);
+            endM = parseTimeToMinutes(endStr);
+          } else {
+            const defaultStartHour = 7 + Math.floor((item.sequence - 1) * 0.75);
+            const defaultStartMin = ((item.sequence - 1) * 45) % 60;
+            startM = defaultStartHour * 60 + defaultStartMin;
+            endM = startM + 45;
+          }
+
+          const earliestCheckInM = startM - 20; // 20 mins tolerance before period
+          const latestValidM = endM + 60; // Up to 60 mins tolerance after period end
+
+          if (currentM >= earliestCheckInM && currentM <= latestValidM) {
+            selectedScheduleItem = item;
+            if (currentM > startM + 15) {
+              isLateCheckIn = true;
+            }
+            console.log("[QR Audit Step 8] Selected session by time window:", item.className, item.jp, "Start:", startM, "End:", endM, "Late:", isLateCheckIn);
+            break;
+          }
         }
 
-        const earliestCheckInM = startM - 15; // 15 mins tolerance before
-        const latestValidM = endM + 30; // Up to 30 mins after period end
-
-        if (currentM >= earliestCheckInM && currentM <= latestValidM) {
-          selectedScheduleItem = item;
-          if (currentM > startM + 15) {
-            isLateCheckIn = true;
+        if (!selectedScheduleItem) {
+          // If no session matched exact window, pick first uncompleted session in this class
+          const uncompleted = classTeacherItems.find(i => !i.checkOutTime);
+          if (uncompleted) {
+            let startStr = "07:30";
+            if (uncompleted.timeSlot && uncompleted.timeSlot.includes("-")) {
+              startStr = uncompleted.timeSlot.split("-")[0].trim();
+            }
+            const startM = parseTimeToMinutes(startStr);
+            if (currentM < startM - 20) {
+              console.warn("[QR Audit Step 8 FAILED] Check-in attempted too early");
+              return {
+                success: false,
+                message: `Terlalu awal. Check-In kelas ${uncompleted.className} (${uncompleted.jp}) baru dapat dilakukan 20 menit sebelum jam ${startStr}.`
+              };
+            }
+            selectedScheduleItem = uncompleted;
+            if (currentM > startM + 15) {
+              isLateCheckIn = true;
+            }
+            console.log("[QR Audit Step 8] Selected fallback uncompleted session:", selectedScheduleItem.className, selectedScheduleItem.jp);
+          } else {
+            selectedScheduleItem = classTeacherItems[0];
           }
-          break;
         }
       }
 
-      // If no schedule matched the current time window, pick the closest schedule if only 1 exists, or return window error
       if (!selectedScheduleItem) {
-        if (classTeacherItems.length === 1) {
-          // Check if scan is way early or way late
-          const single = classTeacherItems[0];
-          let startStr = "07:30";
-          if (single.timeSlot && single.timeSlot.includes("-")) {
-            startStr = single.timeSlot.split("-")[0].trim();
-          }
-          const startM = parseTimeToMinutes(startStr);
-          if (currentM < startM - 15) {
-            return {
-              success: false,
-              message: `Terlalu awal. Check-In kelas ${single.className} (${single.jp}) baru dapat dilakukan 15 menit sebelum jam ${startStr}.`
-            };
-          }
-          selectedScheduleItem = single;
-          if (currentM > startM + 15) {
-            isLateCheckIn = true;
-          }
-        } else {
-          return {
-            success: false,
-            message: `Tidak ada jadwal mengajar di kelas ${targetClassName} pada jam ${currentTimeStr}.`
-          };
-        }
+        console.warn("[QR Audit Step 8 FAILED] Unable to resolve schedule session for class:", targetClassName);
+        return {
+          success: false,
+          message: `Sesi jadwal mengajar di kelas ${targetClassName} tidak dapat ditentukan.`
+        };
       }
 
-      // 7. Perform Check-In or Check-Out logic on selectedScheduleItem
+      // 9. Execute Check-In or Check-Out Transaction
       const logs = selectedScheduleItem.checkInLogs || [];
       const activeLogIndex = logs.findIndex(l => !l.checkOut);
 
@@ -1322,7 +1483,8 @@ export const teacherTeachingAttendanceService = {
         selectedScheduleItem.checkInLogs = logs;
         selectedScheduleItem.updatedAt = new Date().toISOString();
 
-        returnMsg = `CHECK OUT Berhasil di Kelas ${selectedScheduleItem.className} (${selectedScheduleItem.jp}). Durasi mengajar: ${duration} menit.`;
+        returnMsg = `CHECK OUT Berhasil di Kelas ${selectedScheduleItem.className} (${selectedScheduleItem.jp} - ${selectedScheduleItem.subjectName}). Durasi mengajar: ${duration} menit.`;
+        console.log("[QR Audit Step 9] CHECK OUT SUCCESS:", returnMsg);
       } else {
         // --- CHECK IN FLOW ---
         action = "CHECK_IN";
@@ -1335,7 +1497,8 @@ export const teacherTeachingAttendanceService = {
         selectedScheduleItem.status = isLateCheckIn ? "Terlambat" : "Hadir Mengajar";
         selectedScheduleItem.updatedAt = new Date().toISOString();
 
-        returnMsg = `CHECK IN Berhasil di Kelas ${selectedScheduleItem.className} (${selectedScheduleItem.jp})${isLateCheckIn ? " [Terlambat]" : ""}.`;
+        returnMsg = `CHECK IN Berhasil di Kelas ${selectedScheduleItem.className} (${selectedScheduleItem.jp} - ${selectedScheduleItem.subjectName})${isLateCheckIn ? " [Status: Terlambat]" : ""}.`;
+        console.log("[QR Audit Step 9] CHECK IN SUCCESS:", returnMsg);
       }
 
       // Save updated attendance record to Firestore
@@ -1347,17 +1510,20 @@ export const teacherTeachingAttendanceService = {
         `QR Code ${action}: ${currentTimeStr}`
       );
 
+      console.log("[QR Audit Step 10] Record Saved to Firestore successfully. Done!");
+      console.log("==================================================");
+
       return {
         success: true,
         action,
         message: returnMsg,
         record: selectedScheduleItem
       };
-    } catch (error) {
-      console.error("Error processing QR check-in:", error);
+    } catch (error: any) {
+      console.error("[QR Audit ERROR] Exception in processQrCheckIn:", error);
       return {
         success: false,
-        message: "Gagal memproses QR Code. Silakan coba beberapa saat lagi."
+        message: `Gagal memproses QR Code: ${error?.message || "Terjadi kesalahan internal server."}`
       };
     }
   },

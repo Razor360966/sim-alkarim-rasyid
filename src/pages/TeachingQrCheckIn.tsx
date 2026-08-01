@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { Link } from "react-router-dom";
 import { Html5Qrcode, Html5QrcodeScannerState } from "html5-qrcode";
 import { 
   QrCode, 
@@ -16,7 +17,8 @@ import {
   Sparkles,
   Info,
   Check,
-  ChevronRight
+  ChevronRight,
+  Users
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { teacherTeachingAttendanceService, getTodayDateStr } from "../services/teacherTeachingAttendance.service";
@@ -430,6 +432,52 @@ export const TeachingQrCheckInPage: React.FC = () => {
               )}
             </div>
 
+            {/* Manual QR Simulation for Testing */}
+            <div className="p-4 bg-slate-50 dark:bg-zinc-850 rounded-2xl border border-slate-200 dark:border-zinc-800 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-700 dark:text-zinc-300 flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-amber-500" />
+                  Simulasi Scan QR Kelas (Pengujian / Alt):
+                </span>
+                <span className="text-[10px] text-slate-400">Gunakan jika tanpa kamera</span>
+              </div>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <select
+                  value={selectedManualClass}
+                  onChange={(e) => setSelectedManualClass(e.target.value)}
+                  className="flex-1 px-3 py-2 bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-xl text-xs font-medium text-slate-800 dark:text-zinc-200 shadow-xs"
+                >
+                  <option value="">-- Pilih Kelas untuk Simulasi QR --</option>
+                  {classes.map(c => (
+                    <option
+                      key={c.id || c.name}
+                      value={JSON.stringify({
+                        type: "SCHOOL_CLASS_QR",
+                        classId: c.id,
+                        className: c.name,
+                        roomCode: c.roomCode || ""
+                      })}
+                    >
+                      {c.name} {c.roomCode ? `(${c.roomCode})` : ""}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (selectedManualClass) {
+                      handleScanContent(selectedManualClass);
+                    }
+                  }}
+                  disabled={!selectedManualClass || processing}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>{processing ? "Memproses..." : "Proses QR"}</span>
+                </button>
+              </div>
+            </div>
+
             {/* Scan Result Feedback Alert Box */}
             {scanResult && (
               <div className={`p-5 rounded-2xl border transition-all animate-fade-in ${
@@ -450,7 +498,9 @@ export const TeachingQrCheckInPage: React.FC = () => {
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
                       <span className="font-black uppercase tracking-wider text-xs">
-                        {scanResult.type === "success" ? `BERHASIL ${scanResult.action}` : "Gagal / Notifikasi Validasi"}
+                        {scanResult.type === "success"
+                          ? scanResult.action === "CHECK_OUT" ? "BERHASIL CHECK OUT" : "BERHASIL CHECK IN"
+                          : "GAGAL VALIDASI CHECK-IN / CHECK-OUT"}
                       </span>
                     </div>
                     <p className="text-xs font-semibold leading-relaxed">
@@ -572,6 +622,16 @@ export const TeachingQrCheckInPage: React.FC = () => {
                           Durasi Mengajar: {sch.teachingDurationMinutes} Menit
                         </div>
                       )}
+
+                      <div className="pt-1 text-right">
+                        <Link
+                          to={`/student-attendance`}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 rounded-lg transition-colors"
+                        >
+                          <Users className="w-3.5 h-3.5" />
+                          Absensi Siswa Kelas Ini
+                        </Link>
+                      </div>
                     </div>
                   );
                 })}

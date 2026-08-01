@@ -172,6 +172,7 @@ export const MainLayout: React.FC = () => {
 
     // Monitoring Pembelajaran
     { name: "Scan QR Mengajar", path: "/teaching-qr-checkin", icon: QrCode, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "tata usaha", "operator", "ketua yayasan"], group: "Monitoring Pembelajaran" },
+    { name: "Absensi Siswa / Santri", path: "/student-attendance", icon: Users, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Monitoring Pembelajaran" },
     { name: "Absensi Mengajar Guru", path: "/teacher-teaching-attendance", icon: ClipboardList, roles: ["admin", "wakil kepala sekolah", "kepala sekolah", "pimpinan", "ketua yayasan", "operator"], group: "Monitoring Pembelajaran" },
 
     // Perencanaan Pembelajaran

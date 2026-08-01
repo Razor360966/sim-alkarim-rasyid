@@ -39,6 +39,7 @@ import {
 import { 
   lessonPeriodService 
 } from "../services/lessonPeriod.service";
+import { StudentAttendanceModal } from "../components/StudentAttendanceModal";
 import { 
   TeachingJournal, 
   StudentAttendance, 
@@ -190,6 +191,7 @@ export const TeachingJournals: React.FC = () => {
     alpha: 0,
     total: 0
   });
+  const [isStudentAttendanceModalOpen, setIsStudentAttendanceModalOpen] = useState<boolean>(false);
 
   // Custom Verification State & Curriculum Restrictions
   const [verifyStatus, setVerifyStatus] = useState<"Disetujui" | "Ditolak">("Disetujui");
@@ -1266,14 +1268,23 @@ export const TeachingJournals: React.FC = () => {
 
             {/* Attendance Aggregate Input Section */}
             <div className="p-5 bg-slate-50 dark:bg-zinc-800/40 border border-slate-200 dark:border-zinc-800 rounded-2xl space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-200 dark:border-zinc-800 pb-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200 dark:border-zinc-800 pb-2 gap-2">
                 <span className="text-sm font-bold text-slate-800 dark:text-zinc-200 uppercase flex items-center gap-2">
                   <Users className="h-4.5 w-4.5 text-blue-500" />
                   Presensi & Kehadiran Kelas
                 </span>
-                <span className="text-xs text-slate-500 font-bold bg-white dark:bg-zinc-900 border border-slate-150 dark:border-zinc-800 px-2.5 py-1 rounded-xl">
-                  Total Terisi: {attendance.total} siswa
-                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsStudentAttendanceModalOpen(true)}
+                    className="px-3 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 rounded-xl transition-all shadow-xs flex items-center gap-1.5"
+                  >
+                    📋 Checklist Absensi Detail Siswa
+                  </button>
+                  <span className="text-xs text-slate-500 font-bold bg-white dark:bg-zinc-900 border border-slate-150 dark:border-zinc-800 px-2.5 py-1 rounded-xl">
+                    Total: {attendance.total} siswa
+                  </span>
+                </div>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                 <FormInput
@@ -1616,6 +1627,23 @@ export const TeachingJournals: React.FC = () => {
           </div>
         </div>
       </Dialog>
+
+      {/* Student Attendance Detail Modal */}
+      {isStudentAttendanceModalOpen && (
+        <StudentAttendanceModal
+          isOpen={isStudentAttendanceModalOpen}
+          onClose={() => setIsStudentAttendanceModalOpen(false)}
+          classId={selectedSchedule?.classId || selectedJournal?.classId || ""}
+          className={selectedSchedule?.className || selectedJournal?.className || ""}
+          date={selectedDate}
+          subjectId={selectedSchedule?.subjectId || selectedJournal?.subjectId || ""}
+          subjectName={selectedSchedule?.subjectName || selectedJournal?.subjectName || ""}
+          journalId={selectedJournal?.id || ""}
+          onSaveSuccess={(sum) => {
+            setAttendance(sum);
+          }}
+        />
+      )}
     </div>
   );
 };

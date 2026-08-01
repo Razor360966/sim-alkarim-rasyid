@@ -63,6 +63,7 @@ const SupervisionInstruments = lazy(() => import("./pages/SupervisionInstruments
 const InventarisMasukSantri = lazy(() => import("./pages/InventarisMasukSantri"));
 const TeacherTeachingAttendancePage = lazy(() => import("./pages/TeacherTeachingAttendance"));
 const TeachingQrCheckInPage = lazy(() => import("./pages/TeachingQrCheckIn").then(m => ({ default: m.TeachingQrCheckInPage })));
+const StudentAttendancePage = lazy(() => import("./pages/StudentAttendance").then(m => ({ default: m.StudentAttendancePage })));
 const AboutApp = lazy(() => import("./pages/AboutApp"));
 const OfflinePage = lazy(() => import("./pages/OfflinePage"));
 const NotFound = lazy(() => import("./pages/NotFound"));
@@ -165,9 +166,10 @@ export default function App() {
                         {/* Inventaris Masuk Santri */}
                         <Route path="inventaris-santri" element={<InventarisMasukSantri />} />
 
-                        {/* Monitoring Pembelajaran - Absensi Mengajar Guru */}
+                        {/* Monitoring Pembelajaran - Absensi Mengajar Guru & Siswa */}
                         <Route path="teacher-teaching-attendance" element={<TeacherTeachingAttendancePage />} />
                         <Route path="teaching-qr-checkin" element={<TeachingQrCheckInPage />} />
+                        <Route path="student-attendance" element={<StudentAttendancePage />} />
                       </Route>
 
                       {/* 404 Catch All Route */}

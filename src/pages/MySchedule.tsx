@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import { Loading } from "../components/Loading";
@@ -395,7 +395,7 @@ export const MySchedule: React.FC = () => {
                       </div>
 
                       {/* Attendance Summary */}
-                      <div className="mt-4 pt-3 border-t border-slate-100 dark:border-zinc-850 flex items-center justify-between text-[10px]">
+                      <div className="mt-4 pt-3 border-t border-slate-100 dark:border-zinc-850 flex flex-col sm:flex-row items-start sm:items-center justify-between text-[10px] gap-2">
                         <div className="text-slate-400">
                           {s.journalToday ? (
                             <span>
@@ -408,8 +408,17 @@ export const MySchedule: React.FC = () => {
                             <span className="text-slate-400 dark:text-zinc-500 italic">Data kehadiran belum dimasukkan</span>
                           )}
                         </div>
-                        <div className="flex items-center text-indigo-600 dark:text-blue-400 font-bold group-hover:translate-x-1 transition-transform">
-                          {s.status === "filled" ? "Lihat Jurnal" : "Isi Jurnal"} <ChevronRight className="h-3.5 w-3.5" />
+                        <div className="flex items-center gap-2">
+                          <Link
+                            to={`/student-attendance`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="px-2 py-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 rounded-lg text-[10px] font-bold transition-colors"
+                          >
+                            📋 Absensi Siswa
+                          </Link>
+                          <div className="flex items-center text-indigo-600 dark:text-blue-400 font-bold group-hover:translate-x-1 transition-transform">
+                            {s.status === "filled" ? "Lihat Jurnal" : "Isi Jurnal"} <ChevronRight className="h-3.5 w-3.5" />
+                          </div>
                         </div>
                       </div>
                     </div>
