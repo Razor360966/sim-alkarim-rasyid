@@ -280,13 +280,17 @@ export const TeachingQrCheckInPage: React.FC = () => {
     setProcessing(true);
 
     try {
+      const userUid = user.uid || user.userId || "";
+      const userName = user.displayName || user.name || "Guru";
+
       const res = await teacherTeachingAttendanceService.processQrCheckIn({
         scannedContent,
         currentUser: {
-          id: user.id,
-          name: user.name,
-          teacherId: user.teacherId,
-          role: user.role
+          id: userUid,
+          uid: userUid,
+          name: userName,
+          teacherId: user.teacherId || "",
+          role: user.role || ""
         },
         academicYearId: activeAyId,
         semesterId: activeSemId

@@ -12,7 +12,7 @@ import {
   addDoc,
   serverTimestamp 
 } from "firebase/firestore";
-import { db, handleFirestoreError, OperationType } from "../firebase/config";
+import { db, auth, handleFirestoreError, OperationType } from "../firebase/config";
 import { 
   TeacherTeachingAttendance, 
   AttendanceDailyStats, 
@@ -33,6 +33,58 @@ import { semesterService } from "./semester.service";
 const COLLECTION_NAME = "teacher_teaching_attendances";
 const AUDIT_LOGS_COLLECTION = "teacher_attendance_audit_logs";
 const SCHEDULE_EXCHANGES_COLLECTION = "schedule_exchanges";
+
+/**
+ * Recursively removes all `undefined` values from an object or array.
+ * Firestore will throw "Unsupported field value: undefined" if any property is undefined.
+ */
+export function sanitizeFirestorePayload<T extends Record<string, any>>(data: T): T {
+  if (data === null || typeof data !== "object") {
+    return data;
+  }
+
+  const cleaned: Record<string, any> = {};
+
+  for (const key of Object.keys(data)) {
+    const val = data[key];
+    if (val === undefined) {
+      continue;
+    }
+    if (val !== null && typeof val === "object" && !(val instanceof Date)) {
+      if (Array.isArray(val)) {
+        cleaned[key] = val.map(item =>
+          item !== null && typeof item === "object" ? sanitizeFirestorePayload(item) : item
+        );
+      } else {
+        cleaned[key] = sanitizeFirestorePayload(val);
+      }
+    } else {
+      cleaned[key] = val;
+    }
+  }
+
+  return cleaned as T;
+}
+
+/**
+ * Resolves Firebase Authentication UID safely with multiple fallbacks
+ */
+export function resolveUserId(providedUserId?: string | null, currentUserObj?: any): string {
+  if (providedUserId && typeof providedUserId === "string" && providedUserId.trim() !== "" && providedUserId !== "undefined") {
+    return providedUserId.trim();
+  }
+  if (currentUserObj) {
+    const fromObj = currentUserObj.uid || currentUserObj.userId || currentUserObj.id;
+    if (fromObj && typeof fromObj === "string" && fromObj.trim() !== "" && fromObj !== "undefined") {
+      return fromObj.trim();
+    }
+  }
+  const authUid = auth?.currentUser?.uid;
+  if (authUid && typeof authUid === "string" && authUid.trim() !== "") {
+    return authUid.trim();
+  }
+  return "";
+}
 
 export function getIndonesianDayName(dateStr: string): string {
   if (!dateStr) return "Senin";
@@ -402,6 +454,12 @@ export const teacherTeachingAttendanceService = {
       const now = new Date().toISOString();
       const targetDateB = record.dateB || record.date;
       const colRef = collection(db, SCHEDULE_EXCHANGES_COLLECTION);
+      const resolvedUid = resolveUserId(userId);
+
+      if (!resolvedUid) {
+        throw new Error("Gagal menyimpan Tukar Jadwal: Identitas Pengguna (createdByUserId / Firebase Auth UID) tidak ditemukan.");
+      }
+
       const newExchange: ScheduleExchangeRecord = {
         date: record.date || "",
         dateB: targetDateB,
@@ -419,10 +477,10 @@ export const teacherTeachingAttendanceService = {
         jpB: record.jpB || "",
         reason: record.reason || "",
         createdAt: now,
-        createdByUserId: userId || "",
-        createdByUserName: userName || ""
+        createdByUserId: resolvedUid,
+        createdByUserName: userName || auth?.currentUser?.displayName || "Pengguna"
       };
-      await addDoc(colRef, newExchange);
+      await addDoc(colRef, sanitizeFirestorePayload(newExchange));
 
       // Fetch existing attendances for target date A to apply swapped status
       const { items: itemsA } = await this.getAttendanceForDate(record.date, "", "");
@@ -437,7 +495,7 @@ export const teacherTeachingAttendanceService = {
       await this.saveAttendanceForDate(
         record.date,
         itemsA,
-        userId,
+        resolvedUid,
         userName,
         `Tukar Jadwal: ${record.reason}`
       );
@@ -455,7 +513,7 @@ export const teacherTeachingAttendanceService = {
           await this.saveAttendanceForDate(
             targetDateB,
             itemsB,
-            userId,
+            resolvedUid,
             userName,
             `Tukar Jadwal: ${record.reason}`
           );
@@ -648,41 +706,53 @@ export const teacherTeachingAttendanceService = {
       const existingSnap = await getDoc(ref);
       const existingData = existingSnap.exists() ? existingSnap.data() : null;
 
-      const isSusulan = isPastDate || (existingData && existingData.recordedByUserId !== userId);
+      const resolvedUid = resolveUserId(userId);
+
+      // Validate recordedByUserId before proceeding to prevent Firestore undefined error
+      if (!resolvedUid) {
+        console.error("[Firestore Save Error] recordedByUserId is empty or undefined!", {
+          providedUserId: userId,
+          authCurrentUser: auth?.currentUser,
+          item
+        });
+        throw new Error("Gagal menyimpan absensi: Identitas Pengguna (recordedByUserId / Firebase Auth UID) tidak ditemukan. Silakan login ulang.");
+      }
+
+      const isSusulan = isPastDate || (existingData && existingData.recordedByUserId !== resolvedUid);
       const previousStatus = existingData ? existingData.status : "Belum Diverifikasi";
 
-      const payload: any = {};
-      Object.keys({
+      const rawPayload: any = {
         ...item,
         id: docId,
         date: dateStr,
         isInputSusulan: isSusulan ? true : (item.isInputSusulan || false),
-        recordedByUserId: userId,
-        recordedByUserName: userName,
+        recordedByUserId: resolvedUid,
+        recordedByUserName: userName || auth?.currentUser?.displayName || "Pengguna",
         updatedAt: timestamp,
         createdAt: item.createdAt || timestamp
-      }).forEach(key => {
-        const val = (item as any)[key];
-        if (val !== undefined) payload[key] = val;
-      });
-      payload.id = docId;
-      payload.date = dateStr;
-      payload.isInputSusulan = isSusulan ? true : (item.isInputSusulan || false);
-      payload.recordedByUserId = userId;
-      payload.recordedByUserName = userName;
-      payload.updatedAt = timestamp;
-      payload.createdAt = item.createdAt || timestamp;
+      };
+
+      const payload = sanitizeFirestorePayload(rawPayload);
+
+      // Detailed audit logging before calling setDoc
+      console.log("==================================================");
+      console.log("[Firestore Save Audit] Saving Single Session Attendance");
+      console.log("[Firestore Save Audit] Passed userId parameter:", userId);
+      console.log("[Firestore Save Audit] auth.currentUser:", auth?.currentUser ? { uid: auth.currentUser.uid, email: auth.currentUser.email } : null);
+      console.log("[Firestore Save Audit] Final recordedByUserId:", payload.recordedByUserId);
+      console.log("[Firestore Save Audit] Sanitized payload object:", payload);
+      console.log("==================================================");
 
       await setDoc(ref, payload, { merge: true });
 
       // Record audit log if past date or status changed
       if (isPastDate || (existingData && previousStatus !== item.status)) {
         const auditColRef = collection(db, AUDIT_LOGS_COLLECTION);
-        const auditLog: TeacherAttendanceAuditLog = {
+        const rawAuditLog: TeacherAttendanceAuditLog = {
           attendanceDate: dateStr,
           inputTimestamp: timestamp,
-          userId,
-          userName,
+          userId: resolvedUid,
+          userName: userName || auth?.currentUser?.displayName || "Pengguna",
           scheduleId: item.scheduleId,
           teacherName: item.teacherName,
           className: item.className,
@@ -693,10 +763,10 @@ export const teacherTeachingAttendanceService = {
           reason: reason || (isPastDate ? "Input / Koreksi Susulan Sesi Tanggal Lampau" : "Perubahan Status Absensi Sesi"),
           isLateInput: isPastDate
         };
-        await addDoc(auditColRef, auditLog);
+        await addDoc(auditColRef, sanitizeFirestorePayload(rawAuditLog));
       }
 
-      await logActivity(userId, userName, "Save Single Session Attendance", `Menyimpan absensi sesi ${item.teacherName} - ${item.subjectName} (${item.className}) tanggal ${dateStr}`);
+      await logActivity(resolvedUid, userName, "Save Single Session Attendance", `Menyimpan absensi sesi ${item.teacherName} - ${item.subjectName} (${item.className}) tanggal ${dateStr}`);
     } catch (error) {
       return handleFirestoreError(error, OperationType.WRITE, COLLECTION_NAME);
     }
@@ -716,6 +786,16 @@ export const teacherTeachingAttendanceService = {
       const todayStr = getTodayDateStr();
       const isPastDate = dateStr < todayStr;
 
+      const resolvedUid = resolveUserId(userId);
+
+      if (!resolvedUid) {
+        console.error("[Firestore Save Batch Error] recordedByUserId is empty or undefined!", {
+          providedUserId: userId,
+          authCurrentUser: auth?.currentUser
+        });
+        throw new Error("Gagal menyimpan absensi batch: Identitas Pengguna (recordedByUserId / Firebase Auth UID) tidak ditemukan. Silakan login ulang.");
+      }
+
       // Fetch existing snapshot to compare previous values for audit log
       const colRef = collection(db, COLLECTION_NAME);
       const q = query(colRef, where("date", "==", dateStr));
@@ -730,40 +810,33 @@ export const teacherTeachingAttendanceService = {
         const ref = doc(db, COLLECTION_NAME, docId);
         const existingData = existingMap.get(docId);
 
-        const isSusulan = isPastDate || (existingData && existingData.recordedByUserId !== userId);
+        const isSusulan = isPastDate || (existingData && existingData.recordedByUserId !== resolvedUid);
         const previousStatus = existingData ? existingData.status : "Belum Diverifikasi";
 
-        const payload: any = {};
-        Object.keys({
+        const rawPayload: any = {
           ...item,
           id: docId,
           date: dateStr,
           isInputSusulan: isSusulan ? true : (item.isInputSusulan || false),
-          recordedByUserId: userId,
-          recordedByUserName: userName,
+          recordedByUserId: resolvedUid,
+          recordedByUserName: userName || auth?.currentUser?.displayName || "Pengguna",
           updatedAt: timestamp,
           createdAt: item.createdAt || timestamp
-        }).forEach(key => {
-          const val = (item as any)[key];
-          if (val !== undefined) payload[key] = val;
-        });
-        payload.id = docId;
-        payload.date = dateStr;
-        payload.isInputSusulan = isSusulan ? true : (item.isInputSusulan || false);
-        payload.recordedByUserId = userId;
-        payload.recordedByUserName = userName;
-        payload.updatedAt = timestamp;
-        payload.createdAt = item.createdAt || timestamp;
+        };
+
+        const payload = sanitizeFirestorePayload(rawPayload);
+
+        console.log(`[Firestore Batch Audit] Preparing docId: ${docId}, recordedByUserId: ${payload.recordedByUserId}`);
 
         batch.set(ref, payload, { merge: true });
 
         // Record audit log if past date or status changed
         if (isPastDate || (existingData && previousStatus !== item.status)) {
-          auditLogs.push({
+          auditLogs.push(sanitizeFirestorePayload({
             attendanceDate: dateStr,
             inputTimestamp: timestamp,
-            userId,
-            userName,
+            userId: resolvedUid,
+            userName: userName || auth?.currentUser?.displayName || "Pengguna",
             scheduleId: item.scheduleId,
             teacherName: item.teacherName,
             className: item.className,
@@ -773,9 +846,16 @@ export const teacherTeachingAttendanceService = {
             newStatus: item.status,
             reason: reason || (isPastDate ? "Input / Koreksi Susulan Tanggal Lampau" : "Perubahan Status Absensi"),
             isLateInput: isPastDate
-          });
+          }));
         }
       });
+
+      console.log("==================================================");
+      console.log("[Firestore Batch Commit Audit]");
+      console.log("[Firestore Batch Commit Audit] Total items:", items.length);
+      console.log("[Firestore Batch Commit Audit] auth.currentUser:", auth?.currentUser ? { uid: auth.currentUser.uid, email: auth.currentUser.email } : null);
+      console.log("[Firestore Batch Commit Audit] Resolved recordedByUserId:", resolvedUid);
+      console.log("==================================================");
 
       await batch.commit();
 
@@ -785,7 +865,7 @@ export const teacherTeachingAttendanceService = {
         await Promise.all(auditPromises);
       }
 
-      await logActivity(userId, userName, "Save Attendance", `Menyimpan ${items.length} data absensi mengajar tanggal ${dateStr}${isPastDate ? ' (Input Susulan)' : ''}`);
+      await logActivity(resolvedUid, userName, "Save Attendance", `Menyimpan ${items.length} data absensi mengajar tanggal ${dateStr}${isPastDate ? ' (Input Susulan)' : ''}`);
     } catch (error) {
       return handleFirestoreError(error, OperationType.WRITE, COLLECTION_NAME);
     }
@@ -1163,7 +1243,7 @@ export const teacherTeachingAttendanceService = {
   // Process Teaching Check-in & Check-out via Static Class QR Code
   async processQrCheckIn(params: {
     scannedContent: string;
-    currentUser: { id: string; name: string; teacherId?: string; role?: string };
+    currentUser: { id?: string; uid?: string; userId?: string; name: string; teacherId?: string; role?: string };
     academicYearId?: string;
     semesterId?: string;
     customTimeStr?: string; // Optional override for testing or exact time
@@ -1174,17 +1254,21 @@ export const teacherTeachingAttendanceService = {
     record?: TeacherTeachingAttendance;
   }> {
     try {
+      const currentUserId = resolveUserId(params.currentUser?.uid || (params.currentUser as any)?.userId || params.currentUser?.id, params.currentUser);
+
       console.log("==================================================");
       console.log("[QR Audit Step 1] Inisiasi Scan QR Check-In / Check-Out");
       console.log("[QR Audit Step 1] User Current:", params.currentUser);
+      console.log("[QR Audit Step 1] auth.currentUser:", auth?.currentUser ? { uid: auth.currentUser.uid, email: auth.currentUser.email } : null);
+      console.log("[QR Audit Step 1] Resolved currentUserId (Firebase Auth UID):", currentUserId);
       console.log("[QR Audit Step 1] Raw Scanned Content:", params.scannedContent);
       console.log("[QR Audit Step 1] Context AY:", params.academicYearId, "Semester:", params.semesterId);
 
-      if (!params.currentUser || (!params.currentUser.id && !params.currentUser.teacherId)) {
-        console.warn("[QR Audit Step 1 FAILED] User session invalid or missing ID");
+      if (!currentUserId) {
+        console.warn("[QR Audit Step 1 FAILED] User session invalid or missing Firebase Auth UID");
         return {
           success: false,
-          message: "Sesi pengguna tidak valid. Silakan login ulang."
+          message: "Sesi pengguna tidak valid (Firebase Auth UID tidak ditemukan). Silakan login ulang."
         };
       }
 
@@ -1505,8 +1589,8 @@ export const teacherTeachingAttendanceService = {
       await this.saveSingleSessionAttendance(
         todayStr,
         selectedScheduleItem,
-        params.currentUser.id,
-        params.currentUser.name,
+        currentUserId,
+        params.currentUser.name || auth?.currentUser?.displayName || "Guru",
         `QR Code ${action}: ${currentTimeStr}`
       );
 
@@ -1537,6 +1621,16 @@ export const teacherTeachingAttendanceService = {
     userName: string;
     reason: string;
   }): Promise<void> {
+    const resolvedUid = resolveUserId(params.userId);
+
+    if (!resolvedUid) {
+      console.error("[Manual Check Out Error] userId is empty or undefined!", {
+        paramsUserId: params.userId,
+        authCurrentUser: auth?.currentUser
+      });
+      throw new Error("Gagal melakukan Check Out Manual: Identitas pengguna (Firebase Auth UID) tidak ditemukan. Silakan login ulang.");
+    }
+
     const { items } = await this.getAttendanceForDate(params.dateStr, "", "");
     const item = items.find(i => i.scheduleId === params.scheduleId);
     if (!item) {
@@ -1548,7 +1642,7 @@ export const teacherTeachingAttendanceService = {
 
     item.checkOutTime = params.manualCheckOutTime;
     item.isManualCheckOut = true;
-    item.manualCheckOutByUserId = params.userId;
+    item.manualCheckOutByUserId = resolvedUid;
     item.manualCheckOutByUserName = params.userName;
     item.manualCheckOutTime = new Date().toISOString();
     item.manualCheckOutReason = params.reason;
@@ -1567,7 +1661,7 @@ export const teacherTeachingAttendanceService = {
     await this.saveSingleSessionAttendance(
       params.dateStr,
       item,
-      params.userId,
+      resolvedUid,
       params.userName,
       `Check Out Manual: ${params.reason}`
     );

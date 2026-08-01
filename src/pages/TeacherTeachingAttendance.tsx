@@ -266,8 +266,8 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
         dateStr: selectedDate,
         scheduleId: manualCheckOutModal.item.scheduleId,
         manualCheckOutTime: manualCheckOutModal.checkOutTime,
-        userId: user?.id || "",
-        userName: user?.name || "Wakakur",
+        userId: user?.uid || user?.userId || "",
+        userName: user?.displayName || user?.name || "Wakakur",
         reason: manualCheckOutModal.reason || "Check Out Manual Wakakur"
       });
       toast("Berhasil mencatat Check Out Manual untuk " + manualCheckOutModal.item.teacherName, "success");
