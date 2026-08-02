@@ -1855,6 +1855,33 @@ export const teacherTeachingAttendanceService = {
         console.log("[QR Audit Step 9] CHECK IN SUCCESS:", returnMsg);
       }
 
+      // Ensure classId and className stored in Firestore strictly match the scanned QR class
+      if (matchedClass?.id) {
+        selectedScheduleItem.classId = matchedClass.id;
+        selectedScheduleItem.className = matchedClass.name;
+      } else if (parsedJson?.classId) {
+        selectedScheduleItem.classId = parsedJson.classId;
+        if (parsedJson?.className) {
+          selectedScheduleItem.className = parsedJson.className;
+        }
+      }
+
+      const qrClassId = parsedJson?.classId || "N/A (QR Plaintext/Non-JSON)";
+      const firestoreClassName = matchedClass?.name || targetClassName || "N/A";
+      const scheduleClassId = selectedScheduleItem.classId || "N/A";
+      const scheduleClassName = selectedScheduleItem.className || "N/A";
+      const finalSavedClassId = selectedScheduleItem.classId || "N/A";
+
+      console.log("==================================================");
+      console.log("[AUDIT TEMPORER LOGGING QR ABSENSI GURU]");
+      console.log("* QR Payload                         :", rawContent);
+      console.log("* classId dari QR                    :", qrClassId);
+      console.log("* Nama kelas dari Firestore          :", firestoreClassName);
+      console.log("* classId dari jadwal guru           :", scheduleClassId);
+      console.log("* Nama kelas dari jadwal             :", scheduleClassName);
+      console.log("* classId yang akhirnya disimpan ke Firestore:", finalSavedClassId);
+      console.log("==================================================");
+
       // Save updated attendance record to Firestore
       await this.saveSingleSessionAttendance(
         todayStr,
