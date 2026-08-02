@@ -111,14 +111,58 @@ export function normalizeClassName(clsName?: string): string {
   if (!clsName) return "";
   let clean = clsName.toLowerCase().replace(/kelas\s*/gi, "").trim();
   clean = clean
-    .replace(/^7\b/g, "vii")
-    .replace(/^8\b/g, "viii")
-    .replace(/^9\b/g, "ix")
-    .replace(/^10\b/g, "x")
-    .replace(/^11\b/g, "xi")
-    .replace(/^12\b/g, "xii")
+    .replace(/\bviii\b/gi, "8")
+    .replace(/\bvii\b/gi, "7")
+    .replace(/\bxii\b/gi, "12")
+    .replace(/\bxi\b/gi, "11")
+    .replace(/\bix\b/gi, "9")
+    .replace(/\bx\b/gi, "10")
+    .replace(/\bvi\b/gi, "6")
+    .replace(/viii/gi, "8")
+    .replace(/vii/gi, "7")
+    .replace(/xii/gi, "12")
+    .replace(/xi/gi, "11")
+    .replace(/ix/gi, "9")
+    .replace(/x/gi, "10")
+    .replace(/vi/gi, "6")
     .replace(/[^a-z0-9]/g, "");
   return clean;
+}
+
+export function isClassMatching(itemClassName?: string, targetClassName?: string): boolean {
+  if (!itemClassName || !targetClassName) return false;
+
+  const normItem = normalizeClassName(itemClassName);
+  const normTarget = normalizeClassName(targetClassName);
+
+  if (!normItem || !normTarget) return false;
+
+  // 1. Exact match (e.g. "7a" === "7a" or "7" === "7")
+  if (normItem === normTarget) return true;
+
+  // 2. Grade-level match if target or item is a pure grade number (e.g. target "7" vs item "7a")
+  const isTargetPureGrade = /^[0-9]+$/.test(normTarget);
+  const isItemPureGrade = /^[0-9]+$/.test(normItem);
+
+  if (isTargetPureGrade) {
+    if (normItem.startsWith(normTarget)) {
+      const rest = normItem.slice(normTarget.length);
+      if (!/^[0-9]/.test(rest)) {
+        return true;
+      }
+    }
+  }
+
+  if (isItemPureGrade) {
+    if (normTarget.startsWith(normItem)) {
+      const rest = normTarget.slice(normItem.length);
+      if (!/^[0-9]/.test(rest)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 export function getTodayDateStr(timeZone = "Asia/Jakarta"): string {
@@ -1504,15 +1548,17 @@ export const teacherTeachingAttendanceService = {
         const cCodeClean = (c.code || "").toLowerCase().replace(/[^a-z0-9]/g, "");
         const cIdClean = (c.id || "").toLowerCase().replace(/[^a-z0-9]/g, "");
         const cRoomClean = (c.roomCode || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-        const cNorm = normalizeClassName(c.name);
 
-        return (
+        if (
           cNameClean === cleanTarget ||
           cCodeClean === cleanTarget ||
           cIdClean === cleanTarget ||
-          (cRoomClean && cRoomClean === cleanTarget) ||
-          cNorm === normTargetClass
-        );
+          (cRoomClean && cRoomClean === cleanTarget)
+        ) {
+          return true;
+        }
+
+        return isClassMatching(c.name, targetClassIdentifier);
       });
 
       const targetClassName = matchedClass?.name || parsedJson?.className || targetClassIdentifier;
@@ -1592,10 +1638,7 @@ export const teacherTeachingAttendanceService = {
         }
         if (parsedJson?.classId && item.classId === parsedJson.classId) return true;
 
-        const itemClassNorm = normalizeClassName(item.className);
-        const targetClassNorm = normTargetClass;
-
-        return itemClassNorm === targetClassNorm || itemClassNorm.includes(targetClassNorm) || targetClassNorm.includes(itemClassNorm);
+        return isClassMatching(item.className, targetClassIdentifier);
       });
 
       console.log("[QR Audit Step 7] Scanned Class Schedule Count for Teacher:", classTeacherItems.length, "in Class:", targetClassName);
