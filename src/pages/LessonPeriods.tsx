@@ -38,7 +38,7 @@ export const LessonPeriods: React.FC = () => {
 
   // Active days list from settings
   const activeDays = useMemo(() => {
-    return settings?.activeDays || ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+    return settings?.activeDays || ["Sabtu", "Minggu", "Senin", "Selasa", "Rabu", "Kamis"];
   }, [settings]);
 
   // Filter periods based on selection

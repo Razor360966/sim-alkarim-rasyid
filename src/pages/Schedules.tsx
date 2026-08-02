@@ -195,7 +195,7 @@ export default function Schedules() {
     queryFn: () => schoolSettingsService.getSettings()
   });
 
-  const activeDays = settings?.activeDays || ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+  const activeDays = settings?.activeDays || ["Sabtu", "Minggu", "Senin", "Selasa", "Rabu", "Kamis"];
   const instructionalPeriods = lessonPeriods.filter(p => 
     p.type === LessonPeriodType.LESSON && 
     p.instructional &&
@@ -290,7 +290,7 @@ export default function Schedules() {
 
   // Active days filtered by Hari filter
   const filteredDays = useMemo(() => {
-    const activeDays = settings?.activeDays || ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+    const activeDays = settings?.activeDays || ["Sabtu", "Minggu", "Senin", "Selasa", "Rabu", "Kamis"];
     return activeDays.filter((d) => selectedDay === "ALL" || d.toLowerCase() === selectedDay.toLowerCase());
   }, [settings?.activeDays, selectedDay]);
 
@@ -590,7 +590,7 @@ export default function Schedules() {
   const handleDownloadTemplateExcel = () => {
     try {
       const templateData: any[] = [];
-      const activeDaysList = settings?.activeDays || ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+      const activeDaysList = settings?.activeDays || ["Sabtu", "Minggu", "Senin", "Selasa", "Rabu", "Kamis"];
       
       activeDaysList.forEach((day) => {
         const dayPeriods = lessonPeriods
@@ -706,7 +706,7 @@ export default function Schedules() {
       
       // Validate if day matches settings
       const dayNormalized = dayStr.toLowerCase();
-      const validDay = (settings?.activeDays || ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"])
+      const validDay = (settings?.activeDays || ["Sabtu", "Minggu", "Senin", "Selasa", "Rabu", "Kamis"])
         .find(d => d.toLowerCase() === dayNormalized);
         
       if (!validDay) {

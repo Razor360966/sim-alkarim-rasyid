@@ -2073,7 +2073,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
               const allItems = localAttendanceItems.filter(item => {
                 if (item.status === "KBM Ditiadakan") return false;
                 const evalRes = teacherTeachingAttendanceService.evaluateAttendanceApprovalStatus(item);
-                const currentStatus = item.attendanceStatus || evalRes.attendanceStatus;
+                const currentStatus = item.validatedByUserId ? (item.attendanceStatus || evalRes.attendanceStatus) : evalRes.attendanceStatus;
 
                 if (validationStatusFilter !== "ALL" && currentStatus !== validationStatusFilter) {
                   return false;
@@ -2129,9 +2129,10 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                     <tbody className="divide-y divide-slate-150 dark:divide-zinc-800 font-medium text-slate-800 dark:text-zinc-200">
                       {allItems.map((item, idx) => {
                         const evalRes = teacherTeachingAttendanceService.evaluateAttendanceApprovalStatus(item);
-                        const currentStatus = item.attendanceStatus || evalRes.attendanceStatus;
-                        const pendingReason = item.pendingReason || evalRes.pendingReason;
-                        const approvalType = item.approvalType || evalRes.approvalType;
+                        const isManuallyVal = !!item.validatedByUserId;
+                        const currentStatus = isManuallyVal ? (item.attendanceStatus || evalRes.attendanceStatus) : evalRes.attendanceStatus;
+                        const pendingReason = isManuallyVal ? (item.pendingReason || "") : evalRes.pendingReason;
+                        const approvalType = isManuallyVal ? (item.approvalType || evalRes.approvalType) : evalRes.approvalType;
                         const isChecked = !!item.id && selectedValidationIds.includes(item.id);
 
                         return (

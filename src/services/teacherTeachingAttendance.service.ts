@@ -480,6 +480,59 @@ export const teacherTeachingAttendanceService = {
       return a.sequence - b.sequence;
     });
 
+    // Spanning JP Resolution: If a teacher checked in & out in a class spanning multiple JPs
+    // (e.g. CheckIn JP 1, CheckOut JP 2), propagate attendance to all covered JPs in the time range.
+    const teacherClassSessionsMap = new Map<string, TeacherTeachingAttendance[]>();
+    items.forEach(it => {
+      if (it.teacherId && it.classId) {
+        const key = `${it.teacherId}_${it.classId}`;
+        if (!teacherClassSessionsMap.has(key)) {
+          teacherClassSessionsMap.set(key, []);
+        }
+        teacherClassSessionsMap.get(key)!.push(it);
+      }
+    });
+
+    teacherClassSessionsMap.forEach((sessionGroup) => {
+      const checkedRecords = sessionGroup.filter(s => s.checkInTime && s.checkOutTime);
+      if (checkedRecords.length === 0) return;
+
+      checkedRecords.forEach((masterRec) => {
+        const masterInM = parseTimeToMinutes(masterRec.checkInTime);
+        const masterOutM = parseTimeToMinutes(masterRec.checkOutTime);
+        if (masterInM <= 0 || masterOutM <= 0 || masterOutM <= masterInM) return;
+
+        sessionGroup.forEach((targetRec) => {
+          let targetStartM = 0;
+          let targetEndM = 0;
+          if (targetRec.timeSlot && targetRec.timeSlot.includes("-")) {
+            const [s, e] = targetRec.timeSlot.split("-").map(x => x.trim());
+            targetStartM = parseTimeToMinutes(s);
+            targetEndM = parseTimeToMinutes(e);
+          } else {
+            targetStartM = 450 + (targetRec.sequence - 1) * 45;
+            targetEndM = targetStartM + 45;
+          }
+
+          if (masterInM <= targetEndM - 10 && masterOutM >= targetStartM + 10) {
+            targetRec.checkInTime = masterRec.checkInTime;
+            targetRec.checkOutTime = masterRec.checkOutTime;
+            targetRec.checkInLogs = masterRec.checkInLogs;
+            targetRec.checkInType = masterRec.checkInType || "Scan QR";
+            targetRec.status = masterRec.status === "Terlambat" ? "Terlambat" : "Hadir Mengajar";
+            targetRec.teachingDurationMinutes = masterRec.teachingDurationMinutes;
+
+            const evalRes = teacherTeachingAttendanceService.evaluateAttendanceApprovalStatus(targetRec);
+            if (!targetRec.validatedByUserId) {
+              targetRec.attendanceStatus = evalRes.attendanceStatus;
+              targetRec.approvalType = evalRes.approvalType;
+              targetRec.pendingReason = evalRes.pendingReason;
+            }
+          }
+        });
+      });
+    });
+
     return {
       date: dateStr,
       day: dayName,
@@ -775,9 +828,10 @@ export const teacherTeachingAttendanceService = {
 
       // Evaluate approval status automatically
       const evalResult = this.evaluateAttendanceApprovalStatus(item, schoolSettings);
-      const finalAttendanceStatus = item.attendanceStatus || evalResult.attendanceStatus;
-      const finalPendingReason = item.attendanceStatus ? (item.pendingReason || "") : evalResult.pendingReason;
-      const finalApprovalType = item.approvalType || evalResult.approvalType;
+      const isManuallyValidated = !!item.validatedByUserId;
+      const finalAttendanceStatus = isManuallyValidated ? (item.attendanceStatus || evalResult.attendanceStatus) : evalResult.attendanceStatus;
+      const finalPendingReason = isManuallyValidated ? (item.pendingReason || "") : evalResult.pendingReason;
+      const finalApprovalType = isManuallyValidated ? (item.approvalType || evalResult.approvalType) : evalResult.approvalType;
 
       const rawPayload: any = {
         ...item,
@@ -1890,6 +1944,50 @@ export const teacherTeachingAttendanceService = {
         params.currentUser.name || auth?.currentUser?.displayName || "Guru",
         `QR Code ${action}: ${currentTimeStr}`
       );
+
+      // Multi-JP Spanning Save: If CHECK_OUT covers other JPs for this teacher in this class, update & save them too
+      if (action === "CHECK_OUT" && selectedScheduleItem.checkInTime) {
+        const checkInM = parseTimeToMinutes(selectedScheduleItem.checkInTime);
+        const checkOutM = parseTimeToMinutes(currentTimeStr);
+
+        for (const otherItem of classTeacherItems) {
+          if (otherItem.id === selectedScheduleItem.id || otherItem.scheduleId === selectedScheduleItem.scheduleId) continue;
+
+          let targetStartM = 0;
+          let targetEndM = 0;
+          if (otherItem.timeSlot && otherItem.timeSlot.includes("-")) {
+            const [s, e] = otherItem.timeSlot.split("-").map(x => x.trim());
+            targetStartM = parseTimeToMinutes(s);
+            targetEndM = parseTimeToMinutes(e);
+          } else {
+            targetStartM = 450 + (otherItem.sequence - 1) * 45;
+            targetEndM = targetStartM + 45;
+          }
+
+          if (checkInM <= targetEndM - 10 && checkOutM >= targetStartM + 10) {
+            otherItem.checkInTime = selectedScheduleItem.checkInTime;
+            otherItem.checkOutTime = currentTimeStr;
+            otherItem.teachingDurationMinutes = selectedScheduleItem.teachingDurationMinutes;
+            otherItem.checkInLogs = selectedScheduleItem.checkInLogs;
+            otherItem.checkInType = "Scan QR";
+            otherItem.status = selectedScheduleItem.status || "Hadir Mengajar";
+            otherItem.updatedAt = new Date().toISOString();
+
+            if (matchedClass?.id) {
+              otherItem.classId = matchedClass.id;
+              otherItem.className = matchedClass.name;
+            }
+
+            await this.saveSingleSessionAttendance(
+              todayStr,
+              otherItem,
+              currentUserId,
+              params.currentUser.name || auth?.currentUser?.displayName || "Guru",
+              `QR Code ${action} (Spanned Multi-JP): ${currentTimeStr}`
+            );
+          }
+        }
+      }
 
       console.log("[QR Audit Step 10] Record Saved to Firestore successfully. Done!");
       console.log("==================================================");

@@ -574,9 +574,23 @@ export const academicPlanningService = {
         return { isEffective: true };
       }
 
-      // 1. Direct Weekend Check (Sunday = 0)
-      if (dateObj.getDay() === 0) {
-        return { isEffective: false, notes: "Hari Libur Akhir Pekan (Minggu)" };
+      // 1. Direct Weekend Check based on activeDays (Default: Jumat is libur)
+      const indonesianDays = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+      const dayName = indonesianDays[dateObj.getDay()];
+
+      let activeDays = ["Sabtu", "Minggu", "Senin", "Selasa", "Rabu", "Kamis"];
+      try {
+        const settings = await schoolSettingsService.getSettings();
+        if (settings && settings.activeDays && settings.activeDays.length > 0) {
+          activeDays = settings.activeDays;
+        }
+      } catch (err) {
+        // Fallback to Friday libur
+      }
+
+      const isWeekend = !activeDays.some(ad => ad.toLowerCase() === dayName.toLowerCase());
+      if (isWeekend) {
+        return { isEffective: false, notes: `Hari Libur Akhir Pekan (${dayName})` };
       }
 
       // 2. Direct Calendar Event / Day Check
@@ -685,7 +699,7 @@ export const academicPlanningService = {
     daysInMonth.forEach((d) => {
       currentWeek.push(d);
       const dayName = indonesianDays[d.getDay()];
-      if (dayName === "Jumat" || d.getDate() === daysInMonth.length) {
+      if (dayName === "Jumat" || dayName === "Minggu" || d.getDate() === daysInMonth.length) {
         weeks.push(currentWeek);
         currentWeek = [];
       }
@@ -790,7 +804,7 @@ export const academicPlanningService = {
       schoolSettingsService.getSettings()
     ]);
 
-    const activeDays = settings?.activeDays || ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+    const activeDays = settings?.activeDays || ["Sabtu", "Minggu", "Senin", "Selasa", "Rabu", "Kamis"];
     const calendarDaysMap = new Map<string, AcademicEvent[]>();
     calendarDays.forEach((cd) => {
       calendarDaysMap.set(cd.date, cd.events);
