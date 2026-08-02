@@ -55,6 +55,22 @@ export const StudentAttendanceModal: React.FC<StudentAttendanceModalProps> = ({
   const [generalNotes, setGeneralNotes] = useState<string>("");
   const [filterStatus, setFilterStatus] = useState<string>("semua");
 
+  // Lock status & Audit Trail
+  const [sessionLock, setSessionLock] = useState<{
+    canInput: boolean;
+    isLocked: boolean;
+    checkInTime?: string;
+    checkOutTime?: string;
+    reason: string;
+  }>({
+    canInput: true,
+    isLocked: false,
+    reason: ""
+  });
+  const [auditReason, setAuditReason] = useState<string>("");
+
+  const isPrivileged = user?.role === "admin" || user?.role === "wakakur" || user?.role === "kepala_sekolah";
+
   useEffect(() => {
     if (isOpen && classId) {
       loadData();
@@ -64,11 +80,22 @@ export const StudentAttendanceModal: React.FC<StudentAttendanceModalProps> = ({
   const loadData = async () => {
     setLoading(true);
     try {
-      // 1. Fetch class students
+      // 1. Check Session Lock status
+      const lockRes = await studentAttendanceService.checkTeachingSessionLock(
+        date,
+        user?.teacherId || user?.id,
+        classId,
+        subjectId,
+        scheduleId,
+        isPrivileged
+      );
+      setSessionLock(lockRes);
+
+      // 2. Fetch class students
       const fetchedStudents = await studentAttendanceService.getStudentsByClass(classId);
       setStudents(fetchedStudents);
 
-      // 2. Fetch existing attendance record if available
+      // 3. Fetch existing attendance record if available
       const existingRecord = await studentAttendanceService.getAttendanceRecord(
         date, 
         classId, 
@@ -213,6 +240,17 @@ export const StudentAttendanceModal: React.FC<StudentAttendanceModalProps> = ({
       showToast("Sesi pengguna tidak valid.", "error");
       return;
     }
+
+    if (!sessionLock.canInput) {
+      showToast(sessionLock.reason || "Pengisian absensi terkunci. Anda harus QR Check-In terlebih dahulu.", "error");
+      return;
+    }
+
+    if (sessionLock.isLocked && isPrivileged && !auditReason.trim()) {
+      showToast("Wajib mengisi Alasan Perubahan Data (Audit Trail) untuk data yang sudah dikunci.", "error");
+      return;
+    }
+
     setSaving(true);
     try {
       const record = await studentAttendanceService.saveStudentAttendance(
@@ -228,10 +266,14 @@ export const StudentAttendanceModal: React.FC<StudentAttendanceModalProps> = ({
           teacherName: user.name,
           students: attendanceList,
           summary,
-          notes: generalNotes
+          notes: generalNotes,
+          isLocked: sessionLock.isLocked,
+          lockedReason: sessionLock.reason
         },
         user.id,
-        user.name
+        user.name,
+        auditReason.trim() || undefined,
+        user.role
       );
 
       showToast(`Absensi siswa kelas ${className} berhasil disimpan!`, "success");
@@ -279,16 +321,51 @@ export const StudentAttendanceModal: React.FC<StudentAttendanceModalProps> = ({
           </button>
         </div>
 
-        {/* Info Banner & Summary */}
+        {/* Info Banner & Session Lock Banner */}
         <div className="px-4 sm:px-6 pt-4 pb-2 bg-slate-50/50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-800 space-y-3">
           
-          {/* Main instruction banner fulfilling prompt */}
-          <div className="p-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50 rounded-xl flex items-start gap-2.5 text-xs text-emerald-800 dark:text-emerald-300">
-            <Info className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-            <div>
-              <span className="font-bold">Kemudahan Absensi:</span> Secara otomatis, seluruh siswa berstatus <strong className="underline">Hadir</strong>. Anda cukup menceklis kolom <strong className="text-amber-700 dark:text-amber-400">Sakit</strong> atau <strong className="text-blue-700 dark:text-blue-400">Izin</strong> untuk siswa yang tidak masuk. Siswa yang tidak terceklis otomatis dianggap <strong className="text-emerald-700 dark:text-emerald-400">Hadir</strong>.
+          {/* Lock status banner */}
+          {sessionLock.isLocked && !sessionLock.canInput ? (
+            <div className="p-3 bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 rounded-xl flex items-start gap-2.5 text-xs text-amber-900 dark:text-amber-200 font-semibold">
+              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                🔒 {sessionLock.reason}
+                <p className="font-normal text-[11px] mt-0.5 text-amber-800 dark:text-amber-300">
+                  Guru harus melakukan QR Check-In di kelas terlebih dahulu agar menu absensi siswa terbuka.
+                </p>
+              </div>
             </div>
-          </div>
+          ) : sessionLock.isLocked && isPrivileged ? (
+            <div className="p-3 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 rounded-xl flex items-start gap-2.5 text-xs text-blue-900 dark:text-blue-200">
+              <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+              <div>
+                <strong>Akses Khusus Admin / Waka Kurikulum:</strong> Sesi telah di-Check-Out. Pengeditan memerlukan pengisian alasan Audit Trail.
+              </div>
+            </div>
+          ) : (
+            <div className="p-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50 rounded-xl flex items-start gap-2.5 text-xs text-emerald-800 dark:text-emerald-300">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold">Kemudahan Absensi:</span> Secara otomatis, seluruh siswa berstatus <strong className="underline">Hadir</strong>. Anda cukup menceklis kolom <strong className="text-amber-700 dark:text-amber-400">Sakit</strong> atau <strong className="text-blue-700 dark:text-blue-400">Izin</strong> untuk siswa yang tidak masuk.
+              </div>
+            </div>
+          )}
+
+          {/* Audit Trail Input when locked & privileged */}
+          {sessionLock.isLocked && isPrivileged && (
+            <div className="p-3 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl space-y-1">
+              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200">
+                Alasan Perubahan Data (Audit Trail Wajib) <span className="text-rose-500">*</span>
+              </label>
+              <input 
+                type="text" 
+                placeholder="Contoh: Koreksi absensi susulan surat izin resmi dari wali santri..."
+                value={auditReason}
+                onChange={(e) => setAuditReason(e.target.value)}
+                className="w-full px-3 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500/20"
+              />
+            </div>
+          )}
 
           {/* Live Summary Bar */}
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center text-xs font-semibold">
@@ -542,8 +619,8 @@ export const StudentAttendanceModal: React.FC<StudentAttendanceModalProps> = ({
             <button
               type="button"
               onClick={handleSave}
-              disabled={saving || loading || students.length === 0}
-              className="px-5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 rounded-xl shadow-md transition-all flex items-center gap-2 disabled:opacity-50"
+              disabled={saving || loading || students.length === 0 || (sessionLock.isLocked && !sessionLock.canInput)}
+              className="px-5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 rounded-xl shadow-md transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {saving ? (
                 <>

@@ -1689,6 +1689,8 @@ export const teacherTeachingAttendanceService = {
       const classTeacherItems = teacherTodayItems.filter(item => {
         if (matchedClass) {
           if (item.classId === matchedClass.id || (matchedClass as any).classId === item.classId) return true;
+          if (item.className && matchedClass.name && isClassMatching(item.className, matchedClass.name)) return true;
+          return false;
         }
         if (parsedJson?.classId && item.classId === parsedJson.classId) return true;
 
@@ -1698,10 +1700,22 @@ export const teacherTeachingAttendanceService = {
       console.log("[QR Audit Step 7] Scanned Class Schedule Count for Teacher:", classTeacherItems.length, "in Class:", targetClassName);
 
       if (classTeacherItems.length === 0) {
+        const qrClassId = parsedJson?.classId || "N/A (QR Plaintext/Non-JSON)";
+        const firestoreClassName = matchedClass?.name || targetClassName || "N/A";
+        console.log("==================================================");
+        console.log("[AUDIT TEMPORER LOGGING QR ABSENSI GURU - DITOLAK: TIDAK ADA JADWAL]");
+        console.log("* QR Payload                         :", rawContent);
+        console.log("* classId dari QR                    :", qrClassId);
+        console.log("* Nama kelas dari Firestore          :", firestoreClassName);
+        console.log("* classId dari jadwal guru           : N/A (Guru tidak mengajar di kelas ini)");
+        console.log("* Nama kelas dari jadwal             : N/A (Guru tidak mengajar di kelas ini)");
+        console.log("* classId yang akhirnya disimpan ke Firestore: N/A (Data tidak diubah)");
+        console.log("==================================================");
+
         console.warn("[QR Audit Step 7 FAILED] Teacher has no schedule in class:", targetClassName);
         return {
           success: false,
-          message: `Anda (${currentTeacherName}) tidak memiliki jadwal mengajar pada kelas ${targetClassName} pada hari ${getIndonesianDayName(todayStr)}.`
+          message: `QR Code kelas ${targetClassName} dipindai, tetapi Anda (${currentTeacherName}) tidak memiliki jadwal mengajar di kelas ${targetClassName} pada hari ${getIndonesianDayName(todayStr)}.`
         };
       }
 
