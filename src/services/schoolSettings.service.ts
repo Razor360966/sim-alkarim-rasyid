@@ -9,10 +9,20 @@ import {
   addDoc
 } from "firebase/firestore";
 import { db, handleFirestoreError, OperationType } from "../firebase/config";
-import { SchoolSettings, TeachingAttendanceSettings } from "../types";
+import { SchoolSettings, TeachingAttendanceSettings, JournalTimelinessRules } from "../types";
 
 const COLLECTION_NAME = "school_settings";
 const DOCUMENT_ID = "settings";
+
+export const DEFAULT_JOURNAL_TIMELINESS_RULES: JournalTimelinessRules = {
+  veryOnTimeMinutes: 60,
+  veryOnTimeScore: 100,
+  sameDayScore: 90,
+  oneDayLateScore: 70,
+  twoToThreeDaysLateScore: 40,
+  moreThanThreeDaysLateScore: 0,
+  unfilledJournalScore: 0
+};
 
 export const DEFAULT_TEACHING_ATTENDANCE_SETTINGS: TeachingAttendanceSettings = {
   checkInToleranceMinutes: 15,
@@ -45,7 +55,8 @@ export const DEFAULT_TEACHING_ATTENDANCE_SETTINGS: TeachingAttendanceSettings = 
     pendingValidation: true,
     approval: true,
     rejection: true
-  }
+  },
+  journalTimelinessRules: DEFAULT_JOURNAL_TIMELINESS_RULES
 };
 
 export async function logSettingsActivity(
@@ -148,6 +159,10 @@ export const schoolSettingsService = {
             notifications: {
               ...DEFAULT_TEACHING_ATTENDANCE_SETTINGS.notifications,
               ...(data.teachingAttendanceSettings?.notifications || {})
+            },
+            journalTimelinessRules: {
+              ...DEFAULT_JOURNAL_TIMELINESS_RULES,
+              ...(data.teachingAttendanceSettings?.journalTimelinessRules || {})
             }
           },
           createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : data.createdAt,
@@ -221,6 +236,14 @@ export const schoolSettingsService = {
         });
       } catch (histError) {
         console.error("Failed to save settings history snapshot:", histError);
+      }
+
+      // Automatically sync Lesson Periods after updating school settings
+      try {
+        const { lessonPeriodService } = await import("./lessonPeriod.service");
+        await lessonPeriodService.syncLessonPeriods(operatorId, operatorName);
+      } catch (syncErr) {
+        console.error("Failed to auto-sync lesson periods:", syncErr);
       }
 
       return {

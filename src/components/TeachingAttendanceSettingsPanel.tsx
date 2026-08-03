@@ -56,7 +56,7 @@ export const TeachingAttendanceSettingsPanel: React.FC<TeachingAttendanceSetting
   };
 
   const [activeSubSection, setActiveSubSection] = useState<
-    "toleransi" | "approval" | "validasi" | "scan_berulang" | "jadwal_istirahat" | "qr_code" | "durasi" | "notifikasi" | "audit"
+    "toleransi" | "approval" | "validasi" | "scan_berulang" | "jadwal_istirahat" | "qr_code" | "durasi" | "notifikasi" | "ketepatan_jurnal" | "audit"
   >("toleransi");
 
   // Helper to update teachingAttendanceSettings in localSettings
@@ -129,6 +129,7 @@ export const TeachingAttendanceSettingsPanel: React.FC<TeachingAttendanceSetting
           { id: "jadwal_istirahat", label: "Waktu Istirahat", icon: Calendar },
           { id: "qr_code", label: "QR Code", icon: QrCode },
           { id: "durasi", label: "Durasi Mengajar", icon: Sliders },
+          { id: "ketepatan_jurnal", label: "Ketepatan Jurnal", icon: CheckCircle2 },
           { id: "notifikasi", label: "Notifikasi", icon: Bell },
           { id: "audit", label: "Audit Trail", icon: History }
         ].map((tab) => {
@@ -695,6 +696,229 @@ export const TeachingAttendanceSettingsPanel: React.FC<TeachingAttendanceSetting
                 </label>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 8.5: PENGATURAN KETEPATAN PENGISIAN JURNAL */}
+      {activeSubSection === "ketepatan_jurnal" && (
+        <div className="bg-white dark:bg-zinc-900 p-5 rounded-2xl border border-slate-150 dark:border-zinc-800 space-y-6 shadow-xs">
+          <div className="flex items-start gap-3 border-b border-slate-100 dark:border-zinc-800 pb-4">
+            <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/40 rounded-xl text-emerald-600 dark:text-emerald-400">
+              <CheckCircle2 className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">Pengaturan Batas Waktu &amp; Skor Ketepatan Pengisian Jurnal</h3>
+              <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5 leading-relaxed">
+                Konfigurasi batas toleransi waktu pengisian jurnal mengajar (dihitung dari waktu **QR Check-out**) serta pembagian skor bertingkat untuk penilaian KPI Administrasi Guru.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            {/* Very On Time Minutes */}
+            <div className="p-4 bg-slate-50 dark:bg-zinc-800/40 rounded-xl border border-slate-200 dark:border-zinc-700 space-y-2">
+              <label className="text-xs font-bold text-slate-900 dark:text-white block">
+                Batas Sangat Tepat Waktu (Menit setelah Check-out)
+              </label>
+              <p className="text-[11px] text-slate-500 dark:text-zinc-400">
+                Waktu maksimal guru mengisi jurnal setelah melakukan QR Check-out agar dikategorikan **Sangat Tepat Waktu**.
+              </p>
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="number"
+                  disabled={!canEdit}
+                  min={5}
+                  max={240}
+                  value={tas.journalTimelinessRules?.veryOnTimeMinutes ?? 60}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10) || 60;
+                    updateTas(prev => ({
+                      ...prev,
+                      journalTimelinessRules: {
+                        ...(prev.journalTimelinessRules || DEFAULT_TEACHING_ATTENDANCE_SETTINGS.journalTimelinessRules!),
+                        veryOnTimeMinutes: val
+                      }
+                    }));
+                  }}
+                  className="w-28 px-3 py-1.5 text-xs font-bold bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
+                />
+                <span className="text-xs font-medium text-slate-600 dark:text-zinc-400">Menit</span>
+              </div>
+            </div>
+
+            {/* Very On Time Score */}
+            <div className="p-4 bg-emerald-50/50 dark:bg-emerald-950/20 rounded-xl border border-emerald-200 dark:border-emerald-800/60 space-y-2">
+              <label className="text-xs font-bold text-emerald-900 dark:text-emerald-200 block">
+                Skor Sangat Tepat Waktu (≤ {tas.journalTimelinessRules?.veryOnTimeMinutes ?? 60} Menit)
+              </label>
+              <p className="text-[11px] text-emerald-700 dark:text-emerald-300">
+                Poin penilaian jika jurnal diisi tidak lebih dari {tas.journalTimelinessRules?.veryOnTimeMinutes ?? 60} menit setelah sesi mengajar.
+              </p>
+              <input
+                type="number"
+                disabled={!canEdit}
+                min={0}
+                max={100}
+                value={tas.journalTimelinessRules?.veryOnTimeScore ?? 100}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10) || 100;
+                  updateTas(prev => ({
+                    ...prev,
+                    journalTimelinessRules: {
+                      ...(prev.journalTimelinessRules || DEFAULT_TEACHING_ATTENDANCE_SETTINGS.journalTimelinessRules!),
+                      veryOnTimeScore: val
+                    }
+                  }));
+                }}
+                className="w-28 px-3 py-1.5 text-xs font-bold bg-white dark:bg-zinc-900 border border-emerald-300 dark:border-emerald-700 rounded-lg focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
+              />
+            </div>
+
+            {/* Same Day Score */}
+            <div className="p-4 bg-blue-50/50 dark:bg-blue-950/20 rounded-xl border border-blue-200 dark:border-blue-800/60 space-y-2">
+              <label className="text-xs font-bold text-blue-900 dark:text-blue-200 block">
+                Skor Tepat Waktu Hari Yang Sama (≤ 23:59 WIB)
+              </label>
+              <p className="text-[11px] text-blue-700 dark:text-blue-300">
+                Poin jika jurnal diisi pada hari yang sama sebelum pukul 23:59 WIB.
+              </p>
+              <input
+                type="number"
+                disabled={!canEdit}
+                min={0}
+                max={100}
+                value={tas.journalTimelinessRules?.sameDayScore ?? 90}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10) || 90;
+                  updateTas(prev => ({
+                    ...prev,
+                    journalTimelinessRules: {
+                      ...(prev.journalTimelinessRules || DEFAULT_TEACHING_ATTENDANCE_SETTINGS.journalTimelinessRules!),
+                      sameDayScore: val
+                    }
+                  }));
+                }}
+                className="w-28 px-3 py-1.5 text-xs font-bold bg-white dark:bg-zinc-900 border border-blue-300 dark:border-blue-700 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+              />
+            </div>
+
+            {/* One Day Late Score */}
+            <div className="p-4 bg-amber-50/50 dark:bg-amber-950/20 rounded-xl border border-amber-200 dark:border-amber-800/60 space-y-2">
+              <label className="text-xs font-bold text-amber-900 dark:text-amber-200 block">
+                Skor Terlambat Ringan (1 Hari / H+1)
+              </label>
+              <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                Poin jika jurnal diisi H+1 (keesokan harinya).
+              </p>
+              <input
+                type="number"
+                disabled={!canEdit}
+                min={0}
+                max={100}
+                value={tas.journalTimelinessRules?.oneDayLateScore ?? 70}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10) || 70;
+                  updateTas(prev => ({
+                    ...prev,
+                    journalTimelinessRules: {
+                      ...(prev.journalTimelinessRules || DEFAULT_TEACHING_ATTENDANCE_SETTINGS.journalTimelinessRules!),
+                      oneDayLateScore: val
+                    }
+                  }));
+                }}
+                className="w-28 px-3 py-1.5 text-xs font-bold bg-white dark:bg-zinc-900 border border-amber-300 dark:border-amber-700 rounded-lg focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
+              />
+            </div>
+
+            {/* 2-3 Days Late Score */}
+            <div className="p-4 bg-orange-50/50 dark:bg-orange-950/20 rounded-xl border border-orange-200 dark:border-orange-800/60 space-y-2">
+              <label className="text-xs font-bold text-orange-900 dark:text-orange-200 block">
+                Skor Terlambat Sedang (2-3 Hari)
+              </label>
+              <p className="text-[11px] text-orange-700 dark:text-orange-300">
+                Poin jika jurnal baru diisi dalam rentang 2 sampai 3 hari kemudian.
+              </p>
+              <input
+                type="number"
+                disabled={!canEdit}
+                min={0}
+                max={100}
+                value={tas.journalTimelinessRules?.twoToThreeDaysLateScore ?? 40}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10) || 40;
+                  updateTas(prev => ({
+                    ...prev,
+                    journalTimelinessRules: {
+                      ...(prev.journalTimelinessRules || DEFAULT_TEACHING_ATTENDANCE_SETTINGS.journalTimelinessRules!),
+                      twoToThreeDaysLateScore: val
+                    }
+                  }));
+                }}
+                className="w-28 px-3 py-1.5 text-xs font-bold bg-white dark:bg-zinc-900 border border-orange-300 dark:border-orange-700 rounded-lg focus:ring-2 focus:ring-orange-500 disabled:opacity-50"
+              />
+            </div>
+
+            {/* More Than 3 Days Late Score */}
+            <div className="p-4 bg-rose-50/50 dark:bg-rose-950/20 rounded-xl border border-rose-200 dark:border-rose-800/60 space-y-2">
+              <label className="text-xs font-bold text-rose-900 dark:text-rose-200 block">
+                Skor Sangat Terlambat (&gt; 3 Hari)
+              </label>
+              <p className="text-[11px] text-rose-700 dark:text-rose-300">
+                Poin jika jurnal diisi lebih dari 3 hari setelah sesi mengajar.
+              </p>
+              <input
+                type="number"
+                disabled={!canEdit}
+                min={0}
+                max={100}
+                value={tas.journalTimelinessRules?.moreThanThreeDaysLateScore ?? 0}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10) || 0;
+                  updateTas(prev => ({
+                    ...prev,
+                    journalTimelinessRules: {
+                      ...(prev.journalTimelinessRules || DEFAULT_TEACHING_ATTENDANCE_SETTINGS.journalTimelinessRules!),
+                      moreThanThreeDaysLateScore: val
+                    }
+                  }));
+                }}
+                className="w-28 px-3 py-1.5 text-xs font-bold bg-white dark:bg-zinc-900 border border-rose-300 dark:border-rose-700 rounded-lg focus:ring-2 focus:ring-rose-500 disabled:opacity-50"
+              />
+            </div>
+
+            {/* Unfilled Journal Score */}
+            <div className="p-4 bg-red-100/60 dark:bg-red-950/30 rounded-xl border border-red-300 dark:border-red-800 space-y-2 md:col-span-2">
+              <label className="text-xs font-bold text-red-900 dark:text-red-200 block">
+                Skor Belum Mengisi Jurnal (Missing Journal Penalty)
+              </label>
+              <p className="text-[11px] text-red-700 dark:text-red-300">
+                Nilai yang diberikan untuk sesi mengajar yang diselenggarakan namun jurnalnya **belum pernah diisi/dibuat** oleh guru (Expected &gt; Actual).
+              </p>
+              <div className="flex items-center gap-3 pt-1">
+                <input
+                  type="number"
+                  disabled={!canEdit}
+                  min={0}
+                  max={50}
+                  value={tas.journalTimelinessRules?.unfilledJournalScore ?? 0}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10) || 0;
+                    updateTas(prev => ({
+                      ...prev,
+                      journalTimelinessRules: {
+                        ...(prev.journalTimelinessRules || DEFAULT_TEACHING_ATTENDANCE_SETTINGS.journalTimelinessRules!),
+                        unfilledJournalScore: val
+                      }
+                    }));
+                  }}
+                  className="w-28 px-3 py-1.5 text-xs font-bold bg-white dark:bg-zinc-900 border border-red-400 dark:border-red-700 rounded-lg focus:ring-2 focus:ring-red-500 disabled:opacity-50"
+                />
+                <span className="text-xs font-semibold text-red-800 dark:text-red-300">
+                  ⚠️ Poin default adalah 0. Setiap jurnal yang belum diisi otomatis mengurangi rata-rata skor ketepatan.
+                </span>
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -49,6 +49,16 @@ export interface SchoolAgenda {
   updatedAt?: string;
 }
 
+export interface JournalTimelinessRules {
+  veryOnTimeMinutes: number; // e.g. 60 (<= 60 menit setelah QR Check-out)
+  veryOnTimeScore: number; // e.g. 100
+  sameDayScore: number; // e.g. 90 (<= 23:59 WIB hari yang sama)
+  oneDayLateScore: number; // e.g. 70 (1 hari)
+  twoToThreeDaysLateScore: number; // e.g. 40 (2-3 hari)
+  moreThanThreeDaysLateScore: number; // e.g. 0 (> 3 hari)
+  unfilledJournalScore: number; // e.g. 0 (Belum mengisi)
+}
+
 export interface TeachingAttendanceSettings {
   checkInToleranceMinutes: number; // 5, 10, 15, 20, 30
   checkOutToleranceMinutes: number; // 5, 10, 15, 20, 30
@@ -81,6 +91,7 @@ export interface TeachingAttendanceSettings {
     approval: boolean;
     rejection: boolean;
   };
+  journalTimelinessRules?: JournalTimelinessRules;
 }
 
 export interface SchoolSettings {

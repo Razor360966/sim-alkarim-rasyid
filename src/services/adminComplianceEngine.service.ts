@@ -4,10 +4,9 @@ import { lessonPlanService } from "./lessonPlan.service";
 import { teachingJournalService } from "./teachingJournalService";
 import { teacherTeachingAttendanceService } from "./teacherTeachingAttendance.service";
 import { scheduleService } from "./schedule.service";
-import { academicPlanningService } from "./academicPlanning.service";
-import { classService } from "./classService";
-import { subjectService } from "./subjectService";
-import { TeachingJournal, AnnualProgram, SemesterProgram, LessonPlan, Schedule, Teacher, TeacherTeachingAttendance } from "../types";
+import { schoolSettingsService, DEFAULT_JOURNAL_TIMELINESS_RULES } from "./schoolSettings.service";
+import { teacherDisciplineService } from "./teacherDiscipline.service";
+import { TeachingJournal, Teacher, TeacherTeachingAttendance, JournalTimelinessRules } from "../types";
 
 export interface ComplianceFilters {
   academicYearId?: string;
@@ -35,13 +34,33 @@ export interface TeacherComplianceRanking {
   teacherId: string;
   teacherName: string;
   niy?: string;
+
+  // KPI Administrasi Guru
   protaScore: number;
   prosemScore: number;
   modulScore: number;
-  jurnalScore: number;
-  onTimeRate: number;
+  jurnalKelengkapanScore: number;
+  jurnalKetepatanScore: number | null; // null if expected sessions = 0 (N/A)
+  adminTotalScore: number;
+
+  // KPI Disiplin Mengajar Guru
+  disciplineScore: number;
+  attendanceRate: number;
+  onTimeCheckInRate: number;
+  onTimeCheckOutRate: number;
+  lateCount: number;
+  alphaCount: number;
+  izinCount: number;
+
+  // Total Combined Metrics
+  onTimeRate: number | null; // Legacy field alias for backward compatibility
   totalScore: number;
   category: "Sangat Baik" | "Baik" | "Cukup" | "Perlu Pembinaan" | "Pembinaan Khusus";
+  visualStatus: string; // "🟢 Sangat Disiplin", "🟢 Disiplin", "🟡 Cukup", "🟠 Kurang", "🔴 Perlu Pembinaan", "⚪ N/A"
+
+  // Quantities
+  expectedSessionsCount: number;
+  actualJournalsCount: number;
   missingJournalCount: number;
   lateJournalCount: number;
 }
@@ -51,6 +70,7 @@ export interface MissingJournalDetail {
   teacherId: string;
   teacherName: string;
   date: string;
+  dayName?: string;
   className: string;
   subjectName: string;
   period: string;
@@ -58,7 +78,14 @@ export interface MissingJournalDetail {
   sessionStatus: string;
   complianceStatus: "Belum Mengisi" | "Terlambat";
   attendanceId?: string;
-  delayHours?: number;
+
+  // Timeliness details
+  checkOutTime?: string;
+  submissionTime?: string;
+  delayMinutes?: number;
+  delayHoursDisplay?: string;
+  timelinessCategory?: string;
+  timelinessScore?: number;
 }
 
 export interface MonthlyTrendItem {
@@ -68,6 +95,7 @@ export interface MonthlyTrendItem {
   actualJournals: number;
   missingJournals: number;
   complianceRate: number;
+  onTimeRate: number | null;
 }
 
 export interface ComplianceSummary {
@@ -81,14 +109,119 @@ export interface ComplianceSummary {
   totalMissingJournals: number;
   totalOnTimeJournals: number;
   totalLateJournals: number;
-  onTimePercentage: number;
+  onTimePercentage: number | null;
+  onTimeStatus: string;
+
+  // Discipline overview
+  avgDisciplineScore: number;
+  avgAttendanceRate: number;
+  avgCheckInOnTimeRate: number;
+  avgCheckOutOnTimeRate: number;
+}
+
+// Timeliness Evaluation Engine Helper
+export function evaluateSessionTimeliness(
+  session: TeacherTeachingAttendance,
+  matchedJournal: TeachingJournal | undefined,
+  rules: JournalTimelinessRules
+): {
+  score: number;
+  category: string;
+  statusLabel: string;
+  isFilled: boolean;
+  isLate: boolean;
+  delayMinutes: number;
+  delayHoursDisplay: string;
+  submissionTimeStr?: string;
+  checkOutTimeStr?: string;
+} {
+  if (!matchedJournal) {
+    return {
+      score: rules.unfilledJournalScore ?? 0,
+      category: "Belum Mengisi",
+      statusLabel: "🔴 Belum Mengisi",
+      isFilled: false,
+      isLate: true,
+      delayMinutes: 0,
+      delayHoursDisplay: "-"
+    };
+  }
+
+  const sessionDateStr = session.date || new Date().toISOString().slice(0, 10);
+  const refTime = session.checkOutTime || session.checkInTime || "08:00";
+  const refTimestamp = new Date(`${sessionDateStr}T${refTime.length === 5 ? refTime + ":00" : refTime}`).getTime();
+
+  const subTime = matchedJournal.createdAt 
+    ? new Date(matchedJournal.createdAt).getTime() 
+    : new Date(`${sessionDateStr}T23:59:59`).getTime();
+
+  const diffMs = subTime - refTimestamp;
+  const diffMinutes = Math.max(0, Math.round(diffMs / 60000));
+  const delayHoursDisplay = diffMinutes > 0 ? (diffMinutes / 60).toFixed(1) + " jam" : "0 jam";
+
+  const subDateStr = matchedJournal.createdAt ? new Date(matchedJournal.createdAt).toISOString().slice(0, 10) : sessionDateStr;
+  const isSameDay = subDateStr === sessionDateStr || diffMinutes <= 16 * 60;
+
+  let score = 0;
+  let category = "";
+  let statusLabel = "";
+  let isLate = false;
+
+  const veryOnTimeMins = rules.veryOnTimeMinutes ?? 60;
+
+  if (diffMinutes <= veryOnTimeMins) {
+    score = rules.veryOnTimeScore ?? 100;
+    category = "Sangat Tepat Waktu";
+    statusLabel = "🟢 Sangat Disiplin";
+    isLate = false;
+  } else if (isSameDay) {
+    score = rules.sameDayScore ?? 90;
+    category = "Tepat Waktu Hari Sama";
+    statusLabel = "🟢 Disiplin";
+    isLate = false;
+  } else if (diffMinutes <= 24 * 60) {
+    score = rules.oneDayLateScore ?? 70;
+    category = "Terlambat Ringan (1 Hari)";
+    statusLabel = "🟡 Cukup";
+    isLate = true;
+  } else if (diffMinutes <= 3 * 24 * 60) {
+    score = rules.twoToThreeDaysLateScore ?? 40;
+    category = "Terlambat Sedang (2-3 Hari)";
+    statusLabel = "🟠 Kurang";
+    isLate = true;
+  } else {
+    score = rules.moreThanThreeDaysLateScore ?? 0;
+    category = "Sangat Terlambat (>3 Hari)";
+    statusLabel = "🔴 Perlu Pembinaan";
+    isLate = true;
+  }
+
+  return {
+    score,
+    category,
+    statusLabel,
+    isFilled: true,
+    isLate,
+    delayMinutes: diffMinutes,
+    delayHoursDisplay,
+    submissionTimeStr: matchedJournal.createdAt ? new Date(matchedJournal.createdAt).toLocaleString("id-ID") : sessionDateStr,
+    checkOutTimeStr: session.checkOutTime ? `${session.date} ${session.checkOutTime}` : sessionDateStr
+  };
+}
+
+export function getComplianceVisualBadge(score: number | null, expectedSessions: number): string {
+  if (expectedSessions === 0 || score === null) return "⚪ N/A (Belum Ada Sesi)";
+  if (score >= 95) return "🟢 Sangat Disiplin";
+  if (score >= 85) return "🟢 Disiplin";
+  if (score >= 70) return "🟡 Cukup";
+  if (score >= 50) return "🟠 Kurang";
+  return "🔴 Perlu Pembinaan";
 }
 
 export const adminComplianceEngineService = {
   // 1. Fetch SSOT Teaching Sessions (Teacher Teaching Attendances)
   async calculateExpectedTeachingSessions(filters: ComplianceFilters = {}): Promise<TeacherTeachingAttendance[]> {
     try {
-      // Get all recorded teaching sessions from SSOT collection
       let sessions = await teacherTeachingAttendanceService.getAllAttendances({
         academicYearId: filters.academicYearId,
         semesterId: filters.semesterId,
@@ -99,7 +232,6 @@ export const adminComplianceEngineService = {
         classId: filters.classId && filters.classId !== "ALL" ? filters.classId : undefined
       });
 
-      // Filter by month if specified
       if (filters.month) {
         sessions = sessions.filter(s => s.date && s.date.startsWith(filters.month!));
       }
@@ -116,7 +248,6 @@ export const adminComplianceEngineService = {
     try {
       let journals = await teachingJournalService.getAll(filters.academicYearId, filters.semesterId);
 
-      // Client-side filtering
       if (filters.teacherId && filters.teacherId !== "ALL") {
         journals = journals.filter(j => j.teacherId === filters.teacherId);
       }
@@ -143,27 +274,29 @@ export const adminComplianceEngineService = {
     }
   },
 
-  // 3. Compare Expected Teaching Sessions vs Actual Journals
+  // 3. Compare Expected Teaching Sessions vs Actual Journals with Timeliness Engine
   async compareExpectedVsActual(filters: ComplianceFilters = {}) {
     const sessions = await this.calculateExpectedTeachingSessions(filters);
     const journals = await this.calculateActualJournals(filters);
+    const settings = await schoolSettingsService.getSettings();
+    const rules = settings.teachingAttendanceSettings?.journalTimelinessRules || DEFAULT_JOURNAL_TIMELINESS_RULES;
 
-    // Filter sessions where teacher was responsible (e.g., Hadir, or default session)
-    // Sessions where teacher was absent/izin/dinas are handled per their recorded session status
+    // Filter sessions where teacher was assigned/present (Hadir / Guru Pengganti / default session)
     const expectedSessions = sessions.filter(s => 
       !s.status || s.status === "Hadir" || s.status === "Guru Pengganti"
     );
 
     const filledJournalMap = new Map<string, TeachingJournal>();
     journals.forEach(j => {
-      // Match key: teacherId + classId + subjectId + date
       const key = `${j.teacherId}_${j.classId}_${j.subjectId}_${j.date}`;
       filledJournalMap.set(key, j);
     });
 
     let onTimeCount = 0;
     let lateCount = 0;
+    let totalTimelinessScoreSum = 0;
     const missingJournals: MissingJournalDetail[] = [];
+    const lateJournals: MissingJournalDetail[] = [];
 
     expectedSessions.forEach(session => {
       const key = `${session.teacherId}_${session.classId}_${session.subjectId}_${session.date}`;
@@ -173,16 +306,36 @@ export const adminComplianceEngineService = {
         (j.classId === session.classId || j.subjectId === session.subjectId)
       );
 
-      if (matchedJournal) {
-        // Evaluate if filled on time (filled within 24 hours of session date/time)
-        const sessionTime = new Date(`${session.date}T${session.checkInTime || "08:00"}:00`).getTime();
-        const journalCreatedTime = matchedJournal.createdAt ? new Date(matchedJournal.createdAt).getTime() : sessionTime;
-        const diffHours = (journalCreatedTime - sessionTime) / (1000 * 60 * 60);
+      const evalResult = evaluateSessionTimeliness(session, matchedJournal, rules);
+      totalTimelinessScoreSum += evalResult.score;
 
-        if (diffHours <= 24) {
+      const dayName = session.date ? new Date(session.date).toLocaleDateString("id-ID", { weekday: "long" }) : "";
+
+      if (matchedJournal) {
+        if (!evalResult.isLate) {
           onTimeCount++;
         } else {
           lateCount++;
+          lateJournals.push({
+            id: `late_${session.id || Math.random().toString(36).substring(2)}`,
+            teacherId: session.teacherId,
+            teacherName: session.teacherName || "Guru",
+            date: session.date,
+            dayName,
+            className: session.className || "Kelas",
+            subjectName: session.subjectName || "Mata Pelajaran",
+            period: session.period || "Sesi Mengajar",
+            timeSlot: session.checkInTime ? `${session.checkInTime} - ${session.checkOutTime || ""}` : undefined,
+            sessionStatus: session.status || "Hadir",
+            complianceStatus: "Terlambat",
+            attendanceId: session.id,
+            checkOutTime: evalResult.checkOutTimeStr,
+            submissionTime: evalResult.submissionTimeStr,
+            delayMinutes: evalResult.delayMinutes,
+            delayHoursDisplay: evalResult.delayHoursDisplay,
+            timelinessCategory: evalResult.category,
+            timelinessScore: evalResult.score
+          });
         }
       } else {
         missingJournals.push({
@@ -190,32 +343,49 @@ export const adminComplianceEngineService = {
           teacherId: session.teacherId,
           teacherName: session.teacherName || "Guru",
           date: session.date,
+          dayName,
           className: session.className || "Kelas",
           subjectName: session.subjectName || "Mata Pelajaran",
           period: session.period || "Sesi Mengajar",
           timeSlot: session.checkInTime ? `${session.checkInTime} - ${session.checkOutTime || ""}` : undefined,
           sessionStatus: session.status || "Hadir",
           complianceStatus: "Belum Mengisi",
-          attendanceId: session.id
+          attendanceId: session.id,
+          timelinessCategory: "Belum Mengisi",
+          timelinessScore: rules.unfilledJournalScore ?? 0
         });
       }
     });
 
+    const expectedCount = expectedSessions.length;
+    const actualCount = Math.min(journals.length, expectedCount);
+    const missingCount = missingJournals.length;
+
+    // RULE 2: If expected sessions === 0, score = null (N/A)
+    const averageTimelinessScore = expectedCount > 0 
+      ? Math.round(totalTimelinessScoreSum / expectedCount) 
+      : null;
+
+    const timelinessStatus = getComplianceVisualBadge(averageTimelinessScore, expectedCount);
+
     return {
-      expectedCount: expectedSessions.length,
-      actualCount: Math.min(journals.length, expectedSessions.length),
+      expectedCount,
+      actualCount,
       totalFilledJournals: journals.length,
       onTimeCount,
       lateCount,
-      missingCount: missingJournals.length,
-      missingJournals
+      missingCount,
+      averageTimelinessScore,
+      timelinessStatus,
+      missingJournals,
+      lateJournals
     };
   },
 
-  // 4. Calculate Full Compliance Summary (Prota, Prosem, Modul Ajar, Jurnal Mengajar)
+  // 4. Calculate Full Compliance Summary (Prota, Prosem, Modul Ajar, Jurnal Mengajar + Disiplin)
   async calculateComplianceSummary(filters: ComplianceFilters = {}): Promise<ComplianceSummary> {
     try {
-      const [allTeachers, allSchedules, protaList, promesList, lessonPlanList, comparison] = await Promise.all([
+      const [allTeachers, allSchedules, protaList, promesList, lessonPlanList, comparison, disciplineMetrics] = await Promise.all([
         teacherService.getTeachers(),
         scheduleService.getSchedules(filters.academicYearId, filters.semesterId),
         curriculumPlanningService.getAllAnnualPrograms(),
@@ -224,7 +394,8 @@ export const adminComplianceEngineService = {
           academicYearId: filters.academicYearId,
           semesterId: filters.semesterId
         }),
-        this.compareExpectedVsActual(filters)
+        this.compareExpectedVsActual(filters),
+        teacherDisciplineService.getDisciplineMetrics(filters)
       ]);
 
       let teachers = allTeachers.filter(t => t.isDeleted !== true);
@@ -232,7 +403,6 @@ export const adminComplianceEngineService = {
         teachers = teachers.filter(t => t.id === filters.teacherId);
       }
 
-      // Filter schedules
       let schedules = allSchedules;
       if (filters.teacherId && filters.teacherId !== "ALL") {
         schedules = schedules.filter(s => s.teacherId === filters.teacherId);
@@ -244,7 +414,6 @@ export const adminComplianceEngineService = {
         schedules = schedules.filter(s => s.classId === filters.classId);
       }
 
-      // Unique Teaching Assignment Pairs: (classId + subjectId)
       const assignmentPairs = new Set<string>();
       schedules.forEach(s => {
         if (s.classId && s.subjectId) {
@@ -252,11 +421,9 @@ export const adminComplianceEngineService = {
         }
       });
 
-      // Target Prota & Prosem = Number of teaching assignment pairs (or active teachers count if schedules empty)
       const protaTarget = Math.max(assignmentPairs.size, teachers.length > 0 ? teachers.length : 1);
       const promesTarget = Math.max(assignmentPairs.size, teachers.length > 0 ? teachers.length : 1);
 
-      // Actual Prota
       let filteredProta = protaList;
       if (filters.academicYearId) {
         filteredProta = filteredProta.filter(p => p.academicYearId === filters.academicYearId);
@@ -272,7 +439,6 @@ export const adminComplianceEngineService = {
       }
       const actualProtaCount = filteredProta.length;
 
-      // Actual Prosem
       let filteredPromes = promesList;
       if (filters.academicYearId) {
         filteredPromes = filteredPromes.filter(p => p.academicYearId === filters.academicYearId);
@@ -291,7 +457,6 @@ export const adminComplianceEngineService = {
       }
       const actualPromesCount = filteredPromes.length;
 
-      // Modul Ajar Target (based on TP count in Prota/Promes or fallback 2 modules per assignment pair)
       let modulTargetCount = 0;
       filteredProta.forEach(pr => {
         if (pr.topics && pr.topics.length > 0) {
@@ -304,7 +469,6 @@ export const adminComplianceEngineService = {
         modulTargetCount = protaTarget * 2;
       }
 
-      // Actual Modul Ajar
       let filteredModul = lessonPlanList;
       if (filters.teacherId && filters.teacherId !== "ALL") {
         filteredModul = filteredModul.filter(m => m.teacherId === filters.teacherId || m.createdBy === filters.teacherId);
@@ -317,7 +481,6 @@ export const adminComplianceEngineService = {
       }
       const actualModulCount = filteredModul.length;
 
-      // Calculate Percentages and Status
       const calcComp = (name: string, target: number, actual: number): ComponentCompliance => {
         const safeTarget = Math.max(1, target);
         const validActual = Math.min(actual, safeTarget);
@@ -344,7 +507,6 @@ export const adminComplianceEngineService = {
       const prosemComp = calcComp("Prosem", promesTarget, actualPromesCount);
       const modulComp = calcComp("Modul Ajar", modulTargetCount, actualModulCount);
 
-      // Jurnal Mengajar Compliance
       const jTarget = Math.max(0, comparison.expectedCount);
       const jActual = Math.min(comparison.actualCount, jTarget);
       const jMissing = comparison.missingCount;
@@ -369,8 +531,20 @@ export const adminComplianceEngineService = {
         (protaComp.percentage + prosemComp.percentage + modulComp.percentage + jurnalComp.percentage) / 4
       );
 
-      const totalFilled = comparison.onTimeCount + comparison.lateCount;
-      const onTimePct = totalFilled > 0 ? Math.round((comparison.onTimeCount / totalFilled) * 100) : 100;
+      // Discipline metrics calculation
+      const metricsList = disciplineMetrics.metrics || [];
+      let totalDisciplineScore = 0;
+      let totalAttRate = 0;
+      let totalCheckInRate = 0;
+      let totalCheckOutRate = 0;
+      const dCount = Math.max(1, metricsList.length);
+
+      metricsList.forEach(m => {
+        totalDisciplineScore += m.disciplineScore;
+        totalAttRate += m.attendancePercentage;
+        totalCheckInRate += m.checkInOnTimePercentage;
+        totalCheckOutRate += m.checkOutOnTimePercentage;
+      });
 
       return {
         prota: protaComp,
@@ -383,7 +557,12 @@ export const adminComplianceEngineService = {
         totalMissingJournals: comparison.missingCount,
         totalOnTimeJournals: comparison.onTimeCount,
         totalLateJournals: comparison.lateCount,
-        onTimePercentage: onTimePct
+        onTimePercentage: comparison.averageTimelinessScore,
+        onTimeStatus: comparison.timelinessStatus,
+        avgDisciplineScore: Math.round(totalDisciplineScore / dCount),
+        avgAttendanceRate: Math.round(totalAttRate / dCount),
+        avgCheckInOnTimeRate: Math.round(totalCheckInRate / dCount),
+        avgCheckOutOnTimeRate: Math.round(totalCheckOutRate / dCount)
       };
     } catch (error) {
       console.error("Error calculating compliance summary:", error);
@@ -398,28 +577,38 @@ export const adminComplianceEngineService = {
         totalMissingJournals: 0,
         totalOnTimeJournals: 0,
         totalLateJournals: 0,
-        onTimePercentage: 100
+        onTimePercentage: null,
+        onTimeStatus: "⚪ N/A (Belum Ada Sesi)",
+        avgDisciplineScore: 100,
+        avgAttendanceRate: 100,
+        avgCheckInOnTimeRate: 100,
+        avgCheckOutOnTimeRate: 100
       };
     }
   },
 
-  // 5. Calculate Teacher Administration Score & Rankings
+  // 5. Calculate Teacher Administration Score & Discipline Rankings (SEPARATED KPI)
   async calculateTeacherAdministrationScore(filters: ComplianceFilters = {}): Promise<TeacherComplianceRanking[]> {
     try {
-      const [allTeachers, allSchedules, protaList, promesList, lessonPlanList, sessions, journals] = await Promise.all([
+      const [allTeachers, allSchedules, protaList, promesList, lessonPlanList, sessions, journals, settings, disciplineMetrics] = await Promise.all([
         teacherService.getTeachers(),
         scheduleService.getSchedules(filters.academicYearId, filters.semesterId),
         curriculumPlanningService.getAllAnnualPrograms(),
         curriculumPlanningService.getAllSemesterPrograms(),
         lessonPlanService.getLessonPlans({ academicYearId: filters.academicYearId, semesterId: filters.semesterId }),
         this.calculateExpectedTeachingSessions(filters),
-        this.calculateActualJournals(filters)
+        this.calculateActualJournals(filters),
+        schoolSettingsService.getSettings(),
+        teacherDisciplineService.getDisciplineMetrics(filters)
       ]);
 
+      const rules = settings.teachingAttendanceSettings?.journalTimelinessRules || DEFAULT_JOURNAL_TIMELINESS_RULES;
       const activeTeachers = allTeachers.filter(t => t.isDeleted !== true);
 
+      const discMap = new Map<string, any>();
+      (disciplineMetrics.metrics || []).forEach(m => discMap.set(m.teacherId, m));
+
       const rankings: TeacherComplianceRanking[] = activeTeachers.map(teacher => {
-        // Teacher's assigned schedules
         const teacherScheds = allSchedules.filter(s => s.teacherId === teacher.id);
         const assignmentCount = Math.max(1, new Set(teacherScheds.map(s => `${s.classId}_${s.subjectId}`)).size);
 
@@ -436,47 +625,67 @@ export const adminComplianceEngineService = {
         const modulScore = Math.min(100, Math.round((teacherModuls.length / (assignmentCount * 2)) * 100));
 
         // Sessions & Journals for this teacher
-        const teacherSessions = sessions.filter(s => s.teacherId === teacher.id);
+        const teacherSessions = sessions.filter(s => s.teacherId === teacher.id && (!s.status || s.status === "Hadir" || s.status === "Guru Pengganti"));
         const teacherJournals = journals.filter(j => j.teacherId === teacher.id);
 
-        const expectedCount = Math.max(1, teacherSessions.length);
-        const actualJurnalCount = Math.min(teacherJournals.length, expectedCount);
-        const missingCount = Math.max(0, teacherSessions.length - teacherJournals.length);
+        const expectedSessionsCount = teacherSessions.length;
+        const actualJournalsCount = Math.min(teacherJournals.length, expectedSessionsCount);
+        const missingJournalCount = Math.max(0, expectedSessionsCount - teacherJournals.length);
 
-        const jurnalScore = teacherSessions.length > 0 
-          ? Math.min(100, Math.round((actualJurnalCount / expectedCount) * 100))
+        // Jurnal Kelengkapan Score
+        const jurnalKelengkapanScore = expectedSessionsCount > 0 
+          ? Math.min(100, Math.round((actualJournalsCount / expectedSessionsCount) * 100))
           : (teacherJournals.length > 0 ? 100 : 80);
 
-        // Calculate On-Time Rate
-        let onTimeJournals = 0;
-        let lateJournals = 0;
-        teacherJournals.forEach(j => {
-          const matchedSession = teacherSessions.find(s => s.date === j.date);
-          const sessionTime = matchedSession ? new Date(`${matchedSession.date}T${matchedSession.checkInTime || "08:00"}:00`).getTime() : new Date(j.date).getTime();
-          const createdTime = j.createdAt ? new Date(j.createdAt).getTime() : sessionTime;
-          const diffHours = (createdTime - sessionTime) / (1000 * 60 * 60);
+        // Jurnal Ketepatan Score (Tepat Waktu based on QR check-out)
+        let jurnalKetepatanScore: number | null = null;
+        let lateJournalCount = 0;
 
-          if (diffHours <= 24) onTimeJournals++;
-          else lateJournals++;
-        });
+        if (expectedSessionsCount > 0) {
+          let sumTimelinessScores = 0;
+          teacherSessions.forEach(sess => {
+            const matchedJournal = teacherJournals.find(j => j.date === sess.date && (j.classId === sess.classId || j.subjectId === sess.subjectId));
+            const evalResult = evaluateSessionTimeliness(sess, matchedJournal, rules);
+            sumTimelinessScores += evalResult.score;
+            if (evalResult.isLate) lateJournalCount++;
+          });
+          jurnalKetepatanScore = Math.round(sumTimelinessScores / expectedSessionsCount);
+        } else {
+          // If expected sessions = 0, score is N/A (null)
+          jurnalKetepatanScore = null;
+        }
 
-        const onTimeRate = teacherJournals.length > 0 ? Math.round((onTimeJournals / teacherJournals.length) * 100) : 100;
-
-        // Weighted Total Administration Score:
-        // Prota 20%, Prosem 20%, Modul 20%, Jurnal 20%, On-time Rate 20%
-        const totalScore = Math.round(
+        // Weighted Administration Total Score
+        // Prota 20%, Prosem 20%, Modul 20%, Kelengkapan Jurnal 20%, Ketepatan Jurnal 20%
+        const timelinessComponent = jurnalKetepatanScore !== null ? jurnalKetepatanScore : jurnalKelengkapanScore;
+        const adminTotalScore = Math.round(
           protaScore * 0.20 + 
           prosemScore * 0.20 + 
           modulScore * 0.20 + 
-          jurnalScore * 0.20 + 
-          onTimeRate * 0.20
+          jurnalKelengkapanScore * 0.20 + 
+          timelinessComponent * 0.20
         );
+
+        // Disiplin Mengajar Metrics
+        const discMetric = discMap.get(teacher.id) || {};
+        const disciplineScore = discMetric.disciplineScore ?? 100;
+        const attendanceRate = discMetric.attendancePercentage ?? 100;
+        const onTimeCheckInRate = discMetric.checkInOnTimePercentage ?? 100;
+        const onTimeCheckOutRate = discMetric.checkOutOnTimePercentage ?? 100;
+        const lateCount = discMetric.totalTerlambat ?? 0;
+        const alphaCount = discMetric.totalAlpha ?? 0;
+        const izinCount = discMetric.totalIzin ?? 0;
+
+        // Total Combined Score (50% Administrasi, 50% Disiplin)
+        const totalScore = Math.round((adminTotalScore * 0.5) + (disciplineScore * 0.5));
 
         let category: TeacherComplianceRanking["category"] = "Pembinaan Khusus";
         if (totalScore >= 90) category = "Sangat Baik";
         else if (totalScore >= 80) category = "Baik";
         else if (totalScore >= 70) category = "Cukup";
         else if (totalScore >= 60) category = "Perlu Pembinaan";
+
+        const visualStatus = getComplianceVisualBadge(jurnalKetepatanScore, expectedSessionsCount);
 
         return {
           teacherId: teacher.id,
@@ -485,16 +694,30 @@ export const adminComplianceEngineService = {
           protaScore,
           prosemScore,
           modulScore,
-          jurnalScore,
-          onTimeRate,
+          jurnalKelengkapanScore,
+          jurnalKetepatanScore,
+          adminTotalScore,
+
+          disciplineScore,
+          attendanceRate,
+          onTimeCheckInRate,
+          onTimeCheckOutRate,
+          lateCount,
+          alphaCount,
+          izinCount,
+
+          onTimeRate: jurnalKetepatanScore,
           totalScore,
           category,
-          missingJournalCount: missingCount,
-          lateJournalCount: lateJournals
+          visualStatus,
+
+          expectedSessionsCount,
+          actualJournalsCount,
+          missingJournalCount,
+          lateJournalCount
         };
       });
 
-      // Sort by totalScore desc
       rankings.sort((a, b) => b.totalScore - a.totalScore);
       return rankings;
     } catch (error) {
@@ -506,16 +729,16 @@ export const adminComplianceEngineService = {
   // 6. Calculate Monthly Trend
   async calculateMonthlyTrend(filters: ComplianceFilters = {}): Promise<MonthlyTrendItem[]> {
     try {
-      const [sessions, journals] = await Promise.all([
+      const [sessions, journals, settings] = await Promise.all([
         this.calculateExpectedTeachingSessions(filters),
-        this.calculateActualJournals(filters)
+        this.calculateActualJournals(filters),
+        schoolSettingsService.getSettings()
       ]);
 
-      const monthNames = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agt", "Sep", "Okt", "Nov", "Des"];
-      const currentYear = new Date().getFullYear();
+      const rules = settings.teachingAttendanceSettings?.journalTimelinessRules || DEFAULT_JOURNAL_TIMELINESS_RULES;
 
-      // Initialize last 6 months
-      const trendMap = new Map<string, { expected: number; actual: number }>();
+      const monthNames = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agt", "Sep", "Okt", "Nov", "Des"];
+      const trendMap = new Map<string, { expected: number; actual: number; timelinessScoreSum: number }>();
       const now = new Date();
 
       for (let i = 5; i >= 0; i--) {
@@ -523,23 +746,26 @@ export const adminComplianceEngineService = {
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, "0");
         const key = `${y}-${m}`;
-        trendMap.set(key, { expected: 0, actual: 0 });
+        trendMap.set(key, { expected: 0, actual: 0, timelinessScoreSum: 0 });
       }
+
+      const filledMap = new Map<string, TeachingJournal>();
+      journals.forEach(j => {
+        filledMap.set(`${j.teacherId}_${j.classId}_${j.subjectId}_${j.date}`, j);
+      });
 
       sessions.forEach(s => {
         if (s.date && s.date.length >= 7) {
           const key = s.date.substring(0, 7);
           if (trendMap.has(key)) {
-            trendMap.get(key)!.expected++;
-          }
-        }
-      });
+            const entry = trendMap.get(key)!;
+            entry.expected++;
 
-      journals.forEach(j => {
-        if (j.date && j.date.length >= 7) {
-          const key = j.date.substring(0, 7);
-          if (trendMap.has(key)) {
-            trendMap.get(key)!.actual++;
+            const matchedJ = filledMap.get(`${s.teacherId}_${s.classId}_${s.subjectId}_${s.date}`);
+            if (matchedJ) entry.actual++;
+
+            const evalRes = evaluateSessionTimeliness(s, matchedJ, rules);
+            entry.timelinessScoreSum += evalRes.score;
           }
         }
       });
@@ -554,6 +780,7 @@ export const adminComplianceEngineService = {
         const actual = Math.min(val.actual, expected > 0 ? expected : val.actual);
         const missing = Math.max(0, expected - actual);
         const pct = expected > 0 ? Math.min(100, Math.round((actual / expected) * 100)) : (actual > 0 ? 100 : 0);
+        const onTimeRate = expected > 0 ? Math.round(val.timelinessScoreSum / expected) : null;
 
         trendItems.push({
           monthName,
@@ -561,7 +788,8 @@ export const adminComplianceEngineService = {
           expectedSessions: expected,
           actualJournals: actual,
           missingJournals: missing,
-          complianceRate: pct
+          complianceRate: pct,
+          onTimeRate
         });
       });
 
@@ -572,53 +800,48 @@ export const adminComplianceEngineService = {
     }
   },
 
-  // 7. Get System Recommendations (Data-driven Insights for Principal)
+  // 7. Get System Recommendations & Monthly Reports Highlights
   generateSystemRecommendations(
     summary: ComplianceSummary,
     rankings: TeacherComplianceRanking[]
   ): string[] {
     const recommendations: string[] = [];
 
-    // Overall compliance insight
     if (summary.overallPercentage >= 90) {
       recommendations.push(
         `Kepatuhan administrasi guru secara keseluruhan berada pada tingkat SANGAT BAIK (${summary.overallPercentage}%). Pertahankan konsistensi ini!`
       );
     } else if (summary.overallPercentage < 70) {
       recommendations.push(
-        `Tingkat kepatuhan administrasi guru membutuhkan perhatian khusus (${summary.overallPercentage}%). Diperlukan pembinaan langsung bagi guru yang memiliki persentase di bawah 70%.`
+        `Tingkat kepatuhan administrasi guru membutuhkan perhatian khusus (${summary.overallPercentage}%). Diperlukan pembinaan langsung bagi guru yang berada di bawah target.`
       );
     }
 
-    // Missing journals alert
     if (summary.totalMissingJournals > 0) {
       recommendations.push(
-        `Terdapat ${summary.totalMissingJournals} sesi mengajar yang belum diisi jurnalnya oleh guru. Lakukan pemeriksaan pada menu Drilldown.`
+        `Terdeteksi ${summary.totalMissingJournals} sesi mengajar yang BELUM diisi jurnalnya. Nilai ketepatan waktu disesuaikan menjadi 0 poin untuk sesi tersebut.`
       );
     }
 
-    // Top performers
-    const topPerformers = rankings.filter(r => r.totalScore === 100);
+    const topPerformers = rankings.filter(r => r.totalScore >= 95);
     if (topPerformers.length > 0) {
       const names = topPerformers.slice(0, 3).map(r => r.teacherName).join(", ");
       recommendations.push(
-        `Apresiasi khusus untuk guru dengan kepatuhan 100%: ${names}.`
+        `Apresiasi Guru Terdisiplin & Administrasi Terbaik: ${names}.`
       );
     }
 
-    // Teachers needing coaching
     const coachingNeeded = rankings.filter(r => r.category === "Perlu Pembinaan" || r.category === "Pembinaan Khusus");
     if (coachingNeeded.length > 0) {
-      const names = coachingNeeded.slice(0, 3).map(r => `${r.teacherName} (${r.totalScore}%)`).join(", ");
+      const names = coachingNeeded.slice(0, 3).map(r => `${r.teacherName} (Skor: ${r.totalScore})`).join(", ");
       recommendations.push(
-        `Diperlukan pendampingan administrasi untuk: ${names}.`
+        `Guru Perlu Pembinaan / Pendampingan: ${names}.`
       );
     }
 
-    // Late journals warning
-    if (summary.totalLateJournals > 3) {
+    if (summary.totalLateJournals > 0) {
       recommendations.push(
-        `Terdeteksi ${summary.totalLateJournals} kali pengisian jurnal terlambat (lebih dari 24 jam setelah sesi mengajar). Imbau guru untuk mengisi segera setelah QR Check-out.`
+        `Terdapat ${summary.totalLateJournals} jurnal diisi terlambat setelah sesi QR Check-out selesai.`
       );
     }
 
