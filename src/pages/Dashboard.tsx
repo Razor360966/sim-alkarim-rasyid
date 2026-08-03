@@ -22,8 +22,10 @@ import { halaqahGroupService } from "../services/halaqahGroupService";
 import { musrifJournalService } from "../services/musrifJournalService";
 import { realTeachingHoursService } from "../services/realTeachingHours.service";
 import { teacherTeachingAttendanceService } from "../services/teacherTeachingAttendance.service";
+import { teacherDisciplineService } from "../services/teacherDiscipline.service";
 import { WakasisDashboard } from "../components/dashboard/WakasisDashboard";
 import { WakasarprasDashboard } from "../components/dashboard/WakasarprasDashboard";
+import { ExecutiveComplianceDashboard } from "../components/dashboard/ExecutiveComplianceDashboard";
 import { 
   X,
   Users, 
@@ -48,7 +50,8 @@ import {
   ExternalLink,
   ClipboardList,
   AlertTriangle,
-  Bell
+  Bell,
+  Shield
 } from "lucide-react";
 import { 
   BarChart, 
@@ -323,6 +326,11 @@ export const Dashboard: React.FC = () => {
   const { data: allTeachingJournals = [] } = useQuery({
     queryKey: ["allTeachingJournals"],
     queryFn: () => teachingJournalService.getAll()
+  });
+
+  const { data: disciplineData } = useQuery({
+    queryKey: ["teacherDisciplineMetrics"],
+    queryFn: () => teacherDisciplineService.getDisciplineMetrics({})
   });
 
   const { data: allSchedules = [] } = useQuery({
@@ -2687,8 +2695,64 @@ export const Dashboard: React.FC = () => {
             })()}
           </div>
 
+          {/* EXECUTIVE COMPLIANCE ENGINE (EXPECTED VS ACTUAL) */}
+          <ExecutiveComplianceDashboard />
+
           {/* COMMAND CENTER MONITORING BENTO-GRID WIDGETS */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {/* WIDGET EXECUTIVE: KEDISIPLINAN GURU (QR CHECK-IN/CHECK-OUT & ANALISIS) */}
+            <div className="bg-white dark:bg-zinc-900 rounded-3xl border border-indigo-200 dark:border-indigo-900/40 p-6 shadow-xs space-y-4 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-black uppercase text-indigo-700 bg-indigo-50 dark:bg-indigo-950/40 px-2.5 py-1 rounded-md border border-indigo-200 dark:border-indigo-900/30">Executive KPI</span>
+                  <Shield className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+                </div>
+                <h3 className="font-black text-slate-800 dark:text-white text-sm">Kedisiplinan Mengajar Guru</h3>
+                <p className="text-[11px] text-slate-400 mt-1">Analisis otomatis skor kedisiplinan berbasis QR Check-in, Jam Pelajaran & Sesi Mengajar.</p>
+              </div>
+
+              <div className="bg-indigo-50/40 dark:bg-zinc-950/35 p-4 rounded-2xl border border-indigo-100 dark:border-zinc-850 space-y-3">
+                <div className="flex justify-between items-baseline">
+                  <span className="text-xs text-slate-500 dark:text-zinc-400 font-medium">Skor Rata-rata Sekolah</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-2xl font-black text-indigo-700 dark:text-indigo-400">
+                      {disciplineData?.summary?.avgSchoolDisciplineScore ?? 0}
+                    </span>
+                    <span className="text-xs font-bold text-slate-400">/100</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-[10px] border-t border-slate-200/50 dark:border-zinc-800/50 pt-2.5">
+                  <div className="bg-white dark:bg-zinc-900 p-2 rounded-xl border border-slate-100 dark:border-zinc-800 flex justify-between items-center">
+                    <span className="text-slate-500 font-medium">Sangat Disiplin</span>
+                    <span className="font-bold text-emerald-600">{disciplineData?.summary?.sangatDisiplinCount ?? 0}</span>
+                  </div>
+                  <div className="bg-white dark:bg-zinc-900 p-2 rounded-xl border border-slate-100 dark:border-zinc-800 flex justify-between items-center">
+                    <span className="text-slate-500 font-medium">Disiplin</span>
+                    <span className="font-bold text-blue-600">{disciplineData?.summary?.disiplinCount ?? 0}</span>
+                  </div>
+                  <div className="bg-white dark:bg-zinc-900 p-2 rounded-xl border border-slate-100 dark:border-zinc-800 flex justify-between items-center">
+                    <span className="text-slate-500 font-medium">Cukup Disiplin</span>
+                    <span className="font-bold text-amber-600">{disciplineData?.summary?.cukupDisiplinCount ?? 0}</span>
+                  </div>
+                  <div className="bg-white dark:bg-zinc-900 p-2 rounded-xl border border-slate-100 dark:border-zinc-800 flex justify-between items-center">
+                    <span className="text-slate-500 font-medium">Pembinaan</span>
+                    <span className="font-bold text-rose-600">
+                      {(disciplineData?.summary?.perluPembinaanCount ?? 0) + (disciplineData?.summary?.pembinaanKhususCount ?? 0)}
+                    </span>
+                  </div>
+                </div>
+
+                <Link
+                  to="/teacher-discipline"
+                  className="w-full text-center py-2.5 rounded-xl text-xs font-extrabold uppercase bg-indigo-600 hover:bg-indigo-700 text-white transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer mt-1"
+                >
+                  <Shield className="w-3.5 h-3.5" />
+                  <span>Buka Analitik Kedisiplinan Guru &rarr;</span>
+                </Link>
+              </div>
+            </div>
+
             {/* WIDGET 1: GTK & PEMBELAJARAN */}
             <div className="bg-white dark:bg-zinc-900 rounded-3xl border border-slate-200 dark:border-zinc-800 p-6 shadow-xs space-y-4 flex flex-col justify-between">
               <div>

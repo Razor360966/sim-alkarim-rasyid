@@ -65,6 +65,10 @@ export const teacherService = {
     }
   },
 
+  async getAllTeachers(): Promise<Teacher[]> {
+    return this.getTeachers();
+  },
+
   // Create new teacher with uniqueness validations
   async createTeacher(
     data: Omit<Teacher, "id" | "teacherId" | "createdAt" | "updatedAt" | "isDeleted" | "deletedAt" | "deletedBy" | "createdBy" | "updatedBy">,

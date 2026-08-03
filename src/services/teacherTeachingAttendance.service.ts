@@ -1325,6 +1325,21 @@ export const teacherTeachingAttendanceService = {
     }
   },
 
+  // Get all attendance records matching filters
+  async getAllAttendances(filters: {
+    academicYearId?: string;
+    semesterId?: string;
+    startDate?: string;
+    endDate?: string;
+    teacherId?: string;
+    subjectId?: string;
+    classId?: string;
+    gradeLevel?: string;
+  } = {}): Promise<TeacherTeachingAttendance[]> {
+    const recap = await this.getAttendanceRecap(filters);
+    return recap.rawRecords;
+  },
+
   // Get aggregated attendance summary for Rekap
   async getAttendanceRecap(filters: {
     academicYearId?: string;
