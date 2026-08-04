@@ -18,6 +18,7 @@ import { musrifJournalService } from "./musrifJournalService";
 import { gtkDevelopmentService } from "./gtkDevelopmentService";
 import { academicPlanningService } from "./academicPlanning.service";
 import { schoolSettingsService } from "./schoolSettings.service";
+import { teacherDisciplineService } from "./teacherDiscipline.service";
 
 export interface MasterJabatan {
   id: string; // e.g., "guru", "musrif"
@@ -471,6 +472,23 @@ export const sdmPerformanceService = {
         console.warn("Attendance rate calculation error:", e);
       }
 
+      // 8. Fetch Teacher Discipline Metrics from teacherDisciplineService
+      let disciplineScore = 100;
+      let disciplineCategory = "Sangat Disiplin";
+      try {
+        const discRes = await teacherDisciplineService.getDisciplineMetrics({
+          academicYearId,
+          semesterId,
+          teacherId
+        });
+        if (discRes.metrics.length > 0) {
+          disciplineScore = discRes.metrics[0].disciplineScore;
+          disciplineCategory = discRes.metrics[0].category;
+        }
+      } catch (e) {
+        console.warn("Discipline metrics fetch error in autoStats:", e);
+      }
+
       return {
         teachingJournals: teachingTotalSubmitted,
         teachingTotalSubmitted,
@@ -494,6 +512,10 @@ export const sdmPerformanceService = {
         mutabaahBulanIni,
         mutabaahSemester,
         mutabaahTahunan,
+
+        // Discipline (Otomatis dari QR Check-in/Check-out)
+        disciplineScore,
+        disciplineCategory,
 
         // Standard / Supervision (Otomatis)
         supervisions: supervisionsCount,
@@ -758,5 +780,19 @@ export const sdmPerformanceService = {
           }
         ];
     }
+  },
+
+  async getDistinctTeacherKpiSummary(academicYear?: string, semester?: string) {
+    const evs = await this.getEvaluations(academicYear, semester);
+    return Object.assign([...evs], {
+      evaluations: evs,
+      teachers: evs,
+      items: evs,
+      totalTeachers: evs.length
+    });
   }
 };
+
+export const getDistinctTeacherKpiSummary = (academicYear?: string, semester?: string) =>
+  sdmPerformanceService.getDistinctTeacherKpiSummary(academicYear, semester);
+

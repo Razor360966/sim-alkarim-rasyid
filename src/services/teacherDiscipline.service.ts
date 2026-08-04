@@ -487,5 +487,25 @@ export const teacherDisciplineService = {
       console.error("Error fetching discipline history:", error);
       return [];
     }
+  },
+
+  /**
+   * Get distinct teacher KPI summary metrics
+   */
+  async getDistinctTeacherKpiSummary(filters: any = {}) {
+    const metricsRes = await this.getDisciplineMetrics(filters);
+    const metrics = metricsRes.metrics || [];
+    return Object.assign([...metrics], {
+      summary: metricsRes.summary,
+      metrics,
+      rankings: metrics,
+      teachers: metrics,
+      items: metrics,
+      totalTeachers: metrics.length
+    });
   }
 };
+
+export const getDistinctTeacherKpiSummary = (filters?: any) =>
+  teacherDisciplineService.getDistinctTeacherKpiSummary(filters);
+

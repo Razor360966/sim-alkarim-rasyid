@@ -846,5 +846,24 @@ export const adminComplianceEngineService = {
     }
 
     return recommendations;
+  },
+
+  // 8. Get Distinct Teacher KPI Summary
+  async getDistinctTeacherKpiSummary(filters: ComplianceFilters = {}) {
+    const [summary, rankings] = await Promise.all([
+      this.calculateComplianceSummary(filters),
+      this.calculateTeacherAdministrationScore(filters)
+    ]);
+    return Object.assign([...rankings], {
+      summary,
+      rankings,
+      teachers: rankings,
+      items: rankings,
+      totalTeachers: rankings.length
+    });
   }
 };
+
+export const getDistinctTeacherKpiSummary = (filters?: ComplianceFilters) =>
+  adminComplianceEngineService.getDistinctTeacherKpiSummary(filters);
+

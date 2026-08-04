@@ -11,6 +11,8 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebase/config";
 
+import { adminComplianceEngineService } from "./adminComplianceEngine.service";
+
 export interface StudentViolation {
   id: string;
   studentId: string;
@@ -197,169 +199,60 @@ export const executiveDashboardService = {
 
   async seedInitialDataIfEmpty(): Promise<void> {
     try {
-      // 1. Violations Seeding
+      // Purge any dummy seeded records if present in student_violations
       const violSnapshot = await getDocs(collection(db, VIOLATIONS_COL));
-      if (violSnapshot.empty) {
-        console.log("Seeding initial student violations...");
-        const initialViolations: Omit<StudentViolation, "id" | "createdAt">[] = [
-          {
-            studentId: "std-01",
-            studentName: "Muhammad Al-Fatih",
-            className: "Kelas 7A",
-            violationType: "Ringan",
-            description: "Terlambat memasuki halaqah subuh selama 15 menit tanpa keterangan",
-            points: 5,
-            date: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
-          },
-          {
-            studentId: "std-02",
-            studentName: "Zaid Bin Haritsah",
-            className: "Kelas 7A",
-            violationType: "Sedang",
-            description: "Membawa barang elektronik (MP3 Player) yang dilarang di lingkungan pondok",
-            points: 15,
-            date: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
-          },
-          {
-            studentId: "std-03",
-            studentName: "Usamah Bin Zaid",
-            className: "Kelas 7A",
-            violationType: "Ringan",
-            description: "Tidak memakai kopiah dan pakaian rapi saat makan siang di kantin",
-            points: 2,
-            date: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
-          }
-        ];
-        for (const v of initialViolations) {
-          await this.addViolation(v);
+      const dummyStudentIds = ["std-01", "std-02", "std-03", "std-04", "std-05"];
+      for (const d of violSnapshot.docs) {
+        const data = d.data();
+        if (dummyStudentIds.includes(data.studentId) || data.studentName === "Muhammad Al-Fatih" || data.studentName === "Zaid Bin Haritsah" || data.studentName === "Usamah Bin Zaid") {
+          await deleteDoc(doc(db, VIOLATIONS_COL, d.id));
         }
       }
 
-      // 2. Rewards Seeding
+      // Purge dummy student_rewards
       const rewSnapshot = await getDocs(collection(db, REWARDS_COL));
-      if (rewSnapshot.empty) {
-        console.log("Seeding initial student rewards...");
-        const initialRewards: Omit<StudentReward, "id" | "createdAt">[] = [
-          {
-            studentId: "std-01",
-            studentName: "Muhammad Al-Fatih",
-            className: "Kelas 7A",
-            rewardType: "Tahfidz",
-            description: "Menyelesaikan hafalan Surah Al-Kahfi dengan tajwid sangat baik",
-            points: 20,
-            date: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
-          },
-          {
-            studentId: "std-04",
-            studentName: "Abdurrahman Al-Khattab",
-            className: "Kelas 7A",
-            rewardType: "Akhlak",
-            description: "Membantu membersihkan masjid raya pesantren di luar jadwal piket",
-            points: 10,
-            date: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
-          },
-          {
-            studentId: "std-05",
-            studentName: "Hamzah Bin Abdul Muthalib",
-            className: "Kelas 8A",
-            rewardType: "Akademik",
-            description: "Juara 1 Lomba Cepat Tepat Bahasa Arab tingkat kabupaten",
-            points: 50,
-            date: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
-          }
-        ];
-        for (const r of initialRewards) {
-          await this.addReward(r);
+      for (const d of rewSnapshot.docs) {
+        const data = d.data();
+        if (dummyStudentIds.includes(data.studentId) || data.studentName === "Muhammad Al-Fatih" || data.studentName === "Abdurrahman Al-Khattab" || data.studentName === "Hamzah Bin Abdul Muthalib") {
+          await deleteDoc(doc(db, REWARDS_COL, d.id));
         }
       }
 
-      // 3. Inventory Seeding
+      // Purge dummy sarpras_inventory
+      const dummyInventoryNames = [
+        "Proyektor BenQ MX550",
+        "Meja Belajar Kayu Jati",
+        "Kitab Tafsir Jalalain",
+        "Air Conditioning (AC) Daikin 1 PK",
+        "Sajadah Tebal Turki"
+      ];
       const invSnapshot = await getDocs(collection(db, INVENTORY_COL));
-      if (invSnapshot.empty) {
-        console.log("Seeding initial inventory...");
-        const initialInventory: Omit<SarprasInventory, "id" | "createdAt">[] = [
-          {
-            itemName: "Proyektor BenQ MX550",
-            category: "Elektronik",
-            quantity: 5,
-            goodConditionCount: 4,
-            damagedConditionCount: 1,
-            location: "Ruang Guru & Kelas 7"
-          },
-          {
-            itemName: "Meja Belajar Kayu Jati",
-            category: "Mebel",
-            quantity: 120,
-            goodConditionCount: 112,
-            damagedConditionCount: 8,
-            location: "Seluruh Ruang Kelas"
-          },
-          {
-            itemName: "Kitab Tafsir Jalalain",
-            category: "Kitab",
-            quantity: 80,
-            goodConditionCount: 80,
-            damagedConditionCount: 0,
-            location: "Perpustakaan & Asrama"
-          },
-          {
-            itemName: "Air Conditioning (AC) Daikin 1 PK",
-            category: "Elektronik",
-            quantity: 8,
-            goodConditionCount: 6,
-            damagedConditionCount: 2,
-            location: "Asrama Guru & Masjid"
-          },
-          {
-            itemName: "Sajadah Tebal Turki",
-            category: "Fasilitas",
-            quantity: 150,
-            goodConditionCount: 145,
-            damagedConditionCount: 5,
-            location: "Masjid Al-Karim"
-          }
-        ];
-        for (const i of initialInventory) {
-          await this.addInventory(i);
+      for (const d of invSnapshot.docs) {
+        const data = d.data();
+        if (dummyInventoryNames.includes(data.itemName)) {
+          await deleteDoc(doc(db, INVENTORY_COL, d.id));
         }
       }
 
-      // 4. Maintenance Seeding
+      // Purge dummy sarpras_maintenance
+      const dummyReporters = ["Ustadz Mansur", "Ustadzah Rasyidah", "Ustadz Zulkifli"];
       const maintSnapshot = await getDocs(collection(db, MAINTENANCE_COL));
-      if (maintSnapshot.empty) {
-        console.log("Seeding initial maintenance...");
-        const initialMaintenance: Omit<SarprasMaintenance, "id" | "createdAt">[] = [
-          {
-            itemName: "Air Conditioning (AC) Daikin 1 PK",
-            reporterName: "Ustadz Mansur",
-            issueDescription: "AC mengeluarkan suara bising dan tidak dingin di Kamar Asrama 3-B",
-            status: "Sedang Diperbaiki",
-            cost: 250000,
-            date: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
-          },
-          {
-            itemName: "Proyektor BenQ MX550",
-            reporterName: "Ustadzah Rasyidah",
-            issueDescription: "Lampu indikator berkedip merah dan tidak memancarkan cahaya di Kelas 7A",
-            status: "Dilaporkan",
-            cost: 0,
-            date: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
-          },
-          {
-            itemName: "Meja Belajar Kayu Jati",
-            reporterName: "Ustadz Zulkifli",
-            issueDescription: "Engsel pintu laci meja guru di Kelas 9B lepas",
-            status: "Selesai",
-            cost: 45000,
-            date: new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
-          }
-        ];
-        for (const m of initialMaintenance) {
-          await this.addMaintenance(m);
+      for (const d of maintSnapshot.docs) {
+        const data = d.data();
+        if (dummyReporters.includes(data.reporterName) || dummyInventoryNames.includes(data.itemName)) {
+          await deleteDoc(doc(db, MAINTENANCE_COL, d.id));
         }
       }
     } catch (e) {
-      console.error("Error seeding initial dashboard data:", e);
+      console.error("Error purging dummy dashboard data:", e);
     }
+  },
+
+  async getDistinctTeacherKpiSummary(filters: any = {}) {
+    return adminComplianceEngineService.getDistinctTeacherKpiSummary(filters);
   }
 };
+
+export const getDistinctTeacherKpiSummary = (filters?: any) =>
+  executiveDashboardService.getDistinctTeacherKpiSummary(filters);
+
