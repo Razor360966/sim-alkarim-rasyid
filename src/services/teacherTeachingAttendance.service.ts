@@ -218,6 +218,66 @@ export function parseJPCount(jpStr?: string): number {
   return 1;
 }
 
+export function parseTimeToMinutes(timeStr?: string): number {
+  if (!timeStr) return 0;
+  const parts = timeStr.trim().split(":");
+  if (parts.length < 2) return 0;
+  const h = parseInt(parts[0], 10) || 0;
+  const m = parseInt(parts[1], 10) || 0;
+  return h * 60 + m;
+}
+
+export function calculateDurationInMinutes(startStr: string, endStr: string): number {
+  const startM = parseTimeToMinutes(startStr);
+  const endM = parseTimeToMinutes(endStr);
+  return Math.max(0, endM - startM);
+}
+
+export function formatMinutesToTime(totalM: number): string {
+  const h = Math.floor(totalM / 60) % 24;
+  const m = totalM % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+export function validateCheckInWindow(timeSlot?: string, sequence?: number, currentM?: number): {
+  isValid: boolean;
+  isLate: boolean;
+  isTooEarly: boolean;
+  startM: number;
+  endM: number;
+  startStr: string;
+  endStr: string;
+} {
+  const m = currentM !== undefined ? currentM : 0;
+  let startM = 0;
+  let endM = 0;
+  let startStr = "07:30";
+  let endStr = "08:15";
+
+  if (timeSlot && timeSlot.includes("-")) {
+    const parts = timeSlot.split("-").map(s => s.trim());
+    startStr = parts[0];
+    endStr = parts[1];
+    startM = parseTimeToMinutes(startStr);
+    endM = parseTimeToMinutes(endStr);
+  } else {
+    const seq = sequence || 1;
+    startM = 450 + (seq - 1) * 45;
+    endM = startM + 45;
+    startStr = formatMinutesToTime(startM);
+    endStr = formatMinutesToTime(endM);
+  }
+
+  const earliestCheckInM = startM - 15;
+  const latestValidM = endM + 60;
+
+  const isTooEarly = m < earliestCheckInM;
+  const isValid = m >= earliestCheckInM && m <= latestValidM;
+  const isLate = m > startM + 15;
+
+  return { isValid, isLate, isTooEarly, startM, endM, startStr, endStr };
+}
+
 function createEmptySummary(teacherId: string, teacherName: string): TeacherAttendanceSummary {
   return {
     teacherId,
@@ -248,108 +308,6 @@ function createEmptySummary(teacherId: string, teacherName: string): TeacherAtte
     kbmDitiadakanJP: 0,
     percentage: 0
   };
-}
-
-export function getLessonPeriodTimeRange(item: Pick<TeacherTeachingAttendance, "timeSlot" | "sequence">): { startM: number; endM: number; startStr: string; endStr: string } {
-  if (item.timeSlot && item.timeSlot.includes("-")) {
-    const [startStr, endStr] = item.timeSlot.split("-").map(s => s.trim());
-    const startM = parseTimeToMinutes(startStr);
-    const endM = parseTimeToMinutes(endStr);
-    return { startM, endM, startStr, endStr };
-  }
-
-  const startM = 450 + (Math.max(1, item.sequence || 1) - 1) * 45;
-  const endM = startM + 45;
-  return {
-    startM,
-    endM,
-    startStr: formatMinutesToTime(startM),
-    endStr: formatMinutesToTime(endM)
-  };
-}
-
-export function getCheckInValidationOutcome(
-  lessonStartTime: string | number,
-  scanTime: string,
-  options?: { allowTolerantEarlyCheckIn?: boolean }
-): {
-  status: "on_time" | "late" | "rejected";
-  diffMinutes: number;
-  lessonStartMinutes: number;
-  scanMinutes: number;
-  message: string;
-} {
-  const lessonStartMinutes = typeof lessonStartTime === "number" ? lessonStartTime : parseTimeToMinutes(lessonStartTime);
-  const scanMinutes = parseTimeToMinutes(scanTime);
-  const diffMinutes = scanMinutes - lessonStartMinutes;
-
-  if (scanMinutes < lessonStartMinutes - 15) {
-    return {
-      status: "rejected",
-      diffMinutes,
-      lessonStartMinutes,
-      scanMinutes,
-      message: `Terlalu awal. Check-in baru dapat dilakukan 15 menit sebelum jam ${formatMinutesToTime(lessonStartMinutes)} WIB.`
-    };
-  }
-
-  if (diffMinutes >= -15 && diffMinutes <= 15) {
-    return {
-      status: "on_time",
-      diffMinutes,
-      lessonStartMinutes,
-      scanMinutes,
-      message: "Tepat Waktu"
-    };
-  }
-
-  if (diffMinutes > 15 && diffMinutes <= 25) {
-    return {
-      status: "late",
-      diffMinutes,
-      lessonStartMinutes,
-      scanMinutes,
-      message: "Terlambat"
-    };
-  }
-
-  return {
-    status: "rejected",
-    diffMinutes,
-    lessonStartMinutes,
-    scanMinutes,
-    message: "Batas waktu Check-in telah terlampaui. Silakan melapor kepada Wakil Kepala Sekolah Bidang Kurikulum untuk memperoleh persetujuan absensi susulan."
-  };
-}
-
-export function applyMultiJpAttendancePropagation(
-  items: TeacherTeachingAttendance[],
-  checkInTime: string,
-  checkOutTime: string,
-  overrideStatus?: AttendanceTeachingStatus
-): TeacherTeachingAttendance[] {
-  const clone = items.map(item => ({ ...item }));
-  const startM = parseTimeToMinutes(checkInTime);
-  const endM = parseTimeToMinutes(checkOutTime);
-
-  if (!startM || !endM || endM <= startM) return clone;
-
-  clone.forEach(targetRec => {
-    if (!targetRec.timeSlot && !targetRec.sequence) return;
-    const range = getLessonPeriodTimeRange(targetRec);
-    const overlaps = startM <= range.endM - 10 && endM >= range.startM + 10;
-
-    if (overlaps) {
-      targetRec.checkInTime = checkInTime;
-      targetRec.checkOutTime = checkOutTime;
-      targetRec.checkInLogs = [{ checkIn: checkInTime, checkOut: checkOutTime, durationMinutes: Math.max(0, endM - startM) }];
-      targetRec.checkInType = "Scan QR";
-      targetRec.status = overrideStatus || (targetRec.status === "Terlambat" ? "Terlambat" : "Hadir Mengajar");
-      targetRec.teachingDurationMinutes = Math.max(targetRec.teachingDurationMinutes || 0, Math.max(0, endM - startM));
-    }
-  });
-
-  return clone;
 }
 
 export const teacherTeachingAttendanceService = {
@@ -604,20 +562,32 @@ export const teacherTeachingAttendanceService = {
         const masterOutM = parseTimeToMinutes(masterRec.checkOutTime);
         if (masterInM <= 0 || masterOutM <= 0 || masterOutM <= masterInM) return;
 
-        const propagated = applyMultiJpAttendancePropagation(sessionGroup, masterRec.checkInTime!, masterRec.checkOutTime!, masterRec.status as AttendanceTeachingStatus);
-        propagated.forEach((updatedRec, index) => {
-          const originalIndex = sessionGroup.findIndex(item => item.scheduleId === updatedRec.scheduleId);
-          if (originalIndex >= 0) {
-            sessionGroup[originalIndex] = updatedRec;
-          }
-        });
-
         sessionGroup.forEach((targetRec) => {
-          const evalRes = teacherTeachingAttendanceService.evaluateAttendanceApprovalStatus(targetRec);
-          if (!targetRec.validatedByUserId) {
-            targetRec.attendanceStatus = evalRes.attendanceStatus;
-            targetRec.approvalType = evalRes.approvalType;
-            targetRec.pendingReason = evalRes.pendingReason;
+          let targetStartM = 0;
+          let targetEndM = 0;
+          if (targetRec.timeSlot && targetRec.timeSlot.includes("-")) {
+            const [s, e] = targetRec.timeSlot.split("-").map(x => x.trim());
+            targetStartM = parseTimeToMinutes(s);
+            targetEndM = parseTimeToMinutes(e);
+          } else {
+            targetStartM = 450 + (targetRec.sequence - 1) * 45;
+            targetEndM = targetStartM + 45;
+          }
+
+          if (masterInM <= targetEndM - 10 && masterOutM >= targetStartM + 10) {
+            targetRec.checkInTime = masterRec.checkInTime;
+            targetRec.checkOutTime = masterRec.checkOutTime;
+            targetRec.checkInLogs = masterRec.checkInLogs;
+            targetRec.checkInType = masterRec.checkInType || "Scan QR";
+            targetRec.status = masterRec.status === "Terlambat" ? "Terlambat" : "Hadir Mengajar";
+            targetRec.teachingDurationMinutes = masterRec.teachingDurationMinutes;
+
+            const evalRes = this.evaluateAttendanceApprovalStatus(targetRec);
+            if (!targetRec.validatedByUserId) {
+              targetRec.attendanceStatus = evalRes.attendanceStatus;
+              targetRec.approvalType = evalRes.approvalType;
+              targetRec.pendingReason = evalRes.pendingReason;
+            }
           }
         });
       });
@@ -1835,9 +1805,6 @@ export const teacherTeachingAttendanceService = {
 
       let selectedScheduleItem: TeacherTeachingAttendance | null = null;
       let isLateCheckIn = false;
-      let firstLessonStartM = 0;
-      let firstLessonStartStr = "07:30";
-      let firstLessonEndStr = "08:15";
 
       // Check if there is an active checked-in session in this class that needs Check-Out
       const activeCheckedInItem = classTeacherItems.find(item => {
@@ -1872,12 +1839,10 @@ export const teacherTeachingAttendanceService = {
 
           if (currentM >= earliestCheckInM && currentM <= latestValidM) {
             selectedScheduleItem = item;
-            firstLessonStartM = startM;
-            firstLessonStartStr = startStr;
-            firstLessonEndStr = endStr;
-            const validation = getCheckInValidationOutcome(startM, currentTimeStr);
-            isLateCheckIn = validation.status === "late";
-            console.log("[QR Audit Step 8] Selected session by time window:", item.className, item.jp, "Start:", startM, "End:", endM, "Late:", isLateCheckIn, "Validation:", validation);
+            if (currentM > startM + 15) {
+              isLateCheckIn = true;
+            }
+            console.log("[QR Audit Step 8] Selected session by time window:", item.className, item.jp, "Start:", startM, "End:", endM, "Late:", isLateCheckIn);
             break;
           }
         }
@@ -1891,20 +1856,18 @@ export const teacherTeachingAttendanceService = {
               startStr = uncompleted.timeSlot.split("-")[0].trim();
             }
             const startM = parseTimeToMinutes(startStr);
-            const validation = getCheckInValidationOutcome(startM, currentTimeStr);
-            if (validation.status === "rejected") {
-              console.warn("[QR Audit Step 8 FAILED] Check-in rejected by validation:", validation);
+            if (currentM < startM - 15) {
+              console.warn("[QR Audit Step 8 FAILED] Check-in attempted too early");
               return {
                 success: false,
-                message: validation.message
+                message: `Terlalu awal. Check-In untuk kelas ${uncompleted.className} (${uncompleted.jp}) baru dapat dilakukan 15 menit sebelum jam ${startStr} (mulai ${formatMinutesToTime(startM - 15)} WIB).`
               };
             }
             selectedScheduleItem = uncompleted;
-            firstLessonStartM = startM;
-            firstLessonStartStr = startStr;
-            firstLessonEndStr = uncompleted.timeSlot?.split("-")[1]?.trim() || formatMinutesToTime(startM + 45);
-            isLateCheckIn = validation.status === "late";
-            console.log("[QR Audit Step 8] Selected fallback uncompleted session:", selectedScheduleItem.className, selectedScheduleItem.jp, "Validation:", validation);
+            if (currentM > startM + 15) {
+              isLateCheckIn = true;
+            }
+            console.log("[QR Audit Step 8] Selected fallback uncompleted session:", selectedScheduleItem.className, selectedScheduleItem.jp);
           } else {
             selectedScheduleItem = classTeacherItems[0];
           }
@@ -1937,12 +1900,6 @@ export const teacherTeachingAttendanceService = {
         endStr = formatMinutesToTime(scheduleEndM);
       }
 
-      if (firstLessonStartM === 0) {
-        firstLessonStartM = scheduleStartM;
-        firstLessonStartStr = startStr;
-        firstLessonEndStr = endStr;
-      }
-
       // Check break time intersection for this schedule slot
       const spanningBreak = breakTimes.find((b: any) => {
         const bStartM = parseTimeToMinutes(b.start);
@@ -1954,11 +1911,11 @@ export const teacherTeachingAttendanceService = {
       const logs = selectedScheduleItem.checkInLogs || [];
       const activeLogIndex = logs.findIndex(l => !l.checkOut);
 
-      const initialValidation = getCheckInValidationOutcome(scheduleStartM, currentTimeStr);
-      if (logs.length === 0 && initialValidation.status === "rejected") {
+      // Check if Check-In attempted too early (more than 15 mins before schedule start)
+      if (logs.length === 0 && currentM < scheduleStartM - 15) {
         return {
           success: false,
-          message: initialValidation.message
+          message: `Terlalu awal. Check-In untuk kelas ${selectedScheduleItem.className} (${selectedScheduleItem.jp}) baru dapat dilakukan 15 menit sebelum jam ${startStr} (mulai ${formatMinutesToTime(scheduleStartM - 15)} WIB).`
         };
       }
 
@@ -2024,21 +1981,13 @@ export const teacherTeachingAttendanceService = {
         }
 
         action = "CHECK_IN";
-        const validation = getCheckInValidationOutcome(scheduleStartM, currentTimeStr);
-        if (validation.status === "rejected") {
-          return {
-            success: false,
-            message: validation.message
-          };
-        }
-
         const newLog = { checkIn: currentTimeStr };
         logs.push(newLog);
 
         selectedScheduleItem.checkInTime = selectedScheduleItem.checkInTime || currentTimeStr;
         selectedScheduleItem.checkInLogs = logs;
         selectedScheduleItem.checkInType = "Scan QR";
-        selectedScheduleItem.status = validation.status === "late" ? "Terlambat" : "Hadir Mengajar";
+        selectedScheduleItem.status = isLateCheckIn ? "Terlambat" : "Hadir Mengajar";
         selectedScheduleItem.updatedAt = new Date().toISOString();
 
         if (spanningBreak && logs.length === 2) {
@@ -2086,7 +2035,6 @@ export const teacherTeachingAttendanceService = {
       );
 
       // Multi-JP Spanning Save: If CHECK_OUT covers other JPs for this teacher in this class, update & save them too
-      const updatedMultiJpRecords: TeacherTeachingAttendance[] = [];
       if (action === "CHECK_OUT" && selectedScheduleItem.checkInTime) {
         const checkInM = parseTimeToMinutes(selectedScheduleItem.checkInTime);
         const checkOutM = parseTimeToMinutes(currentTimeStr);
@@ -2094,51 +2042,40 @@ export const teacherTeachingAttendanceService = {
         for (const otherItem of classTeacherItems) {
           if (otherItem.id === selectedScheduleItem.id || otherItem.scheduleId === selectedScheduleItem.scheduleId) continue;
 
-          const targetRange = getLessonPeriodTimeRange(otherItem);
-          if (checkInM <= targetRange.endM - 10 && checkOutM >= targetRange.startM + 10) {
-            const propagatedItem = { ...otherItem };
-            propagatedItem.checkInTime = selectedScheduleItem.checkInTime;
-            propagatedItem.checkOutTime = currentTimeStr;
-            propagatedItem.teachingDurationMinutes = selectedScheduleItem.teachingDurationMinutes;
-            propagatedItem.checkInLogs = selectedScheduleItem.checkInLogs;
-            propagatedItem.checkInType = "Scan QR";
-            propagatedItem.status = selectedScheduleItem.status || "Hadir Mengajar";
-            propagatedItem.updatedAt = new Date().toISOString();
+          let targetStartM = 0;
+          let targetEndM = 0;
+          if (otherItem.timeSlot && otherItem.timeSlot.includes("-")) {
+            const [s, e] = otherItem.timeSlot.split("-").map(x => x.trim());
+            targetStartM = parseTimeToMinutes(s);
+            targetEndM = parseTimeToMinutes(e);
+          } else {
+            targetStartM = 450 + (otherItem.sequence - 1) * 45;
+            targetEndM = targetStartM + 45;
+          }
+
+          if (checkInM <= targetEndM - 10 && checkOutM >= targetStartM + 10) {
+            otherItem.checkInTime = selectedScheduleItem.checkInTime;
+            otherItem.checkOutTime = currentTimeStr;
+            otherItem.teachingDurationMinutes = selectedScheduleItem.teachingDurationMinutes;
+            otherItem.checkInLogs = selectedScheduleItem.checkInLogs;
+            otherItem.checkInType = "Scan QR";
+            otherItem.status = selectedScheduleItem.status || "Hadir Mengajar";
+            otherItem.updatedAt = new Date().toISOString();
 
             if (matchedClass?.id) {
-              propagatedItem.classId = matchedClass.id;
-              propagatedItem.className = matchedClass.name;
+              otherItem.classId = matchedClass.id;
+              otherItem.className = matchedClass.name;
             }
 
-            updatedMultiJpRecords.push(propagatedItem);
             await this.saveSingleSessionAttendance(
               todayStr,
-              propagatedItem,
+              otherItem,
               currentUserId,
               params.currentUser.name || auth?.currentUser?.displayName || "Guru",
               `QR Code ${action} (Spanned Multi-JP): ${currentTimeStr}`
             );
           }
         }
-      }
-
-      if (import.meta.env && import.meta.env.DEV) {
-        const markedPresent = action === "CHECK_OUT"
-          ? updatedMultiJpRecords.length + 1
-          : 1;
-        console.log("[QR DEV LOG] Teacher Attendance Validation", {
-          teacherId: currentUserId,
-          classIdQr: parsedJson?.classId || matchedClass?.id || targetClassName,
-          subjectId: selectedScheduleItem.subjectId,
-          lessonPeriodAwal: firstLessonStartStr || startStr,
-          lessonPeriodAkhir: firstLessonEndStr || endStr,
-          jamMulai: firstLessonStartStr || startStr,
-          jamSelesai: endStr,
-          waktuScan: currentTimeStr,
-          selisihMenit: getCheckInValidationOutcome(firstLessonStartM || scheduleStartM, currentTimeStr).diffMinutes,
-          statusHasilValidasi: getCheckInValidationOutcome(firstLessonStartM || scheduleStartM, currentTimeStr).status,
-          jumlahJpDitandaiHadir: markedPresent
-        });
       }
 
       console.log("[QR Audit Step 10] Record Saved to Firestore successfully. Done!");
@@ -2407,27 +2344,19 @@ export const teacherTeachingAttendanceService = {
     });
 
     return rawRecords;
-  }
+  },
+
+  // Alias for processQrCheckOut (calls processQrCheckIn which dynamically handles both check-in and check-out)
+  async processQrCheckOut(params: {
+    scannedContent: string;
+    currentUser: { id?: string; uid?: string; userId?: string; name: string; teacherId?: string; role?: string };
+    academicYearId?: string;
+    semesterId?: string;
+    customTimeStr?: string;
+  }) {
+    return this.processQrCheckIn(params);
+  },
+
+  validateCheckInWindow
 };
-
-function parseTimeToMinutes(timeStr?: string): number {
-  if (!timeStr) return 0;
-  const parts = timeStr.trim().split(":");
-  if (parts.length < 2) return 0;
-  const h = parseInt(parts[0], 10) || 0;
-  const m = parseInt(parts[1], 10) || 0;
-  return h * 60 + m;
-}
-
-function calculateDurationInMinutes(startStr: string, endStr: string): number {
-  const startM = parseTimeToMinutes(startStr);
-  const endM = parseTimeToMinutes(endStr);
-  return Math.max(0, endM - startM);
-}
-
-function formatMinutesToTime(totalM: number): string {
-  const h = Math.floor(totalM / 60) % 24;
-  const m = totalM % 60;
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-}
 

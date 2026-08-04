@@ -206,45 +206,6 @@ export const TeachingQrCheckInPage: React.FC = () => {
     }
   };
 
-  // Start Camera QR Scanner
-  const startScanner = async () => {
-    setScanResult(null);
-    setIsScanning(true);
-
-    try {
-      if (!scannerRef.current) {
-        scannerRef.current = new Html5Qrcode(scannerContainerId);
-      }
-
-      const config = {
-        fps: 10,
-        qrbox: { width: 250, height: 250 },
-        aspectRatio: 1.0
-      };
-
-      await scannerRef.current.start(
-        { facingMode: "environment" },
-        config,
-        async (decodedText) => {
-          // On QR Code detected!
-          if (processing) return;
-          stopScanner();
-          handleScanContent(decodedText);
-        },
-        () => {
-          // Frame error ignored
-        }
-      );
-    } catch (err) {
-      console.error("Camera start error:", err);
-      setIsScanning(false);
-      setScanResult({
-        type: "error",
-        message: "Gagal mengakses kamera. Pastikan izin kamera telah diberikan atau gunakan pilihan simulasi kelas di bawah."
-      });
-    }
-  };
-
   // Stop Camera Scanner
   const stopScanner = async () => {
     if (scannerRef.current) {
@@ -259,20 +220,6 @@ export const TeachingQrCheckInPage: React.FC = () => {
     }
     setIsScanning(false);
   };
-
-  // Clean up scanner on unmount
-  useEffect(() => {
-    return () => {
-      if (scannerRef.current) {
-        try {
-          const state = scannerRef.current.getState();
-          if (state === Html5QrcodeScannerState.SCANNING || state === Html5QrcodeScannerState.PAUSED) {
-            scannerRef.current.stop().catch(() => {});
-          }
-        } catch (e) {}
-      }
-    };
-  }, []);
 
   // Process Scanned QR Content
   const handleScanContent = async (scannedContent: string) => {
@@ -322,6 +269,45 @@ export const TeachingQrCheckInPage: React.FC = () => {
       });
     } finally {
       setProcessing(false);
+    }
+  };
+
+  // Start Camera QR Scanner
+  const startScanner = async () => {
+    setScanResult(null);
+    setIsScanning(true);
+
+    try {
+      if (!scannerRef.current) {
+        scannerRef.current = new Html5Qrcode(scannerContainerId);
+      }
+
+      const config = {
+        fps: 10,
+        qrbox: { width: 250, height: 250 },
+        aspectRatio: 1.0
+      };
+
+      await scannerRef.current.start(
+        { facingMode: "environment" },
+        config,
+        async (decodedText) => {
+          // On QR Code detected!
+          if (processing) return;
+          stopScanner();
+          handleScanContent(decodedText);
+        },
+        () => {
+          // Frame error ignored
+        }
+      );
+    } catch (err) {
+      console.error("Camera start error:", err);
+      setIsScanning(false);
+      setScanResult({
+        type: "error",
+        message: "Gagal mengakses kamera. Pastikan izin kamera telah diberikan atau gunakan pilihan simulasi kelas di bawah."
+      });
     }
   };
 
@@ -653,3 +639,5 @@ export const TeachingQrCheckInPage: React.FC = () => {
     </div>
   );
 };
+
+export default TeachingQrCheckInPage;

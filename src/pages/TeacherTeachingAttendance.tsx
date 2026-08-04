@@ -771,6 +771,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
   const tukarJpRecords = useMemo(() => rawRecords.filter(r => r.status === "Tukar Jadwal"), [rawRecords]);
   const tidakHadirRecords = useMemo(() => rawRecords.filter(r => r.status === "Tidak Hadir"), [rawRecords]);
   const belumDiverifikasiRecords = useMemo(() => rawRecords.filter(r => !r.status || r.status === "Belum Diverifikasi"), [rawRecords]);
+  const distinctTeacherKpiSummary = useMemo(() => teacherTeachingAttendanceService.getDistinctTeacherKpiSummary(rawRecords), [rawRecords]);
 
   // Unreplaced teaching sessions: status Digantikan Guru Lain but substitute teacher is missing
   const unreplacedRecords = useMemo(() => digantiRecords.filter(r => !r.substituteTeacherId && !r.substituteTeacherName), [digantiRecords]);
@@ -2545,11 +2546,11 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                     <UserCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
                   </div>
                   <div className="text-2xl font-black text-emerald-700 dark:text-emerald-300">
-                    {hadirRecords.length}
+                    {distinctTeacherKpiSummary.hadirUniqueTeachers}
                   </div>
                 </div>
                 <div className="mt-2 pt-2 border-t border-emerald-200/60 dark:border-emerald-900/50 flex items-center justify-between text-[10px] font-bold text-emerald-800 dark:text-emerald-300">
-                  <span>Sesi Hadir</span>
+                  <span>Guru Unik</span>
                   <ChevronRight className="w-3 h-3 text-emerald-600 group-hover:translate-x-0.5 transition-transform" />
                 </div>
               </div>
@@ -2565,11 +2566,11 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                     <Clock className="w-4 h-4 text-blue-600 dark:text-blue-400 group-hover:scale-110 transition-transform" />
                   </div>
                   <div className="text-2xl font-black text-blue-700 dark:text-blue-300">
-                    {tugasRecords.length}
+                    {distinctTeacherKpiSummary.tugasUniqueTeachers}
                   </div>
                 </div>
                 <div className="mt-2 pt-2 border-t border-blue-200/60 dark:border-blue-900/50 flex items-center justify-between text-[10px] font-bold text-blue-800 dark:text-blue-300">
-                  <span>Sesi Dinas</span>
+                  <span>Guru Unik</span>
                   <ChevronRight className="w-3 h-3 text-blue-600 group-hover:translate-x-0.5 transition-transform" />
                 </div>
               </div>
@@ -2585,11 +2586,11 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                     <Info className="w-4 h-4 text-yellow-600 dark:text-yellow-400 group-hover:scale-110 transition-transform" />
                   </div>
                   <div className="text-2xl font-black text-yellow-700 dark:text-yellow-300">
-                    {izinRecords.length}
+                    {distinctTeacherKpiSummary.izinUniqueTeachers}
                   </div>
                 </div>
                 <div className="mt-2 pt-2 border-t border-yellow-200/60 dark:border-yellow-900/50 flex items-center justify-between text-[10px] font-bold text-yellow-800 dark:text-yellow-300">
-                  <span>Sesi Izin</span>
+                  <span>Guru Unik</span>
                   <ChevronRight className="w-3 h-3 text-yellow-600 group-hover:translate-x-0.5 transition-transform" />
                 </div>
               </div>
@@ -2605,11 +2606,11 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                     <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-transform" />
                   </div>
                   <div className="text-2xl font-black text-amber-700 dark:text-amber-300">
-                    {sakitRecords.length}
+                    {distinctTeacherKpiSummary.sakitUniqueTeachers}
                   </div>
                 </div>
                 <div className="mt-2 pt-2 border-t border-amber-200/60 dark:border-amber-900/50 flex items-center justify-between text-[10px] font-bold text-amber-800 dark:text-amber-300">
-                  <span>Sesi Sakit</span>
+                  <span>Guru Unik</span>
                   <ChevronRight className="w-3 h-3 text-amber-600 group-hover:translate-x-0.5 transition-transform" />
                 </div>
               </div>
@@ -2625,11 +2626,11 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                     <RefreshCw className="w-4 h-4 text-orange-600 dark:text-orange-400 group-hover:rotate-45 transition-transform" />
                   </div>
                   <div className="text-2xl font-black text-orange-700 dark:text-orange-300">
-                    {digantiRecords.length}
+                    {distinctTeacherKpiSummary.digantiUniqueTeachers}
                   </div>
                 </div>
                 <div className="mt-2 pt-2 border-t border-orange-200/60 dark:border-orange-900/50 flex items-center justify-between text-[10px] font-bold text-orange-800 dark:text-orange-300">
-                  <span>{unreplacedRecords.length > 0 ? `⚠️ ${unreplacedRecords.length} Belum Diganti` : "Sesi Diganti"}</span>
+                  <span>{unreplacedRecords.length > 0 ? `⚠️ ${unreplacedRecords.length} Belum Diganti` : "Guru Unik"}</span>
                   <ChevronRight className="w-3 h-3 text-orange-600 group-hover:translate-x-0.5 transition-transform" />
                 </div>
               </div>
@@ -2645,11 +2646,11 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                     <ArrowRightLeft className="w-4 h-4 text-purple-600 dark:text-purple-400 group-hover:scale-110 transition-transform" />
                   </div>
                   <div className="text-2xl font-black text-purple-700 dark:text-purple-300">
-                    {tukarJpRecords.length}
+                    {distinctTeacherKpiSummary.tukarJadwalUniqueTeachers}
                   </div>
                 </div>
                 <div className="mt-2 pt-2 border-t border-purple-200/60 dark:border-purple-900/50 flex items-center justify-between text-[10px] font-bold text-purple-800 dark:text-purple-300">
-                  <span>Pertukaran JP</span>
+                  <span>Guru Unik</span>
                   <ChevronRight className="w-3 h-3 text-purple-600 group-hover:translate-x-0.5 transition-transform" />
                 </div>
               </div>
@@ -2665,11 +2666,11 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                     <UserX className="w-4 h-4 text-rose-600 dark:text-rose-400 group-hover:scale-110 transition-transform" />
                   </div>
                   <div className="text-2xl font-black text-rose-700 dark:text-rose-300">
-                    {tidakHadirRecords.length}
+                    {distinctTeacherKpiSummary.tidakHadirUniqueTeachers}
                   </div>
                 </div>
                 <div className="mt-2 pt-2 border-t border-rose-200/60 dark:border-rose-900/50 flex items-center justify-between text-[10px] font-bold text-rose-800 dark:text-rose-300">
-                  <span>Tidak Hadir</span>
+                  <span>Guru Unik</span>
                   <ChevronRight className="w-3 h-3 text-rose-600 group-hover:translate-x-0.5 transition-transform" />
                 </div>
               </div>
@@ -2959,6 +2960,29 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                   <FileSpreadsheet className="w-3.5 h-3.5" />
                   Export Excel
                 </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-[10px] text-slate-600 dark:text-zinc-300">
+              <div className="bg-slate-50 dark:bg-zinc-800/80 border border-slate-200 dark:border-zinc-700 rounded-xl px-2.5 py-2">
+                <div className="font-bold uppercase text-slate-400 dark:text-zinc-500">Jumlah Guru</div>
+                <div className="text-sm font-black text-slate-800 dark:text-zinc-100">{distinctTeacherKpiSummary.totalUniqueTeachers}</div>
+              </div>
+              <div className="bg-slate-50 dark:bg-zinc-800/80 border border-slate-200 dark:border-zinc-700 rounded-xl px-2.5 py-2">
+                <div className="font-bold uppercase text-slate-400 dark:text-zinc-500">Jumlah Sesi</div>
+                <div className="text-sm font-black text-slate-800 dark:text-zinc-100">{distinctTeacherKpiSummary.totalSessions}</div>
+              </div>
+              <div className="bg-slate-50 dark:bg-zinc-800/80 border border-slate-200 dark:border-zinc-700 rounded-xl px-2.5 py-2">
+                <div className="font-bold uppercase text-slate-400 dark:text-zinc-500">Rata-rata Keterlambatan</div>
+                <div className="text-sm font-black text-slate-800 dark:text-zinc-100">{distinctTeacherKpiSummary.averageLateMinutes} menit</div>
+              </div>
+              <div className="bg-slate-50 dark:bg-zinc-800/80 border border-slate-200 dark:border-zinc-700 rounded-xl px-2.5 py-2">
+                <div className="font-bold uppercase text-slate-400 dark:text-zinc-500">Paling Sering Terlambat</div>
+                <div className="text-xs font-black text-slate-800 dark:text-zinc-100 truncate">{distinctTeacherKpiSummary.topLateTeacher ? `${distinctTeacherKpiSummary.topLateTeacher.teacherName} (${distinctTeacherKpiSummary.topLateTeacher.count})` : "-"}</div>
+              </div>
+              <div className="bg-slate-50 dark:bg-zinc-800/80 border border-slate-200 dark:border-zinc-700 rounded-xl px-2.5 py-2">
+                <div className="font-bold uppercase text-slate-400 dark:text-zinc-500">Paling Sering Tidak Hadir</div>
+                <div className="text-xs font-black text-slate-800 dark:text-zinc-100 truncate">{distinctTeacherKpiSummary.topAbsentTeacher ? `${distinctTeacherKpiSummary.topAbsentTeacher.teacherName} (${distinctTeacherKpiSummary.topAbsentTeacher.count})` : "-"}</div>
               </div>
             </div>
 
