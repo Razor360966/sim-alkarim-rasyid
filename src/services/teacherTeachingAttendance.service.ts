@@ -278,6 +278,112 @@ export function validateCheckInWindow(timeSlot?: string, sequence?: number, curr
   return { isValid, isLate, isTooEarly, startM, endM, startStr, endStr };
 }
 
+export interface LessonPeriodTimeRangeResult {
+  startStr: string;
+  endStr: string;
+  startM: number;
+  endM: number;
+  timeRange: string;
+  timeSlot: string;
+  durationMinutes: number;
+}
+
+export function getLessonPeriodTimeRange(
+  input?: any
+): LessonPeriodTimeRangeResult {
+  let timeSlotStr: string | undefined;
+  let sequenceNum: number | undefined;
+  let lessonPeriodIds: string[] = [];
+  let lessonPeriodsList: Array<{ id?: string; sequence?: number; startTime?: string; endTime?: string }> = [];
+
+  if (typeof input === "string") {
+    if (input.includes("-") && /\d+:\d+/.test(input)) {
+      timeSlotStr = input;
+    } else {
+      lessonPeriodIds = [input];
+    }
+  } else if (Array.isArray(input)) {
+    if (input.every(item => typeof item === "string" && item.includes("-") && /\d+:\d+/.test(item))) {
+      const first = input[0].split("-")[0].trim();
+      const last = input[input.length - 1].split("-").pop()?.trim() || first;
+      timeSlotStr = `${first} - ${last}`;
+    } else {
+      lessonPeriodIds = input.map(String);
+    }
+  } else if (input && typeof input === "object") {
+    timeSlotStr = input.timeSlot;
+    sequenceNum = typeof input.sequence === "number" ? input.sequence : undefined;
+    if (input.lessonPeriodId) {
+      lessonPeriodIds = [String(input.lessonPeriodId)];
+    } else if (Array.isArray(input.lessonPeriodIds)) {
+      lessonPeriodIds = input.lessonPeriodIds.map(String);
+    }
+    if (Array.isArray(input.lessonPeriods)) {
+      lessonPeriodsList = input.lessonPeriods;
+    }
+  }
+
+  if (lessonPeriodsList.length > 0 && lessonPeriodIds.length > 0) {
+    const matched = lessonPeriodsList.filter(
+      p => p.id && lessonPeriodIds.includes(p.id)
+    );
+    if (matched.length > 0) {
+      matched.sort((a, b) => parseTimeToMinutes(a.startTime) - parseTimeToMinutes(b.startTime));
+      const first = matched[0];
+      const last = matched[matched.length - 1];
+      const startStr = first.startTime || "07:30";
+      const endStr = last.endTime || "08:15";
+      const startM = parseTimeToMinutes(startStr);
+      const endM = parseTimeToMinutes(endStr);
+      const range = `${startStr} - ${endStr}`;
+      return {
+        startStr,
+        endStr,
+        startM,
+        endM,
+        timeRange: range,
+        timeSlot: range,
+        durationMinutes: Math.max(0, endM - startM)
+      };
+    }
+  }
+
+  if (timeSlotStr && timeSlotStr.includes("-")) {
+    const rawSlots = timeSlotStr.split(",").map(s => s.trim()).filter(Boolean);
+    const firstPart = rawSlots[0].split("-")[0].trim();
+    const lastPart = rawSlots[rawSlots.length - 1].split("-").pop()?.trim() || firstPart;
+    const startM = parseTimeToMinutes(firstPart);
+    const endM = parseTimeToMinutes(lastPart);
+    const range = `${firstPart} - ${lastPart}`;
+    return {
+      startStr: firstPart,
+      endStr: lastPart,
+      startM,
+      endM,
+      timeRange: range,
+      timeSlot: range,
+      durationMinutes: Math.max(0, endM - startM)
+    };
+  }
+
+  const seq = sequenceNum || 1;
+  const startM = 450 + (seq - 1) * 45;
+  const endM = startM + 45;
+  const startStr = formatMinutesToTime(startM);
+  const endStr = formatMinutesToTime(endM);
+  const range = `${startStr} - ${endStr}`;
+
+  return {
+    startStr,
+    endStr,
+    startM,
+    endM,
+    timeRange: range,
+    timeSlot: range,
+    durationMinutes: 45
+  };
+}
+
 function createEmptySummary(teacherId: string, teacherName: string): TeacherAttendanceSummary {
   return {
     teacherId,
@@ -2458,6 +2564,17 @@ export const teacherTeachingAttendanceService = {
     return this.processQrCheckIn(params);
   },
 
-  validateCheckInWindow
+  validateCheckInWindow,
+  getLessonPeriodTimeRange,
+  parseTimeToMinutes,
+  calculateDurationInMinutes,
+  formatMinutesToTime
 };
+
+export function evaluateAttendanceApprovalStatus(
+  item: TeacherTeachingAttendance,
+  schoolSettings?: SchoolSettings
+) {
+  return teacherTeachingAttendanceService.evaluateAttendanceApprovalStatus(item, schoolSettings);
+}
 
