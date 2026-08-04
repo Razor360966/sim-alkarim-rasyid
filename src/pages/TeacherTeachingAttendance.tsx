@@ -55,7 +55,9 @@ import {
   BookOpen,
   Layers,
   QrCode,
-  Printer
+  Printer,
+  Lock,
+  Unlock
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -221,6 +223,33 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
     },
     onError: (err: any) => {
       toast("Gagal menyetujui masal: " + err.message, "error");
+    }
+  });
+
+  const [unlockLateModalItem, setUnlockLateModalItem] = useState<{ scheduleId: string; dateStr: string; teacherName: string; subjectName: string; className: string; jp: string } | null>(null);
+  const [unlockLateReason, setUnlockLateReason] = useState("");
+
+  const unlockLateMutation = useMutation({
+    mutationFn: async (params: { scheduleId: string; dateStr: string; reason: string }) => {
+      if (!user) throw new Error("Belum diautentikasi");
+      await teacherTeachingAttendanceService.unlockLateCheckIn({
+        scheduleId: params.scheduleId,
+        dateStr: params.dateStr,
+        reason: params.reason,
+        validatorUserId: user.uid,
+        validatorUserName: user.displayName || user.name || "Wakakur"
+      });
+    },
+    onSuccess: () => {
+      toast("Kunci sesi terlambat berhasil dibuka oleh Wakakur!", "success");
+      queryClient.invalidateQueries({ queryKey: ["teacherTeachingAttendance"] });
+      queryClient.invalidateQueries({ queryKey: ["attendanceValidationStats"] });
+      queryClient.invalidateQueries({ queryKey: ["qrMonitoringStats"] });
+      setUnlockLateModalItem(null);
+      setUnlockLateReason("");
+    },
+    onError: (err: any) => {
+      toast("Gagal membuka kunci sesi: " + err.message, "error");
     }
   });
 
@@ -771,7 +800,6 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
   const tukarJpRecords = useMemo(() => rawRecords.filter(r => r.status === "Tukar Jadwal"), [rawRecords]);
   const tidakHadirRecords = useMemo(() => rawRecords.filter(r => r.status === "Tidak Hadir"), [rawRecords]);
   const belumDiverifikasiRecords = useMemo(() => rawRecords.filter(r => !r.status || r.status === "Belum Diverifikasi"), [rawRecords]);
-  const distinctTeacherKpiSummary = useMemo(() => teacherTeachingAttendanceService.getDistinctTeacherKpiSummary(rawRecords), [rawRecords]);
 
   // Unreplaced teaching sessions: status Digantikan Guru Lain but substitute teacher is missing
   const unreplacedRecords = useMemo(() => digantiRecords.filter(r => !r.substituteTeacherId && !r.substituteTeacherName), [digantiRecords]);
@@ -2546,11 +2574,11 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                     <UserCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
                   </div>
                   <div className="text-2xl font-black text-emerald-700 dark:text-emerald-300">
-                    {distinctTeacherKpiSummary.hadirUniqueTeachers}
+                    {hadirRecords.length}
                   </div>
                 </div>
                 <div className="mt-2 pt-2 border-t border-emerald-200/60 dark:border-emerald-900/50 flex items-center justify-between text-[10px] font-bold text-emerald-800 dark:text-emerald-300">
-                  <span>Guru Unik</span>
+                  <span>Sesi Hadir</span>
                   <ChevronRight className="w-3 h-3 text-emerald-600 group-hover:translate-x-0.5 transition-transform" />
                 </div>
               </div>
@@ -2566,11 +2594,11 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                     <Clock className="w-4 h-4 text-blue-600 dark:text-blue-400 group-hover:scale-110 transition-transform" />
                   </div>
                   <div className="text-2xl font-black text-blue-700 dark:text-blue-300">
-                    {distinctTeacherKpiSummary.tugasUniqueTeachers}
+                    {tugasRecords.length}
                   </div>
                 </div>
                 <div className="mt-2 pt-2 border-t border-blue-200/60 dark:border-blue-900/50 flex items-center justify-between text-[10px] font-bold text-blue-800 dark:text-blue-300">
-                  <span>Guru Unik</span>
+                  <span>Sesi Dinas</span>
                   <ChevronRight className="w-3 h-3 text-blue-600 group-hover:translate-x-0.5 transition-transform" />
                 </div>
               </div>
@@ -2586,11 +2614,11 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                     <Info className="w-4 h-4 text-yellow-600 dark:text-yellow-400 group-hover:scale-110 transition-transform" />
                   </div>
                   <div className="text-2xl font-black text-yellow-700 dark:text-yellow-300">
-                    {distinctTeacherKpiSummary.izinUniqueTeachers}
+                    {izinRecords.length}
                   </div>
                 </div>
                 <div className="mt-2 pt-2 border-t border-yellow-200/60 dark:border-yellow-900/50 flex items-center justify-between text-[10px] font-bold text-yellow-800 dark:text-yellow-300">
-                  <span>Guru Unik</span>
+                  <span>Sesi Izin</span>
                   <ChevronRight className="w-3 h-3 text-yellow-600 group-hover:translate-x-0.5 transition-transform" />
                 </div>
               </div>
@@ -2606,11 +2634,11 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                     <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-transform" />
                   </div>
                   <div className="text-2xl font-black text-amber-700 dark:text-amber-300">
-                    {distinctTeacherKpiSummary.sakitUniqueTeachers}
+                    {sakitRecords.length}
                   </div>
                 </div>
                 <div className="mt-2 pt-2 border-t border-amber-200/60 dark:border-amber-900/50 flex items-center justify-between text-[10px] font-bold text-amber-800 dark:text-amber-300">
-                  <span>Guru Unik</span>
+                  <span>Sesi Sakit</span>
                   <ChevronRight className="w-3 h-3 text-amber-600 group-hover:translate-x-0.5 transition-transform" />
                 </div>
               </div>
@@ -2626,11 +2654,11 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                     <RefreshCw className="w-4 h-4 text-orange-600 dark:text-orange-400 group-hover:rotate-45 transition-transform" />
                   </div>
                   <div className="text-2xl font-black text-orange-700 dark:text-orange-300">
-                    {distinctTeacherKpiSummary.digantiUniqueTeachers}
+                    {digantiRecords.length}
                   </div>
                 </div>
                 <div className="mt-2 pt-2 border-t border-orange-200/60 dark:border-orange-900/50 flex items-center justify-between text-[10px] font-bold text-orange-800 dark:text-orange-300">
-                  <span>{unreplacedRecords.length > 0 ? `⚠️ ${unreplacedRecords.length} Belum Diganti` : "Guru Unik"}</span>
+                  <span>{unreplacedRecords.length > 0 ? `⚠️ ${unreplacedRecords.length} Belum Diganti` : "Sesi Diganti"}</span>
                   <ChevronRight className="w-3 h-3 text-orange-600 group-hover:translate-x-0.5 transition-transform" />
                 </div>
               </div>
@@ -2646,11 +2674,11 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                     <ArrowRightLeft className="w-4 h-4 text-purple-600 dark:text-purple-400 group-hover:scale-110 transition-transform" />
                   </div>
                   <div className="text-2xl font-black text-purple-700 dark:text-purple-300">
-                    {distinctTeacherKpiSummary.tukarJadwalUniqueTeachers}
+                    {tukarJpRecords.length}
                   </div>
                 </div>
                 <div className="mt-2 pt-2 border-t border-purple-200/60 dark:border-purple-900/50 flex items-center justify-between text-[10px] font-bold text-purple-800 dark:text-purple-300">
-                  <span>Guru Unik</span>
+                  <span>Pertukaran JP</span>
                   <ChevronRight className="w-3 h-3 text-purple-600 group-hover:translate-x-0.5 transition-transform" />
                 </div>
               </div>
@@ -2666,11 +2694,11 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                     <UserX className="w-4 h-4 text-rose-600 dark:text-rose-400 group-hover:scale-110 transition-transform" />
                   </div>
                   <div className="text-2xl font-black text-rose-700 dark:text-rose-300">
-                    {distinctTeacherKpiSummary.tidakHadirUniqueTeachers}
+                    {tidakHadirRecords.length}
                   </div>
                 </div>
                 <div className="mt-2 pt-2 border-t border-rose-200/60 dark:border-rose-900/50 flex items-center justify-between text-[10px] font-bold text-rose-800 dark:text-rose-300">
-                  <span>Guru Unik</span>
+                  <span>Tidak Hadir</span>
                   <ChevronRight className="w-3 h-3 text-rose-600 group-hover:translate-x-0.5 transition-transform" />
                 </div>
               </div>
@@ -2960,29 +2988,6 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                   <FileSpreadsheet className="w-3.5 h-3.5" />
                   Export Excel
                 </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-[10px] text-slate-600 dark:text-zinc-300">
-              <div className="bg-slate-50 dark:bg-zinc-800/80 border border-slate-200 dark:border-zinc-700 rounded-xl px-2.5 py-2">
-                <div className="font-bold uppercase text-slate-400 dark:text-zinc-500">Jumlah Guru</div>
-                <div className="text-sm font-black text-slate-800 dark:text-zinc-100">{distinctTeacherKpiSummary.totalUniqueTeachers}</div>
-              </div>
-              <div className="bg-slate-50 dark:bg-zinc-800/80 border border-slate-200 dark:border-zinc-700 rounded-xl px-2.5 py-2">
-                <div className="font-bold uppercase text-slate-400 dark:text-zinc-500">Jumlah Sesi</div>
-                <div className="text-sm font-black text-slate-800 dark:text-zinc-100">{distinctTeacherKpiSummary.totalSessions}</div>
-              </div>
-              <div className="bg-slate-50 dark:bg-zinc-800/80 border border-slate-200 dark:border-zinc-700 rounded-xl px-2.5 py-2">
-                <div className="font-bold uppercase text-slate-400 dark:text-zinc-500">Rata-rata Keterlambatan</div>
-                <div className="text-sm font-black text-slate-800 dark:text-zinc-100">{distinctTeacherKpiSummary.averageLateMinutes} menit</div>
-              </div>
-              <div className="bg-slate-50 dark:bg-zinc-800/80 border border-slate-200 dark:border-zinc-700 rounded-xl px-2.5 py-2">
-                <div className="font-bold uppercase text-slate-400 dark:text-zinc-500">Paling Sering Terlambat</div>
-                <div className="text-xs font-black text-slate-800 dark:text-zinc-100 truncate">{distinctTeacherKpiSummary.topLateTeacher ? `${distinctTeacherKpiSummary.topLateTeacher.teacherName} (${distinctTeacherKpiSummary.topLateTeacher.count})` : "-"}</div>
-              </div>
-              <div className="bg-slate-50 dark:bg-zinc-800/80 border border-slate-200 dark:border-zinc-700 rounded-xl px-2.5 py-2">
-                <div className="font-bold uppercase text-slate-400 dark:text-zinc-500">Paling Sering Tidak Hadir</div>
-                <div className="text-xs font-black text-slate-800 dark:text-zinc-100 truncate">{distinctTeacherKpiSummary.topAbsentTeacher ? `${distinctTeacherKpiSummary.topAbsentTeacher.teacherName} (${distinctTeacherKpiSummary.topAbsentTeacher.count})` : "-"}</div>
               </div>
             </div>
 
@@ -3602,6 +3607,66 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                 className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer"
               >
                 Simpan Check Out Manual
+              </button>
+            </div>
+          </div>
+        </Dialog>
+      )}
+
+      {/* Validasi Check-In Terlambat / Unlock Late Modal (Wakakur) */}
+      {unlockLateModalItem && (
+        <Dialog
+          isOpen={!!unlockLateModalItem}
+          onClose={() => { setUnlockLateModalItem(null); setUnlockLateReason(""); }}
+          title="Validasi Check-in Terlambat (Wakakur)"
+          size="md"
+        >
+          <div className="space-y-4">
+            <div className="p-3.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-2xl text-xs space-y-1">
+              <div className="font-bold text-amber-900 dark:text-amber-200">
+                {unlockLateModalItem.teacherName}
+              </div>
+              <div className="text-slate-600 dark:text-zinc-300">
+                {unlockLateModalItem.subjectName} — Kelas {unlockLateModalItem.className} ({unlockLateModalItem.jp})
+              </div>
+              <div className="text-amber-700 dark:text-amber-300 text-[11px] font-semibold">
+                Sesi ini terkunci karena batas waktu Check-in (25 menit) terlampaui. Membuka kunci akan mengizinkan guru melakukan scan QR Check-in.
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-700 dark:text-zinc-300">
+                Alasan / Catatan Validasi Wakakur
+              </label>
+              <textarea
+                value={unlockLateReason}
+                onChange={(e) => setUnlockLateReason(e.target.value)}
+                placeholder="Misal: Penugasan rapat guru / izin dinas luar dari Waka Kurikulum"
+                className="w-full px-3.5 py-2.5 bg-white dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs focus:ring-2 focus:ring-amber-500 min-h-[80px]"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-zinc-800">
+              <button
+                type="button"
+                onClick={() => { setUnlockLateModalItem(null); setUnlockLateReason(""); }}
+                className="px-4 py-2 bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 text-slate-700 dark:text-zinc-300 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                disabled={!unlockLateReason.trim() || unlockLateMutation.isPending}
+                onClick={() => {
+                  unlockLateMutation.mutate({
+                    scheduleId: unlockLateModalItem.scheduleId,
+                    dateStr: unlockLateModalItem.dateStr,
+                    reason: unlockLateReason
+                  });
+                }}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer disabled:opacity-50"
+              >
+                {unlockLateMutation.isPending ? "Memproses..." : "Buka Kunci & Validasi"}
               </button>
             </div>
           </div>

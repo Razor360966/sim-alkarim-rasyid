@@ -2094,205 +2094,339 @@ export const teacherTeachingAttendanceService = {
       let scheduleEndM = 0;
       let startStr = "07:30";
       let endStr = "08:15";
-      if (selectedScheduleItem.timeSlot && selectedScheduleItem.timeSlot.includes("-")) {
-        const parts = selectedScheduleItem.timeSlot.split("-").map(s => s.trim());
-        startStr = parts[0];
-        endStr = parts[1];
-        scheduleStartM = parseTimeToMinutes(startStr);
-        scheduleEndM = parseTimeToMinutes(endStr);
-      } else {
-        scheduleStartM = 450 + (selectedScheduleItem.sequence - 1) * 45;
-        scheduleEndM = scheduleStartM + 45;
-        startStr = formatMinutesToTime(scheduleStartM);
-        endStr = formatMinutesToTime(scheduleEndM);
+
+      // 7. Group classTeacherItems into Sessions (Break Time Exception)
+      // If two JPs are separated by official school break time (or >= 10 mins gap), they form 2 DIFFERENT sessions.
+      // If contiguous without break, they form 1 SESSION.
+      classTeacherItems.sort((a, b) => a.sequence - b.sequence);
+
+      interface SessionGroup {
+        sessionKey: string;
+        items: TeacherTeachingAttendance[];
+        jpLabel: string;
+        subjectName: string;
+        className: string;
+        startM: number;
+        endM: number;
+        startStr: string;
+        endStr: string;
+        checkInTime?: string;
+        checkOutTime?: string;
+        status?: string;
+        isLateUnlocked?: boolean;
+        lateUnlockReason?: string;
       }
 
-      // Check break time intersection for this schedule slot
-      const spanningBreak = breakTimes.find((b: any) => {
-        const bStartM = parseTimeToMinutes(b.start);
-        const bEndM = parseTimeToMinutes(b.end || b.start);
-        return scheduleStartM < bStartM && scheduleEndM > bEndM;
-      });
+      const sessionGroups: SessionGroup[] = [];
+      let currentGroupItems: TeacherTeachingAttendance[] = [];
 
-      // 9. Execute Check-In or Check-Out Transaction & Handle Duplicate Scan Prevention
-      const logs = selectedScheduleItem.checkInLogs || [];
-      const activeLogIndex = logs.findIndex(l => !l.checkOut);
+      for (let i = 0; i < classTeacherItems.length; i++) {
+        const item = classTeacherItems[i];
+        const range = getLessonPeriodTimeRange({ timeSlot: item.timeSlot, sequence: item.sequence || (i + 1) });
 
-      // Check if Check-In attempted too early (more than 15 mins before schedule start)
-      if (logs.length === 0 && currentM < scheduleStartM - 15) {
+        if (currentGroupItems.length === 0) {
+          currentGroupItems.push(item);
+        } else {
+          const prevItem = currentGroupItems[currentGroupItems.length - 1];
+          const prevRange = getLessonPeriodTimeRange({ timeSlot: prevItem.timeSlot, sequence: prevItem.sequence || i });
+
+          const isSeparatedByBreak = breakTimes.some((b: any) => {
+            const bStartM = parseTimeToMinutes(b.start);
+            const bEndM = parseTimeToMinutes(b.end || b.start);
+            return prevRange.endM <= bStartM && range.startM >= bEndM;
+          }) || (range.startM - prevRange.endM >= 10) || (item.subjectId !== prevItem.subjectId);
+
+          if (isSeparatedByBreak) {
+            sessionGroups.push(buildSessionGroup(currentGroupItems));
+            currentGroupItems = [item];
+          } else {
+            currentGroupItems.push(item);
+          }
+        }
+      }
+
+      if (currentGroupItems.length > 0) {
+        sessionGroups.push(buildSessionGroup(currentGroupItems));
+      }
+
+      function buildSessionGroup(groupItems: TeacherTeachingAttendance[]): SessionGroup {
+        const first = groupItems[0];
+        const last = groupItems[groupItems.length - 1];
+
+        const firstRange = getLessonPeriodTimeRange({ timeSlot: first.timeSlot, sequence: first.sequence || 1 });
+        const lastRange = getLessonPeriodTimeRange({ timeSlot: last.timeSlot, sequence: last.sequence || groupItems.length });
+
+        let jpLabel = first.jp || `JP ${first.sequence}`;
+        if (groupItems.length > 1) {
+          const firstSeq = first.sequence;
+          const lastSeq = last.sequence;
+          jpLabel = `JP ${firstSeq}-${lastSeq}`;
+        }
+
+        const checkInTime = groupItems.find(it => it.checkInTime)?.checkInTime;
+        const checkOutTime = groupItems.find(it => it.checkOutTime)?.checkOutTime;
+        const status = groupItems.find(it => it.status)?.status;
+        const isLateUnlocked = groupItems.some(it => (it as any).isLateUnlocked);
+        const lateUnlockReason = groupItems.find(it => (it as any).lateUnlockReason)?.lateUnlockReason;
+
         return {
-          success: false,
-          message: `Terlalu awal. Check-In untuk kelas ${selectedScheduleItem.className} (${selectedScheduleItem.jp}) baru dapat dilakukan 15 menit sebelum jam ${startStr} (mulai ${formatMinutesToTime(scheduleStartM - 15)} WIB).`
+          sessionKey: `${first.teacherId}_${todayStr}_${first.classId}_${first.subjectId}_${first.sequence}`,
+          items: groupItems,
+          jpLabel,
+          subjectName: first.subjectName,
+          className: first.className,
+          startM: firstRange.startM,
+          endM: lastRange.endM,
+          startStr: firstRange.startStr,
+          endStr: lastRange.endStr,
+          checkInTime,
+          checkOutTime,
+          status,
+          isLateUnlocked,
+          lateUnlockReason
         };
       }
 
+      // 8. Determine State Machine Action for Scanned Session Group
+      let activeCheckInGroup = sessionGroups.find(g => g.checkInTime && !g.checkOutTime);
+
+      let targetGroup: SessionGroup | null = null;
       let action: "CHECK_IN" | "CHECK_OUT" = "CHECK_IN";
-      let returnMsg = "";
 
-      if (activeLogIndex >= 0) {
-        // --- CHECK OUT FLOW ---
-        const activeLog = logs[activeLogIndex];
-        const lastCheckInM = parseTimeToMinutes(activeLog.checkIn);
-
-        // Duplicate scan check: if user scans again immediately (< 2 mins after check-in) and not near end time
-        if (currentM - lastCheckInM < 2 && currentM < scheduleEndM - 15) {
-          return {
-            success: false,
-            message: `Check-in pada sesi ini telah tercatat (${activeLog.checkIn} WIB).`
-          };
-        }
-
+      if (activeCheckInGroup) {
+        targetGroup = activeCheckInGroup;
         action = "CHECK_OUT";
-        const duration = calculateDurationInMinutes(activeLog.checkIn, currentTimeStr);
-
-        activeLog.checkOut = currentTimeStr;
-        activeLog.durationMinutes = duration;
-
-        selectedScheduleItem.checkOutTime = currentTimeStr;
-        selectedScheduleItem.teachingDurationMinutes = (selectedScheduleItem.teachingDurationMinutes || 0) + duration;
-        selectedScheduleItem.checkInLogs = logs;
-        selectedScheduleItem.updatedAt = new Date().toISOString();
-
-        if (spanningBreak) {
-          returnMsg = `CHECK OUT Segmen Sebelum Istirahat Berhasil di Kelas ${selectedScheduleItem.className} (${selectedScheduleItem.jp} - ${selectedScheduleItem.subjectName}). Durasi: ${duration} menit. Silakan Check-In kembali setelah istirahat.`;
-        } else {
-          returnMsg = `CHECK OUT Berhasil di Kelas ${selectedScheduleItem.className} (${selectedScheduleItem.jp} - ${selectedScheduleItem.subjectName}). Durasi mengajar: ${duration} menit.`;
-        }
-        console.log("[QR Audit Step 9] CHECK OUT SUCCESS:", returnMsg);
       } else {
-        // --- CHECK IN FLOW ---
-        // Duplicate scan check when no active check-in exists:
-        if (!spanningBreak && logs.length > 0 && logs.every(l => l.checkOut)) {
-          // Completed session scan attempt
-          return {
-            success: false,
-            message: `Check-out pada sesi ini telah tercatat (${selectedScheduleItem.checkOutTime} WIB).`
-          };
+        targetGroup = sessionGroups.find(g => currentM >= g.startM - 15 && currentM <= g.endM + 60) || null;
+
+        if (!targetGroup) {
+          targetGroup = sessionGroups.find(g => !g.checkOutTime) || null;
         }
 
-        if (spanningBreak && logs.length >= 2 && logs.every(l => l.checkOut)) {
-          return {
-            success: false,
-            message: `Check-out pada sesi ini (termasuk segmen setelah istirahat) telah tercatat.`
-          };
-        }
-
-        if (spanningBreak && logs.length === 1 && logs[0].checkOut) {
-          const bEndM = parseTimeToMinutes(spanningBreak.end);
-          if (currentM < bEndM - 15) {
-            return {
-              success: false,
-              message: `Check-out segmen sebelum istirahat telah tercatat (${logs[0].checkOut} WIB). Check-In segmen kedua dapat dilakukan setelah istirahat (mulai jam ${formatMinutesToTime(bEndM - 15)} WIB).`
-            };
-          }
+        if (!targetGroup) {
+          targetGroup = sessionGroups[sessionGroups.length - 1];
         }
 
         action = "CHECK_IN";
-        const newLog = { checkIn: currentTimeStr };
-        logs.push(newLog);
-
-        selectedScheduleItem.checkInTime = selectedScheduleItem.checkInTime || currentTimeStr;
-        selectedScheduleItem.checkInLogs = logs;
-        selectedScheduleItem.checkInType = "Scan QR";
-        selectedScheduleItem.status = isLateCheckIn ? "Terlambat" : "Hadir Mengajar";
-        selectedScheduleItem.updatedAt = new Date().toISOString();
-
-        if (spanningBreak && logs.length === 2) {
-          returnMsg = `CHECK IN Segmen Kedua (Setelah Istirahat) Berhasil di Kelas ${selectedScheduleItem.className} (${selectedScheduleItem.jp} - ${selectedScheduleItem.subjectName}).`;
-        } else {
-          returnMsg = `CHECK IN Berhasil di Kelas ${selectedScheduleItem.className} (${selectedScheduleItem.jp} - ${selectedScheduleItem.subjectName})${isLateCheckIn ? " [Status: Terlambat]" : ""}.`;
-        }
-        console.log("[QR Audit Step 9] CHECK IN SUCCESS:", returnMsg);
       }
 
-      // Ensure classId and className stored in Firestore strictly match the scanned QR class
-      if (matchedClass?.id) {
-        selectedScheduleItem.classId = matchedClass.id;
-        selectedScheduleItem.className = matchedClass.name;
-      } else if (parsedJson?.classId) {
-        selectedScheduleItem.classId = parsedJson.classId;
-        if (parsedJson?.className) {
-          selectedScheduleItem.className = parsedJson.className;
-        }
+      if (!targetGroup) {
+        return {
+          success: false,
+          message: `Sesi jadwal mengajar di kelas ${targetClassName} tidak dapat ditentukan.`
+        };
       }
 
-      const qrClassId = parsedJson?.classId || "N/A (QR Plaintext/Non-JSON)";
-      const firestoreClassName = matchedClass?.name || targetClassName || "N/A";
-      const scheduleClassId = selectedScheduleItem.classId || "N/A";
-      const scheduleClassName = selectedScheduleItem.className || "N/A";
-      const finalSavedClassId = selectedScheduleItem.classId || "N/A";
+      // --- CHECK OUT FLOW ---
+      if (action === "CHECK_OUT") {
+        const checkInTimeStr = targetGroup.checkInTime || currentTimeStr;
+        const durationMinutes = calculateDurationInMinutes(checkInTimeStr, currentTimeStr);
 
-      console.log("==================================================");
-      console.log("[AUDIT TEMPORER LOGGING QR ABSENSI GURU]");
-      console.log("* QR Payload                         :", rawContent);
-      console.log("* classId dari QR                    :", qrClassId);
-      console.log("* Nama kelas dari Firestore          :", firestoreClassName);
-      console.log("* classId dari jadwal guru           :", scheduleClassId);
-      console.log("* Nama kelas dari jadwal             :", scheduleClassName);
-      console.log("* classId yang akhirnya disimpan ke Firestore:", finalSavedClassId);
-      console.log("==================================================");
+        for (const item of targetGroup.items) {
+          item.checkOutTime = currentTimeStr;
+          item.teachingDurationMinutes = durationMinutes;
+          item.updatedAt = new Date().toISOString();
 
-      // Save updated attendance record to Firestore
-      await this.saveSingleSessionAttendance(
-        todayStr,
-        selectedScheduleItem,
-        currentUserId,
-        params.currentUser.name || auth?.currentUser?.displayName || "Guru",
-        `QR Code ${action}: ${currentTimeStr}`
-      );
+          if (matchedClass?.id) {
+            item.classId = matchedClass.id;
+            item.className = matchedClass.name;
+          }
 
-      // Multi-JP Spanning Save: If CHECK_OUT covers other JPs for this teacher in this class, update & save them too
-      if (action === "CHECK_OUT" && selectedScheduleItem.checkInTime) {
-        const checkInM = parseTimeToMinutes(selectedScheduleItem.checkInTime);
-        const checkOutM = parseTimeToMinutes(currentTimeStr);
-
-        for (const otherItem of classTeacherItems) {
-          if (otherItem.id === selectedScheduleItem.id || otherItem.scheduleId === selectedScheduleItem.scheduleId) continue;
-
-          let targetStartM = 0;
-          let targetEndM = 0;
-          if (otherItem.timeSlot && otherItem.timeSlot.includes("-")) {
-            const [s, e] = otherItem.timeSlot.split("-").map(x => x.trim());
-            targetStartM = parseTimeToMinutes(s);
-            targetEndM = parseTimeToMinutes(e);
+          if (!item.checkInLogs || item.checkInLogs.length === 0) {
+            item.checkInLogs = [{ checkIn: checkInTimeStr, checkOut: currentTimeStr, durationMinutes }];
           } else {
-            targetStartM = 450 + (otherItem.sequence - 1) * 45;
-            targetEndM = targetStartM + 45;
-          }
-
-          if (checkInM <= targetEndM - 10 && checkOutM >= targetStartM + 10) {
-            otherItem.checkInTime = selectedScheduleItem.checkInTime;
-            otherItem.checkOutTime = currentTimeStr;
-            otherItem.teachingDurationMinutes = selectedScheduleItem.teachingDurationMinutes;
-            otherItem.checkInLogs = selectedScheduleItem.checkInLogs;
-            otherItem.checkInType = "Scan QR";
-            otherItem.status = selectedScheduleItem.status || "Hadir Mengajar";
-            otherItem.updatedAt = new Date().toISOString();
-
-            if (matchedClass?.id) {
-              otherItem.classId = matchedClass.id;
-              otherItem.className = matchedClass.name;
+            const activeLog = item.checkInLogs.find(l => !l.checkOut);
+            if (activeLog) {
+              activeLog.checkOut = currentTimeStr;
+              activeLog.durationMinutes = durationMinutes;
+            } else {
+              item.checkInLogs[item.checkInLogs.length - 1].checkOut = currentTimeStr;
+              item.checkInLogs[item.checkInLogs.length - 1].durationMinutes = durationMinutes;
             }
-
-            await this.saveSingleSessionAttendance(
-              todayStr,
-              otherItem,
-              currentUserId,
-              params.currentUser.name || auth?.currentUser?.displayName || "Guru",
-              `QR Code ${action} (Spanned Multi-JP): ${currentTimeStr}`
-            );
           }
+
+          await this.saveSingleSessionAttendance(
+            todayStr,
+            item,
+            currentUserId,
+            params.currentUser.name || "Guru",
+            `QR Code CHECK_OUT: ${currentTimeStr}`
+          );
         }
+
+        const auditColRef = collection(db, AUDIT_LOGS_COLLECTION);
+        await addDoc(auditColRef, sanitizeFirestorePayload({
+          attendanceDate: todayStr,
+          inputTimestamp: new Date().toISOString(),
+          userId: currentUserId,
+          userName: params.currentUser.name || "Guru",
+          scheduleId: targetGroup.items[0].scheduleId,
+          teacherId: targetGroup.items[0].teacherId,
+          teacherName: targetGroup.items[0].teacherName,
+          classId: targetGroup.items[0].classId,
+          className: targetGroup.items[0].className,
+          subjectId: targetGroup.items[0].subjectId,
+          subjectName: targetGroup.items[0].subjectName,
+          jp: targetGroup.jpLabel,
+          scanTime: `${currentTimeStr} WIB`,
+          previousStatus: "CHECK-IN",
+          newStatus: "SELESAI",
+          action: "CHECK_OUT",
+          reason: `Check-Out QR Berhasil (${durationMinutes} menit)`,
+          validationResult: "Sukses",
+          isLateInput: false
+        }));
+
+        const returnMsg = `CHECK OUT Berhasil di Kelas ${targetGroup.className} (${targetGroup.jpLabel} - ${targetGroup.subjectName}). Durasi mengajar: ${durationMinutes} menit.`;
+
+        return {
+          success: true,
+          action: "CHECK_OUT",
+          message: returnMsg,
+          record: targetGroup.items[0]
+        };
       }
 
-      console.log("[QR Audit Step 10] Record Saved to Firestore successfully. Done!");
-      console.log("==================================================");
+      // --- CHECK IN FLOW ---
+
+      // Rule 1: Duplicate Scan Check / Already Completed Session
+      if (targetGroup.checkInTime && targetGroup.checkOutTime) {
+        const completedMsg = `Sesi mengajar ini telah selesai.\n\nCheck-in :\n${targetGroup.checkInTime}\n\nCheck-out :\n${targetGroup.checkOutTime}\n\nData sudah tersimpan dan tidak dapat dipindai kembali.`;
+
+        const auditColRef = collection(db, AUDIT_LOGS_COLLECTION);
+        await addDoc(auditColRef, sanitizeFirestorePayload({
+          attendanceDate: todayStr,
+          inputTimestamp: new Date().toISOString(),
+          userId: currentUserId,
+          userName: params.currentUser.name || "Guru",
+          scheduleId: targetGroup.items[0].scheduleId,
+          teacherId: targetGroup.items[0].teacherId,
+          teacherName: targetGroup.items[0].teacherName,
+          classId: targetGroup.items[0].classId,
+          className: targetGroup.items[0].className,
+          subjectId: targetGroup.items[0].subjectId,
+          subjectName: targetGroup.items[0].subjectName,
+          jp: targetGroup.jpLabel,
+          scanTime: `${currentTimeStr} WIB`,
+          previousStatus: "SELESAI",
+          newStatus: "SELESAI",
+          action: "REJECTED_COMPLETED",
+          reason: "Percobaan scan ulang pada sesi mengajar yang sudah selesai",
+          validationResult: "Ditolak - Sesi Selesai",
+          isLateInput: false
+        }));
+
+        return {
+          success: false,
+          message: completedMsg
+        };
+      }
+
+      // Rule 2: Validate Check-In Time Window & Locking Threshold
+      if (currentM < targetGroup.startM - 15) {
+        const earlyMsg = `Terlalu awal. Check-In untuk kelas ${targetGroup.className} (${targetGroup.jpLabel}) baru dapat dilakukan 15 menit sebelum jam ${targetGroup.startStr} (mulai ${formatMinutesToTime(targetGroup.startM - 15)} WIB).`;
+        return {
+          success: false,
+          message: earlyMsg
+        };
+      }
+
+      let newAttendanceStatus: AttendanceTeachingStatus = "Hadir Mengajar";
+
+      if (currentM > targetGroup.startM + 25) {
+        if (!targetGroup.isLateUnlocked) {
+          const lockedMsg = `Batas waktu Check-in telah terlampaui.\n\nSilakan menghadap Wakil Kepala Sekolah Bidang Kurikulum untuk mendapatkan validasi.`;
+
+          const auditColRef = collection(db, AUDIT_LOGS_COLLECTION);
+          await addDoc(auditColRef, sanitizeFirestorePayload({
+            attendanceDate: todayStr,
+            inputTimestamp: new Date().toISOString(),
+            userId: currentUserId,
+            userName: params.currentUser.name || "Guru",
+            scheduleId: targetGroup.items[0].scheduleId,
+            teacherId: targetGroup.items[0].teacherId,
+            teacherName: targetGroup.items[0].teacherName,
+            classId: targetGroup.items[0].classId,
+            className: targetGroup.items[0].className,
+            subjectId: targetGroup.items[0].subjectId,
+            subjectName: targetGroup.items[0].subjectName,
+            jp: targetGroup.jpLabel,
+            scanTime: `${currentTimeStr} WIB`,
+            previousStatus: "BELUM ABSEN",
+            newStatus: "DIKUNCI",
+            action: "REJECTED_LOCKED",
+            reason: `Keterlambatan melebihi 25 menit dari jam mulai (${targetGroup.startStr})`,
+            validationResult: "Ditolak - Sesi Terkunci Perlu Validasi Wakakur",
+            isLateInput: false
+          }));
+
+          return {
+            success: false,
+            message: lockedMsg
+          };
+        } else {
+          newAttendanceStatus = "Terlambat";
+        }
+      } else if (currentM > targetGroup.startM + 15) {
+        newAttendanceStatus = "Terlambat";
+      }
+
+      // Execute CHECK-IN for targetGroup items
+      for (const item of targetGroup.items) {
+        item.checkInTime = currentTimeStr;
+        item.checkInType = "Scan QR";
+        item.status = newAttendanceStatus;
+        item.updatedAt = new Date().toISOString();
+
+        if (matchedClass?.id) {
+          item.classId = matchedClass.id;
+          item.className = matchedClass.name;
+        }
+
+        if (!item.checkInLogs) item.checkInLogs = [];
+        item.checkInLogs.push({ checkIn: currentTimeStr });
+
+        await this.saveSingleSessionAttendance(
+          todayStr,
+          item,
+          currentUserId,
+          params.currentUser.name || "Guru",
+          `QR Code CHECK_IN: ${currentTimeStr}`
+        );
+      }
+
+      const auditColRef = collection(db, AUDIT_LOGS_COLLECTION);
+      await addDoc(auditColRef, sanitizeFirestorePayload({
+        attendanceDate: todayStr,
+        inputTimestamp: new Date().toISOString(),
+        userId: currentUserId,
+        userName: params.currentUser.name || "Guru",
+        scheduleId: targetGroup.items[0].scheduleId,
+        teacherId: targetGroup.items[0].teacherId,
+        teacherName: targetGroup.items[0].teacherName,
+        classId: targetGroup.items[0].classId,
+        className: targetGroup.items[0].className,
+        subjectId: targetGroup.items[0].subjectId,
+        subjectName: targetGroup.items[0].subjectName,
+        jp: targetGroup.jpLabel,
+        scanTime: `${currentTimeStr} WIB`,
+        previousStatus: "BELUM ABSEN",
+        newStatus: newAttendanceStatus,
+        action: "CHECK_IN",
+        reason: targetGroup.isLateUnlocked
+          ? `Check-In Berhasil (Diizinkan Wakakur: ${targetGroup.lateUnlockReason || "Validasi Manual"})`
+          : newAttendanceStatus === "Terlambat" ? "Check-In Terlambat" : "Check-In Tepat Waktu",
+        validationResult: "Sukses",
+        isLateInput: newAttendanceStatus === "Terlambat"
+      }));
+
+      const checkInSuccessMsg = `CHECK IN Berhasil di Kelas ${targetGroup.className} (${targetGroup.jpLabel} - ${targetGroup.subjectName})${newAttendanceStatus === "Terlambat" ? " [Status: Terlambat]" : ""}.`;
 
       return {
         success: true,
-        action,
-        message: returnMsg,
-        record: selectedScheduleItem
+        action: "CHECK_IN",
+        message: checkInSuccessMsg,
+        record: targetGroup.items[0]
       };
     } catch (error: any) {
       console.error("[QR Audit ERROR] Exception in processQrCheckIn:", error);
@@ -2301,6 +2435,82 @@ export const teacherTeachingAttendanceService = {
         message: `Gagal memproses QR Code: ${error?.message || "Terjadi kesalahan internal server."}`
       };
     }
+  },
+
+  // Unlock Locked Session (>25m late) by Wakakur / Admin
+  async unlockLateCheckIn(params: {
+    scheduleId: string;
+    dateStr?: string;
+    reason: string;
+    validatorUserId: string;
+    validatorUserName: string;
+  }): Promise<void> {
+    const resolvedUid = resolveUserId(params.validatorUserId);
+    if (!resolvedUid) {
+      throw new Error("Gagal membuka kunci sesi: Identitas Pengguna tidak ditemukan.");
+    }
+
+    const targetDate = params.dateStr || getTodayDateStr();
+    const { items } = await this.getAttendanceForDate(targetDate, "", "");
+    const item = items.find(i => i.scheduleId === params.scheduleId);
+    if (!item) {
+      throw new Error("Sesi jadwal mengajar tidak ditemukan.");
+    }
+
+    const docId = item.id || `${targetDate}_${params.scheduleId}`;
+    const docRef = doc(db, COLLECTION_NAME, docId);
+    const snap = await getDoc(docRef);
+
+    const now = new Date().toISOString();
+    const updates: Partial<TeacherTeachingAttendance> = {
+      status: "Terlambat",
+      attendanceStatus: "Approved",
+      validatedBy: params.validatorUserName,
+      validatedByUserId: resolvedUid,
+      validatedAt: now,
+      validationNote: `Validasi Check-in Terlambat Wakakur: ${params.reason}`,
+      updatedAt: now
+    };
+    (updates as any).isLateUnlocked = true;
+    (updates as any).lateUnlockedByUserId = resolvedUid;
+    (updates as any).lateUnlockedByUserName = params.validatorUserName;
+    (updates as any).lateUnlockedAt = now;
+    (updates as any).lateUnlockReason = params.reason;
+
+    if (snap.exists()) {
+      await updateDoc(docRef, sanitizeFirestorePayload(updates));
+    } else {
+      await setDoc(docRef, sanitizeFirestorePayload({
+        ...item,
+        ...updates,
+        date: targetDate,
+        scheduleId: params.scheduleId,
+        createdAt: now
+      }), { merge: true });
+    }
+
+    const auditColRef = collection(db, AUDIT_LOGS_COLLECTION);
+    await addDoc(auditColRef, sanitizeFirestorePayload({
+      attendanceDate: targetDate,
+      inputTimestamp: now,
+      userId: resolvedUid,
+      userName: params.validatorUserName,
+      scheduleId: params.scheduleId,
+      teacherId: item.teacherId,
+      teacherName: item.teacherName,
+      classId: item.classId,
+      className: item.className,
+      subjectId: item.subjectId,
+      subjectName: item.subjectName,
+      jp: item.jp,
+      scanTime: `${new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date())} WIB`,
+      previousStatus: item.status || "DIKUNCI",
+      newStatus: "Terlambat (Unlocked)",
+      action: "UNLOCK_WAKAKUR",
+      reason: `Validasi Check-in Terlambat Wakakur: ${params.reason}`,
+      validationResult: "Diizinkan Scan QR Check-in oleh Wakakur",
+      isLateInput: true
+    }));
   },
 
   // Validate Attendance (Approve / Reject) by Wakakur / Admin

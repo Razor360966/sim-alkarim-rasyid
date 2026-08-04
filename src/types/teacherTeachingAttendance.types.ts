@@ -65,6 +65,13 @@ export interface TeacherTeachingAttendance {
   manualCheckOutTime?: string;
   manualCheckOutReason?: string;
 
+  // Wakakur Late Unlock fields
+  isLateUnlocked?: boolean;
+  lateUnlockedByUserId?: string;
+  lateUnlockedByUserName?: string;
+  lateUnlockedAt?: string;
+  lateUnlockReason?: string;
+
   recordedByUserId?: string;
   recordedByUserName?: string;
   isInputSusulan?: boolean;
