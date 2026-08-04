@@ -310,6 +310,103 @@ function createEmptySummary(teacherId: string, teacherName: string): TeacherAtte
   };
 }
 
+export interface DistinctTeacherKpiSummary {
+  totalSessions: number;
+  totalUniqueTeachers: number;
+  hadirUniqueTeachers: number;
+  terlambatUniqueTeachers: number;
+  izinUniqueTeachers: number;
+  sakitUniqueTeachers: number;
+  tugasUniqueTeachers: number;
+  digantiUniqueTeachers: number;
+  tukarJadwalUniqueTeachers: number;
+  tidakHadirUniqueTeachers: number;
+  averageLateMinutes: number;
+  topLateTeacher: { teacherId: string; teacherName: string; count: number } | null;
+  topAbsentTeacher: { teacherId: string; teacherName: string; count: number } | null;
+}
+
+export function summarizeDistinctTeacherKpis(
+  records: Array<Pick<TeacherTeachingAttendance, "teacherId" | "teacherName" | "status" | "checkInTime" | "timeSlot" | "sequence">>
+): DistinctTeacherKpiSummary {
+  const validRecords = (records || []).filter((record) => !!record && !!record.teacherId) as Array<
+    Pick<TeacherTeachingAttendance, "teacherId" | "teacherName" | "status" | "checkInTime" | "timeSlot" | "sequence">
+  >;
+
+  const uniqueTeacherIds = new Set(validRecords.map(record => record.teacherId));
+  const hadirSet = new Set<string>();
+  const terlambatSet = new Set<string>();
+  const izinSet = new Set<string>();
+  const sakitSet = new Set<string>();
+  const tugasSet = new Set<string>();
+  const digantiSet = new Set<string>();
+  const tukarJadwalSet = new Set<string>();
+  const tidakHadirSet = new Set<string>();
+
+  const lateCounts = new Map<string, { teacherName: string; count: number }>();
+  const absentCounts = new Map<string, { teacherName: string; count: number }>();
+  const lateMinutes: number[] = [];
+
+  validRecords.forEach(record => {
+    const teacherId = record.teacherId;
+    const teacherName = record.teacherName || "Guru";
+
+    if (record.status === "Hadir Mengajar" || record.status === "Terlambat") {
+      hadirSet.add(teacherId);
+    }
+
+    if (record.status === "Terlambat") {
+      terlambatSet.add(teacherId);
+      const existing = lateCounts.get(teacherId) || { teacherName, count: 0 };
+      existing.count += 1;
+      lateCounts.set(teacherId, existing);
+
+      const startMinutes = record.timeSlot ? getLessonPeriodTimeRange({ timeSlot: record.timeSlot, sequence: record.sequence || 1 }).startM : 0;
+      const scanMinutes = record.checkInTime ? parseTimeToMinutes(record.checkInTime) : null;
+      const lateMinutesValue = scanMinutes !== null && startMinutes > 0 ? Math.max(0, scanMinutes - startMinutes) : 15;
+      lateMinutes.push(lateMinutesValue);
+    }
+
+    if (record.status === "Izin") izinSet.add(teacherId);
+    if (record.status === "Sakit") sakitSet.add(teacherId);
+    if (record.status === "Tugas Dinas") tugasSet.add(teacherId);
+    if (record.status === "Digantikan Guru Lain") digantiSet.add(teacherId);
+    if (record.status === "Tukar Jadwal") tukarJadwalSet.add(teacherId);
+    if (record.status === "Tidak Hadir") {
+      tidakHadirSet.add(teacherId);
+      const existing = absentCounts.get(teacherId) || { teacherName, count: 0 };
+      existing.count += 1;
+      absentCounts.set(teacherId, existing);
+    }
+  });
+
+  const topLateTeacher = Array.from(lateCounts.entries())
+    .map(([teacherId, value]) => ({ teacherId, teacherName: value.teacherName, count: value.count }))
+    .sort((a, b) => b.count - a.count || a.teacherName.localeCompare(b.teacherName, "id"))
+    .at(0) || null;
+
+  const topAbsentTeacher = Array.from(absentCounts.entries())
+    .map(([teacherId, value]) => ({ teacherId, teacherName: value.teacherName, count: value.count }))
+    .sort((a, b) => b.count - a.count || a.teacherName.localeCompare(b.teacherName, "id"))
+    .at(0) || null;
+
+  return {
+    totalSessions: validRecords.length,
+    totalUniqueTeachers: uniqueTeacherIds.size,
+    hadirUniqueTeachers: hadirSet.size,
+    terlambatUniqueTeachers: terlambatSet.size,
+    izinUniqueTeachers: izinSet.size,
+    sakitUniqueTeachers: sakitSet.size,
+    tugasUniqueTeachers: tugasSet.size,
+    digantiUniqueTeachers: digantiSet.size,
+    tukarJadwalUniqueTeachers: tukarJadwalSet.size,
+    tidakHadirUniqueTeachers: tidakHadirSet.size,
+    averageLateMinutes: lateMinutes.length > 0 ? Math.round(lateMinutes.reduce((sum, value) => sum + value, 0) / lateMinutes.length) : 0,
+    topLateTeacher,
+    topAbsentTeacher
+  };
+}
+
 export const teacherTeachingAttendanceService = {
   // Check Kaldik to see if date is blocked for KBM
   async checkKaldikStatus(dateStr: string, academicYearId?: string, semesterId?: string): Promise<{ isKbmDisabled: boolean; lockReason?: string }> {
@@ -1383,6 +1480,10 @@ export const teacherTeachingAttendanceService = {
         topAbsentTeachers: []
       };
     }
+  },
+
+  getDistinctTeacherKpiSummary(records: TeacherTeachingAttendance[] = []): DistinctTeacherKpiSummary {
+    return summarizeDistinctTeacherKpis(records);
   },
 
   // Get all attendance records matching filters
