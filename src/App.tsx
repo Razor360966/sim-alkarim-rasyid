@@ -62,8 +62,11 @@ const SupervisionSchedules = lazy(() => import("./pages/SupervisionSchedules"));
 const SupervisionInstruments = lazy(() => import("./pages/SupervisionInstruments"));
 const InventarisMasukSantri = lazy(() => import("./pages/InventarisMasukSantri"));
 const TeacherTeachingAttendancePage = lazy(() => import("./pages/TeacherTeachingAttendance"));
-const TeachingQrCheckInPage = lazy(() => import("./pages/TeachingQrCheckIn").then(m => ({ default: m.TeachingQrCheckInPage })));
+const TeachingQrCheckInPage = lazy(() => import("./pages/TeachingQrCheckIn"));
+const TeachingQrSimulationPage = lazy(() => import("./pages/TeachingQrSimulation").then(m => ({ default: m.TeachingQrSimulationPage })));
 const StudentAttendancePage = lazy(() => import("./pages/StudentAttendance").then(m => ({ default: m.StudentAttendancePage })));
+const TeacherDisciplinePage = lazy(() => import("./pages/TeacherDiscipline").then(m => ({ default: m.TeacherDisciplinePage })));
+const ExecutiveMutabaahGuruPage = lazy(() => import("./pages/ExecutiveMutabaahGuruPage"));
 const AboutApp = lazy(() => import("./pages/AboutApp"));
 const OfflinePage = lazy(() => import("./pages/OfflinePage"));
 const NotFound = lazy(() => import("./pages/NotFound"));
@@ -169,7 +172,10 @@ export default function App() {
                         {/* Monitoring Pembelajaran - Absensi Mengajar Guru & Siswa */}
                         <Route path="teacher-teaching-attendance" element={<TeacherTeachingAttendancePage />} />
                         <Route path="teaching-qr-checkin" element={<TeachingQrCheckInPage />} />
+                        <Route path="teaching-qr-simulation" element={<TeachingQrSimulationPage />} />
                         <Route path="student-attendance" element={<StudentAttendancePage />} />
+                        <Route path="teacher-discipline" element={<TeacherDisciplinePage />} />
+                        <Route path="executive-mutabaah-guru" element={<ExecutiveMutabaahGuruPage />} />
                       </Route>
 
                       {/* 404 Catch All Route */}

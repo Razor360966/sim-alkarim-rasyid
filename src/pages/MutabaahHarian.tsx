@@ -8,6 +8,7 @@ import { FormInput } from "../components/FormInput";
 import { mutabaahService, calculateMutabaahTargetDays } from "../services/mutabaahService";
 import { userService } from "../services/user.service";
 import { SdmMutabaahIndicator, SdmMutabaahEntry, SdmMutabaahChangeLog, SdmMutabaahPeriod } from "../types/mutabaah.types";
+import { ExecutiveMutabaahDrilldown } from "../components/ExecutiveMutabaahDrilldown";
 import { useSearchParams } from "react-router-dom";
 import {
   Calendar,
@@ -36,6 +37,7 @@ import {
   FileSpreadsheet,
   Zap,
   ShieldAlert,
+  Shield,
   Scale,
   RefreshCw
 } from "lucide-react";
@@ -123,10 +125,10 @@ export const MutabaahHarian: React.FC = () => {
   // Active Tab synchronized with URL search parameter
   const urlTab = searchParams.get("tab") || "dashboard";
   const activeTab = (
-    ["dashboard", "saya", "daily", "weekly", "monthly", "semester", "yearly", "pengaturan", "logs"].includes(urlTab)
+    ["dashboard", "executive", "saya", "daily", "weekly", "monthly", "semester", "yearly", "pengaturan", "logs"].includes(urlTab)
       ? urlTab
       : "dashboard"
-  ) as "dashboard" | "saya" | "daily" | "weekly" | "monthly" | "semester" | "yearly" | "pengaturan" | "logs";
+  ) as "dashboard" | "executive" | "saya" | "daily" | "weekly" | "monthly" | "semester" | "yearly" | "pengaturan" | "logs";
 
   const setActiveTab = (tab: string) => {
     setSearchParams({ tab });
@@ -1158,6 +1160,19 @@ export const MutabaahHarian: React.FC = () => {
           >
             Dashboard
           </button>
+          {canViewAllRekap && (
+            <button
+              onClick={() => setActiveTab("executive")}
+              className={`px-3 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
+                activeTab === "executive"
+                  ? "bg-gradient-to-r from-rose-600 to-indigo-600 text-white shadow-xs"
+                  : "text-rose-600 hover:text-rose-700 dark:text-rose-400 dark:hover:text-rose-300 font-extrabold"
+              }`}
+            >
+              <Shield className="w-3.5 h-3.5" />
+              <span>Drilldown Eksekutif</span>
+            </button>
+          )}
           <button
             onClick={() => setActiveTab("saya")}
             className={`px-3 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
@@ -1253,6 +1268,11 @@ export const MutabaahHarian: React.FC = () => {
         <Loading />
       ) : (
         <>
+          {/* TAB EXECUTIVE: DRILLDOWN MUTABAAH GURU */}
+          {activeTab === "executive" && (
+            <ExecutiveMutabaahDrilldown />
+          )}
+
           {/* TAB 1: DASHBOARD MUTABAAH */}
           {activeTab === "dashboard" && (
             <div className="space-y-6">

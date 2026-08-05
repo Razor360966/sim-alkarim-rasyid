@@ -38,6 +38,7 @@ import {
   FileText,
   Heart,
   QrCode,
+  FlaskConical,
   Info
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
@@ -172,8 +173,10 @@ export const MainLayout: React.FC = () => {
 
     // Monitoring Pembelajaran
     { name: "Scan QR Mengajar", path: "/teaching-qr-checkin", icon: QrCode, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "tata usaha", "operator", "ketua yayasan"], group: "Monitoring Pembelajaran" },
+    { name: "QR Simulation (Sandbox)", path: "/teaching-qr-simulation", icon: FlaskConical, roles: ["admin", "wakil kepala sekolah", "operator"], group: "Monitoring Pembelajaran" },
     { name: "Absensi Siswa / Santri", path: "/student-attendance", icon: Users, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Monitoring Pembelajaran" },
     { name: "Absensi Mengajar Guru", path: "/teacher-teaching-attendance", icon: ClipboardList, roles: ["admin", "wakil kepala sekolah", "kepala sekolah", "pimpinan", "ketua yayasan", "operator"], group: "Monitoring Pembelajaran" },
+    { name: "Kedisiplinan Guru", path: "/teacher-discipline", icon: Shield, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Monitoring Pembelajaran" },
 
     // Perencanaan Pembelajaran
     { name: "Program Tahunan", path: "/annual-programs", icon: Calendar, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan"], group: "Perencanaan Pembelajaran" },
@@ -192,6 +195,7 @@ export const MainLayout: React.FC = () => {
 
     // Mutabaah GTK
     { name: "Dashboard Mutabaah", path: "/mutabaah-harian?tab=dashboard", icon: LayoutDashboard, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "tata usaha", "operator", "ketua yayasan"], group: "Mutabaah GTK" },
+    { name: "Drilldown Mutabaah Guru", path: "/executive-mutabaah-guru", icon: Shield, roles: ["admin", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan", "operator"], group: "Mutabaah GTK" },
     { name: "Isi Mutabaah Saya", path: "/mutabaah-harian?tab=saya", icon: Heart, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "tata usaha", "operator", "ketua yayasan"], group: "Mutabaah GTK" },
     { name: "Rekap Harian", path: "/mutabaah-harian?tab=daily", icon: CalendarDays, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "tata usaha", "operator", "ketua yayasan"], group: "Mutabaah GTK" },
     { name: "Rekap Mingguan", path: "/mutabaah-harian?tab=weekly", icon: ClipboardList, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "tata usaha", "operator", "ketua yayasan"], group: "Mutabaah GTK" },

@@ -593,7 +593,8 @@ export const teacherTeachingAttendanceService = {
   async getAttendanceForDate(
     dateStr: string,
     academicYearId: string,
-    semesterId: string
+    semesterId: string,
+    isSimulation?: boolean
   ): Promise<{
     date: string;
     day: string;
@@ -626,7 +627,8 @@ export const teacherTeachingAttendanceService = {
     const classMap = new Map(classes.map(c => [c.id || c.classId, c]));
 
     // 3. Load saved attendances for this date from Firestore
-    const colRef = collection(db, COLLECTION_NAME);
+    const targetCollectionName = isSimulation ? "teacher_teaching_attendances_simulation" : COLLECTION_NAME;
+    const colRef = collection(db, targetCollectionName);
     const q = query(colRef, where("date", "==", dateStr));
     const snap = await getDocs(q);
     const existingRecords = new Map<string, TeacherTeachingAttendance>();
@@ -1054,7 +1056,8 @@ export const teacherTeachingAttendanceService = {
     item: TeacherTeachingAttendance,
     userId: string,
     userName: string,
-    reason?: string
+    reason?: string,
+    isSimulation?: boolean
   ): Promise<void> {
     try {
       const timestamp = new Date().toISOString();
@@ -1062,7 +1065,8 @@ export const teacherTeachingAttendanceService = {
       const isPastDate = dateStr < todayStr;
 
       const docId = item.id || `${dateStr}_${item.scheduleId}`;
-      const ref = doc(db, COLLECTION_NAME, docId);
+      const targetCollectionName = isSimulation ? "teacher_teaching_attendances_simulation" : COLLECTION_NAME;
+      const ref = doc(db, targetCollectionName, docId);
 
       const existingSnap = await getDoc(ref);
       const existingData = existingSnap.exists() ? existingSnap.data() : null;
@@ -1125,7 +1129,8 @@ export const teacherTeachingAttendanceService = {
 
       // Record audit log if past date or status changed
       if (isPastDate || (existingData && previousStatus !== item.status)) {
-        const auditColRef = collection(db, AUDIT_LOGS_COLLECTION);
+        const targetAuditCol = isSimulation ? "teacher_attendance_audit_logs_simulation" : AUDIT_LOGS_COLLECTION;
+        const auditColRef = collection(db, targetAuditCol);
         const rawAuditLog: TeacherAttendanceAuditLog = {
           attendanceDate: dateStr,
           inputTimestamp: timestamp,
@@ -1773,6 +1778,7 @@ export const teacherTeachingAttendanceService = {
     academicYearId?: string;
     semesterId?: string;
     customTimeStr?: string; // Optional override for testing or exact time
+    isSimulation?: boolean;
   }): Promise<{
     success: boolean;
     action?: "CHECK_IN" | "CHECK_OUT";
@@ -1783,7 +1789,7 @@ export const teacherTeachingAttendanceService = {
       const currentUserId = resolveUserId(params.currentUser?.uid || (params.currentUser as any)?.userId || params.currentUser?.id, params.currentUser);
 
       console.log("==================================================");
-      console.log("[QR Audit Step 1] Inisiasi Scan QR Check-In / Check-Out");
+      console.log("[QR Audit Step 1] Inisiasi Scan QR Check-In / Check-Out", params.isSimulation ? "(MODE SIMULASI)" : "(MODE PRODUKSI)");
       console.log("[QR Audit Step 1] User Current:", params.currentUser);
       console.log("[QR Audit Step 1] auth.currentUser:", auth?.currentUser ? { uid: auth.currentUser.uid, email: auth.currentUser.email } : null);
       console.log("[QR Audit Step 1] Resolved currentUserId (Firebase Auth UID):", currentUserId);
@@ -1909,7 +1915,8 @@ export const teacherTeachingAttendanceService = {
       const { items, isKbmDisabled, lockReason } = await this.getAttendanceForDate(
         todayStr,
         ayId,
-        semId
+        semId,
+        params.isSimulation
       );
 
       console.log("[QR Audit Step 5] Today's Schedules Count:", items.length, "Kaldik Disabled:", isKbmDisabled);
@@ -2261,11 +2268,12 @@ export const teacherTeachingAttendanceService = {
             item,
             currentUserId,
             params.currentUser.name || "Guru",
-            `QR Code CHECK_OUT: ${currentTimeStr}`
+            `QR Code CHECK_OUT: ${currentTimeStr}`,
+            params.isSimulation
           );
         }
 
-        const auditColRef = collection(db, AUDIT_LOGS_COLLECTION);
+        const auditColRef = collection(db, params.isSimulation ? "teacher_attendance_audit_logs_simulation" : AUDIT_LOGS_COLLECTION);
         await addDoc(auditColRef, sanitizeFirestorePayload({
           attendanceDate: todayStr,
           inputTimestamp: new Date().toISOString(),
@@ -2304,7 +2312,7 @@ export const teacherTeachingAttendanceService = {
       if (targetGroup.checkInTime && targetGroup.checkOutTime) {
         const completedMsg = `Sesi mengajar ini telah selesai.\n\nCheck-in :\n${targetGroup.checkInTime}\n\nCheck-out :\n${targetGroup.checkOutTime}\n\nData sudah tersimpan dan tidak dapat dipindai kembali.`;
 
-        const auditColRef = collection(db, AUDIT_LOGS_COLLECTION);
+        const auditColRef = collection(db, params.isSimulation ? "teacher_attendance_audit_logs_simulation" : AUDIT_LOGS_COLLECTION);
         await addDoc(auditColRef, sanitizeFirestorePayload({
           attendanceDate: todayStr,
           inputTimestamp: new Date().toISOString(),
@@ -2348,7 +2356,7 @@ export const teacherTeachingAttendanceService = {
         if (!targetGroup.isLateUnlocked) {
           const lockedMsg = `Batas waktu Check-in telah terlampaui.\n\nSilakan menghadap Wakil Kepala Sekolah Bidang Kurikulum untuk mendapatkan validasi.`;
 
-          const auditColRef = collection(db, AUDIT_LOGS_COLLECTION);
+          const auditColRef = collection(db, params.isSimulation ? "teacher_attendance_audit_logs_simulation" : AUDIT_LOGS_COLLECTION);
           await addDoc(auditColRef, sanitizeFirestorePayload({
             attendanceDate: todayStr,
             inputTimestamp: new Date().toISOString(),
@@ -2406,7 +2414,8 @@ export const teacherTeachingAttendanceService = {
         firstItem,
         currentUserId,
         params.currentUser.name || "Guru",
-        `QR Code CHECK_IN (JP Pertama): ${currentTimeStr}`
+        `QR Code CHECK_IN (JP Pertama): ${currentTimeStr}`,
+        params.isSimulation
       );
 
       for (const item of subsequentItems) {
@@ -2428,11 +2437,12 @@ export const teacherTeachingAttendanceService = {
           item,
           currentUserId,
           params.currentUser.name || "Guru",
-          `QR Code CHECK_IN (Belum Terkonfirmasi): ${currentTimeStr}`
+          `QR Code CHECK_IN (Belum Terkonfirmasi): ${currentTimeStr}`,
+          params.isSimulation
         );
       }
 
-      const auditColRef = collection(db, AUDIT_LOGS_COLLECTION);
+      const auditColRef = collection(db, params.isSimulation ? "teacher_attendance_audit_logs_simulation" : AUDIT_LOGS_COLLECTION);
       await addDoc(auditColRef, sanitizeFirestorePayload({
         attendanceDate: todayStr,
         inputTimestamp: new Date().toISOString(),
@@ -2488,6 +2498,7 @@ export const teacherTeachingAttendanceService = {
     reason: string;
     validatorUserId: string;
     validatorUserName: string;
+    isSimulation?: boolean;
   }): Promise<void> {
     const resolvedUid = resolveUserId(params.validatorUserId);
     if (!resolvedUid) {
@@ -2495,14 +2506,15 @@ export const teacherTeachingAttendanceService = {
     }
 
     const targetDate = params.dateStr || getTodayDateStr();
-    const { items } = await this.getAttendanceForDate(targetDate, "", "");
+    const { items } = await this.getAttendanceForDate(targetDate, "", "", params.isSimulation);
     const item = items.find(i => i.scheduleId === params.scheduleId);
     if (!item) {
       throw new Error("Sesi jadwal mengajar tidak ditemukan.");
     }
 
     const docId = item.id || `${targetDate}_${params.scheduleId}`;
-    const docRef = doc(db, COLLECTION_NAME, docId);
+    const targetColName = params.isSimulation ? "teacher_teaching_attendances_simulation" : COLLECTION_NAME;
+    const docRef = doc(db, targetColName, docId);
     const snap = await getDoc(docRef);
 
     const now = new Date().toISOString();
@@ -2533,7 +2545,8 @@ export const teacherTeachingAttendanceService = {
       }), { merge: true });
     }
 
-    const auditColRef = collection(db, AUDIT_LOGS_COLLECTION);
+    const targetAuditCol = params.isSimulation ? "teacher_attendance_audit_logs_simulation" : AUDIT_LOGS_COLLECTION;
+    const auditColRef = collection(db, targetAuditCol);
     await addDoc(auditColRef, sanitizeFirestorePayload({
       attendanceDate: targetDate,
       inputTimestamp: now,
@@ -2555,6 +2568,49 @@ export const teacherTeachingAttendanceService = {
       validationResult: "Diizinkan Scan QR Check-in oleh Wakakur",
       isLateInput: true
     }));
+  },
+
+  // Completely wipe simulation collections without affecting production
+  async resetSimulationData(): Promise<void> {
+    try {
+      // 1. Delete teacher_teaching_attendances_simulation
+      const simColRef = collection(db, "teacher_teaching_attendances_simulation");
+      const simSnap = await getDocs(simColRef);
+      const deletePromises: Promise<void>[] = [];
+      simSnap.forEach(docSnap => {
+        deletePromises.push(deleteDoc(doc(db, "teacher_teaching_attendances_simulation", docSnap.id)));
+      });
+
+      // 2. Delete teacher_attendance_audit_logs_simulation
+      const auditColRef = collection(db, "teacher_attendance_audit_logs_simulation");
+      const auditSnap = await getDocs(auditColRef);
+      auditSnap.forEach(docSnap => {
+        deletePromises.push(deleteDoc(doc(db, "teacher_attendance_audit_logs_simulation", docSnap.id)));
+      });
+
+      await Promise.all(deletePromises);
+      console.log("[SIMULATION RESET] Successfully wiped simulation records.");
+    } catch (error) {
+      console.error("[SIMULATION RESET ERROR]", error);
+      throw error;
+    }
+  },
+
+  // Fetch simulation audit logs
+  async getSimulationAuditLogs(): Promise<TeacherAttendanceAuditLog[]> {
+    try {
+      const auditColRef = collection(db, "teacher_attendance_audit_logs_simulation");
+      const snap = await getDocs(auditColRef);
+      const logs: TeacherAttendanceAuditLog[] = [];
+      snap.forEach(d => {
+        logs.push({ id: d.id, ...d.data() } as TeacherAttendanceAuditLog);
+      });
+      logs.sort((a, b) => (b.inputTimestamp || "").localeCompare(a.inputTimestamp || ""));
+      return logs;
+    } catch (error) {
+      console.error("Error fetching simulation audit logs:", error);
+      return [];
+    }
   },
 
   // Validate Attendance (Approve / Reject) by Wakakur / Admin

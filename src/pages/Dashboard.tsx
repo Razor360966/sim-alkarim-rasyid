@@ -27,6 +27,7 @@ import { WakasisDashboard } from "../components/dashboard/WakasisDashboard";
 import { WakasarprasDashboard } from "../components/dashboard/WakasarprasDashboard";
 import { ExecutiveComplianceDashboard } from "../components/dashboard/ExecutiveComplianceDashboard";
 import { ExecutiveTeachingAnalyticsWidget } from "../components/ExecutiveTeachingAnalyticsWidget";
+import { ExecutiveMutabaahWidget } from "../components/ExecutiveMutabaahWidget";
 import { 
   X,
   Users, 
@@ -2698,6 +2699,9 @@ export const Dashboard: React.FC = () => {
 
           {/* EXECUTIVE TEACHING ANALYTICS (INDICATORS) */}
           <ExecutiveTeachingAnalyticsWidget records={todayTeachingAttendance?.items || []} />
+
+          {/* EXECUTIVE MUTABAAH GURU DRILLDOWN WIDGET */}
+          <ExecutiveMutabaahWidget />
 
           {/* EXECUTIVE COMPLIANCE ENGINE (EXPECTED VS ACTUAL) */}
           <ExecutiveComplianceDashboard />

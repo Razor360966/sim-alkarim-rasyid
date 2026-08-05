@@ -15,6 +15,7 @@ import {
   Printer, 
   History, 
   Sparkles,
+  FlaskConical,
   Info,
   Check,
   ChevronRight,
@@ -338,14 +339,24 @@ export const TeachingQrCheckInPage: React.FC = () => {
 
           <div className="flex flex-wrap items-center gap-3">
             {isWakakurOrAdmin && (
-              <button
-                type="button"
-                onClick={() => setIsClassQrModalOpen(true)}
-                className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all shadow-md flex items-center gap-2 cursor-pointer"
-              >
-                <Printer className="w-4 h-4" />
-                <span>Cetak QR Code Kelas</span>
-              </button>
+              <>
+                <Link
+                  to="/teaching-qr-simulation"
+                  className="px-4 py-2.5 bg-gradient-to-r from-amber-500 to-rose-600 hover:from-amber-600 hover:to-rose-700 text-white text-xs font-black rounded-xl transition-all shadow-md flex items-center gap-2"
+                >
+                  <FlaskConical className="w-4 h-4 text-amber-200 animate-pulse" />
+                  <span>Mode Simulasi (Sandbox)</span>
+                </Link>
+
+                <button
+                  type="button"
+                  onClick={() => setIsClassQrModalOpen(true)}
+                  className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all shadow-md flex items-center gap-2 cursor-pointer"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Cetak QR Code Kelas</span>
+                </button>
+              </>
             )}
             <div className="bg-white/10 backdrop-blur-md border border-white/20 p-3.5 rounded-2xl flex items-center gap-3">
               <Clock className="w-5 h-5 text-indigo-400 animate-pulse" />
