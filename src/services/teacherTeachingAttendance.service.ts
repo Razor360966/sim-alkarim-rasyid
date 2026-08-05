@@ -2819,6 +2819,167 @@ export const teacherTeachingAttendanceService = {
     return rawRecords;
   },
 
+  // Calculate Executive Indicators and JP Summaries from Attendance Records
+  getExecutiveTeachingAnalytics(records: TeacherTeachingAttendance[]) {
+    let jpHadir = 0;
+    let jpBelumTerkonfirmasi = 0;
+    let jpTerlambat = 0;
+    let jpAlpa = 0;
+    let jpDikunci = 0;
+
+    const teacherMap: Record<string, {
+      teacherId: string;
+      teacherName: string;
+      total: number;
+      hadir: number;
+      unconfirmed: number;
+      terlambat: number;
+      dikunci: number;
+    }> = {};
+
+    const classMap: Record<string, {
+      classId: string;
+      className: string;
+      total: number;
+      terlambat: number;
+    }> = {};
+
+    const subjectMap: Record<string, {
+      subjectId: string;
+      subjectName: string;
+      total: number;
+      hadir: number;
+    }> = {};
+
+    records.forEach(item => {
+      const isLocked = (item.status as string) === "DIKUNCI" || (item as any).isLocked || (item.notes && item.notes.toLowerCase().includes("dikunci"));
+      
+      if (item.status === "Hadir Mengajar") {
+        jpHadir++;
+      } else if (item.status === "Belum Terkonfirmasi") {
+        jpBelumTerkonfirmasi++;
+      } else if (item.status === "Terlambat") {
+        jpTerlambat++;
+      } else if (item.status === "Tidak Hadir") {
+        jpAlpa++;
+      } else if (isLocked) {
+        jpDikunci++;
+      }
+
+      // Teacher stats
+      if (item.teacherId) {
+        if (!teacherMap[item.teacherId]) {
+          teacherMap[item.teacherId] = {
+            teacherId: item.teacherId,
+            teacherName: item.teacherName || "Guru",
+            total: 0,
+            hadir: 0,
+            unconfirmed: 0,
+            terlambat: 0,
+            dikunci: 0
+          };
+        }
+        const t = teacherMap[item.teacherId];
+        t.total++;
+        if (item.status === "Hadir Mengajar") t.hadir++;
+        if (item.status === "Belum Terkonfirmasi") t.unconfirmed++;
+        if (item.status === "Terlambat") t.terlambat++;
+        if (isLocked) t.dikunci++;
+      }
+
+      // Class stats
+      if (item.classId || item.className) {
+        const cKey = item.classId || item.className;
+        if (!classMap[cKey]) {
+          classMap[cKey] = {
+            classId: item.classId || cKey,
+            className: item.className || cKey,
+            total: 0,
+            terlambat: 0
+          };
+        }
+        classMap[cKey].total++;
+        if (item.status === "Terlambat") classMap[cKey].terlambat++;
+      }
+
+      // Subject stats
+      if (item.subjectId || item.subjectName) {
+        const sKey = item.subjectId || item.subjectName;
+        if (!subjectMap[sKey]) {
+          subjectMap[sKey] = {
+            subjectId: item.subjectId || sKey,
+            subjectName: item.subjectName || sKey,
+            total: 0,
+            hadir: 0
+          };
+        }
+        subjectMap[sKey].total++;
+        if (item.status === "Hadir Mengajar") subjectMap[sKey].hadir++;
+      }
+    });
+
+    const teacherList = Object.values(teacherMap);
+
+    const topUnconfirmedTeachers = [...teacherList]
+      .filter(t => t.unconfirmed > 0)
+      .sort((a, b) => b.unconfirmed - a.unconfirmed)
+      .slice(0, 5);
+
+    const mostDisciplinedTeachers = [...teacherList]
+      .filter(t => t.total > 0)
+      .map(t => ({
+        ...t,
+        percentage: Math.round((t.hadir / t.total) * 100)
+      }))
+      .sort((a, b) => b.percentage - a.percentage || b.hadir - a.hadir)
+      .slice(0, 5);
+
+    const mostLateTeachers = [...teacherList]
+      .filter(t => t.terlambat > 0)
+      .sort((a, b) => b.terlambat - a.terlambat)
+      .slice(0, 5);
+
+    const mostLockedTeachers = [...teacherList]
+      .filter(t => t.dikunci > 0)
+      .sort((a, b) => b.dikunci - a.dikunci)
+      .slice(0, 5);
+
+    const topLateClasses = Object.values(classMap)
+      .filter(c => c.total > 0 && c.terlambat > 0)
+      .map(c => ({
+        ...c,
+        percentage: Math.round((c.terlambat / c.total) * 100)
+      }))
+      .sort((a, b) => b.percentage - a.percentage || b.terlambat - a.terlambat)
+      .slice(0, 5);
+
+    const topDisciplinedSubjects = Object.values(subjectMap)
+      .filter(s => s.total > 0)
+      .map(s => ({
+        ...s,
+        percentage: Math.round((s.hadir / s.total) * 100)
+      }))
+      .sort((a, b) => b.percentage - a.percentage || b.hadir - a.hadir)
+      .slice(0, 5);
+
+    return {
+      summary: {
+        totalJP: records.length,
+        jpHadir,
+        jpBelumTerkonfirmasi,
+        jpTerlambat,
+        jpAlpa,
+        jpDikunci
+      },
+      topUnconfirmedTeachers,
+      mostDisciplinedTeachers,
+      mostLateTeachers,
+      mostLockedTeachers,
+      topLateClasses,
+      topDisciplinedSubjects
+    };
+  },
+
   // Alias for processQrCheckOut (calls processQrCheckIn which dynamically handles both check-in and check-out)
   async processQrCheckOut(params: {
     scannedContent: string;

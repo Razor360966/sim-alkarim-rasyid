@@ -26,6 +26,7 @@ import { teacherDisciplineService } from "../services/teacherDiscipline.service"
 import { WakasisDashboard } from "../components/dashboard/WakasisDashboard";
 import { WakasarprasDashboard } from "../components/dashboard/WakasarprasDashboard";
 import { ExecutiveComplianceDashboard } from "../components/dashboard/ExecutiveComplianceDashboard";
+import { ExecutiveTeachingAnalyticsWidget } from "../components/ExecutiveTeachingAnalyticsWidget";
 import { 
   X,
   Users, 
@@ -2603,7 +2604,6 @@ export const Dashboard: React.FC = () => {
               const tidakHadirItems = items.filter(i => i.status === "Tidak Hadir");
               const digantiItems = items.filter(i => i.status === "Digantikan Guru Lain");
               const kbmDitiadakanItems = items.filter(i => i.status === "KBM Ditiadakan");
-              const teacherSummary = teacherTeachingAttendanceService.getDistinctTeacherKpiSummary(items);
 
               const effectiveTotal = totalSesi - kbmDitiadakanItems.length;
               const attendancePct = effectiveTotal > 0 ? Math.round(((hadirItems.length + digantiItems.length) / effectiveTotal) * 100) : (totalSesi > 0 && todayTeachingAttendance?.isKbmDisabled ? 100 : 0);
@@ -2654,7 +2654,7 @@ export const Dashboard: React.FC = () => {
                     className="p-3.5 bg-emerald-50/60 dark:bg-emerald-950/20 hover:bg-emerald-100/60 dark:hover:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/40 rounded-2xl cursor-pointer transition-all space-y-1 group"
                   >
                     <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase">Guru Hadir</span>
-                    <div className="text-xl font-black text-emerald-700 dark:text-emerald-300">{teacherSummary.hadirUniqueTeachers}</div>
+                    <div className="text-xl font-black text-emerald-700 dark:text-emerald-300">{hadirItems.length}</div>
                     <p className="text-[9px] text-emerald-600 font-semibold flex items-center gap-0.5">Klik Rincian &rarr;</p>
                   </div>
 
@@ -2662,8 +2662,8 @@ export const Dashboard: React.FC = () => {
                     onClick={() => setDrilldownModal({ isOpen: true, title: "Daftar Guru Izin / Sakit / Tugas", type: "teaching_attendance_detail", data: izinItems })}
                     className="p-3.5 bg-blue-50/60 dark:bg-blue-950/20 hover:bg-blue-100/60 dark:hover:bg-blue-950/40 border border-blue-200 dark:border-blue-900/40 rounded-2xl cursor-pointer transition-all space-y-1 group"
                   >
-                    <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase">Guru Izin / Sakit / Tugas</span>
-                    <div className="text-xl font-black text-blue-700 dark:text-blue-300">{teacherSummary.izinUniqueTeachers + teacherSummary.sakitUniqueTeachers + teacherSummary.tugasUniqueTeachers}</div>
+                    <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase">Guru Izin / Tugas</span>
+                    <div className="text-xl font-black text-blue-700 dark:text-blue-300">{izinItems.length}</div>
                     <p className="text-[9px] text-blue-600 font-semibold flex items-center gap-0.5">Klik Rincian &rarr;</p>
                   </div>
 
@@ -2672,7 +2672,7 @@ export const Dashboard: React.FC = () => {
                     className="p-3.5 bg-rose-50/60 dark:bg-rose-950/20 hover:bg-rose-100/60 dark:hover:bg-rose-950/40 border border-rose-200 dark:border-rose-900/40 rounded-2xl cursor-pointer transition-all space-y-1 group"
                   >
                     <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400 uppercase">Guru Alpa</span>
-                    <div className="text-xl font-black text-rose-700 dark:text-rose-300">{teacherSummary.tidakHadirUniqueTeachers}</div>
+                    <div className="text-xl font-black text-rose-700 dark:text-rose-300">{tidakHadirItems.length}</div>
                     <p className="text-[9px] text-rose-600 font-semibold flex items-center gap-0.5">Klik Rincian &rarr;</p>
                   </div>
 
@@ -2681,7 +2681,7 @@ export const Dashboard: React.FC = () => {
                     className="p-3.5 bg-purple-50/60 dark:bg-purple-950/20 hover:bg-purple-100/60 dark:hover:bg-purple-950/40 border border-purple-200 dark:border-purple-900/40 rounded-2xl cursor-pointer transition-all space-y-1 group"
                   >
                     <span className="text-[10px] font-bold text-purple-600 dark:text-purple-400 uppercase">Guru Diganti</span>
-                    <div className="text-xl font-black text-purple-700 dark:text-purple-300">{teacherSummary.digantiUniqueTeachers}</div>
+                    <div className="text-xl font-black text-purple-700 dark:text-purple-300">{digantiItems.length}</div>
                     <p className="text-[9px] text-purple-600 font-semibold flex items-center gap-0.5">Klik Rincian &rarr;</p>
                   </div>
 
@@ -2695,6 +2695,9 @@ export const Dashboard: React.FC = () => {
             );
             })()}
           </div>
+
+          {/* EXECUTIVE TEACHING ANALYTICS (INDICATORS) */}
+          <ExecutiveTeachingAnalyticsWidget records={todayTeachingAttendance?.items || []} />
 
           {/* EXECUTIVE COMPLIANCE ENGINE (EXPECTED VS ACTUAL) */}
           <ExecutiveComplianceDashboard />
