@@ -560,8 +560,9 @@ export const TeachingQrCheckInPage: React.FC = () => {
             ) : (
               <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
                 {todaySchedules.map((sch, idx) => {
-                  const hasCheckedIn = !!sch.checkInTime;
                   const hasCheckedOut = !!sch.checkOutTime;
+                  const isBelumTerkonfirmasi = sch.status === "Belum Terkonfirmasi";
+                  const hasCheckedIn = !!sch.checkInTime && !isBelumTerkonfirmasi;
 
                   return (
                     <div
@@ -571,7 +572,9 @@ export const TeachingQrCheckInPage: React.FC = () => {
                           ? "bg-slate-50 dark:bg-zinc-850/60 border-slate-200 dark:border-zinc-800"
                           : hasCheckedIn
                             ? "bg-emerald-50/50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60"
-                            : "bg-white dark:bg-zinc-850 border-slate-200 dark:border-zinc-750"
+                            : isBelumTerkonfirmasi
+                              ? "bg-orange-50/60 dark:bg-orange-950/30 border-orange-200 dark:border-orange-800/60"
+                              : "bg-white dark:bg-zinc-850 border-slate-200 dark:border-zinc-750"
                       }`}
                     >
                       <div className="flex items-center justify-between">
@@ -586,9 +589,17 @@ export const TeachingQrCheckInPage: React.FC = () => {
                             ? "bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 border border-blue-300"
                             : hasCheckedIn
                               ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300"
-                              : "bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300"
+                              : isBelumTerkonfirmasi
+                                ? "bg-orange-100 dark:bg-orange-950 text-orange-800 dark:text-orange-300 border border-orange-300"
+                                : "bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300"
                         }`}>
-                          {hasCheckedOut ? "Selesai (Checked Out)" : hasCheckedIn ? "Sedang Mengajar" : "Belum Check In"}
+                          {hasCheckedOut
+                            ? "Selesai (Checked Out)"
+                            : hasCheckedIn
+                              ? "Sedang Mengajar"
+                              : isBelumTerkonfirmasi
+                                ? "Belum Terkonfirmasi"
+                                : "Belum Check In"}
                         </span>
                       </div>
 

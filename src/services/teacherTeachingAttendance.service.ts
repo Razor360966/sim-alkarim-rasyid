@@ -1455,6 +1455,7 @@ export const teacherTeachingAttendanceService = {
     let tukarJadwalCount = 0;
     let kbmDitiadakanCount = 0;
     let belumDiverifikasiCount = 0;
+    let belumTerkonfirmasiCount = 0;
 
     items.forEach(i => {
       switch (i.status) {
@@ -1463,6 +1464,9 @@ export const teacherTeachingAttendanceService = {
           break;
         case "Terlambat":
           terlambatCount++;
+          break;
+        case "Belum Terkonfirmasi":
+          belumTerkonfirmasiCount++;
           break;
         case "Izin":
           izinCount++;
@@ -2222,9 +2226,16 @@ export const teacherTeachingAttendanceService = {
         const checkInTimeStr = targetGroup.checkInTime || currentTimeStr;
         const durationMinutes = calculateDurationInMinutes(checkInTimeStr, currentTimeStr);
 
+        const firstItemStatus = targetGroup.items[0].status;
+
         for (const item of targetGroup.items) {
           item.checkOutTime = currentTimeStr;
           item.teachingDurationMinutes = durationMinutes;
+          
+          // Subsequent JPs in multi-JP session change from Belum Terkonfirmasi to HADIR (or Terlambat)
+          if (item.status === "Belum Terkonfirmasi" || !item.status) {
+            item.status = firstItemStatus === "Terlambat" ? "Terlambat" : "Hadir Mengajar";
+          }
           item.updatedAt = new Date().toISOString();
 
           if (matchedClass?.id) {
@@ -2277,7 +2288,7 @@ export const teacherTeachingAttendanceService = {
           isLateInput: false
         }));
 
-        const returnMsg = `CHECK OUT Berhasil di Kelas ${targetGroup.className} (${targetGroup.jpLabel} - ${targetGroup.subjectName}). Durasi mengajar: ${durationMinutes} menit.`;
+        const returnMsg = `CHECK OUT Berhasil di Kelas ${targetGroup.className} (${targetGroup.jpLabel} - ${targetGroup.subjectName}). Durasi mengajar: ${durationMinutes} menit. Seluruh JP terkonfirmasi HADIR.`;
 
         return {
           success: true,
@@ -2371,11 +2382,37 @@ export const teacherTeachingAttendanceService = {
         newAttendanceStatus = "Terlambat";
       }
 
-      // Execute CHECK-IN for targetGroup items
-      for (const item of targetGroup.items) {
+      // Execute CHECK-IN for targetGroup items according to Per-JP Multi-JP Rules:
+      // First JP in session -> HADIR (or Terlambat)
+      // Subsequent JPs in session -> BELUM TERKONFIRMASI
+      const firstItem = targetGroup.items[0];
+      const subsequentItems = targetGroup.items.slice(1);
+
+      firstItem.checkInTime = currentTimeStr;
+      firstItem.checkInType = "Scan QR";
+      firstItem.status = newAttendanceStatus;
+      firstItem.updatedAt = new Date().toISOString();
+
+      if (matchedClass?.id) {
+        firstItem.classId = matchedClass.id;
+        firstItem.className = matchedClass.name;
+      }
+
+      if (!firstItem.checkInLogs) firstItem.checkInLogs = [];
+      firstItem.checkInLogs.push({ checkIn: currentTimeStr });
+
+      await this.saveSingleSessionAttendance(
+        todayStr,
+        firstItem,
+        currentUserId,
+        params.currentUser.name || "Guru",
+        `QR Code CHECK_IN (JP Pertama): ${currentTimeStr}`
+      );
+
+      for (const item of subsequentItems) {
         item.checkInTime = currentTimeStr;
         item.checkInType = "Scan QR";
-        item.status = newAttendanceStatus;
+        item.status = "Belum Terkonfirmasi";
         item.updatedAt = new Date().toISOString();
 
         if (matchedClass?.id) {
@@ -2391,7 +2428,7 @@ export const teacherTeachingAttendanceService = {
           item,
           currentUserId,
           params.currentUser.name || "Guru",
-          `QR Code CHECK_IN: ${currentTimeStr}`
+          `QR Code CHECK_IN (Belum Terkonfirmasi): ${currentTimeStr}`
         );
       }
 
@@ -2420,7 +2457,14 @@ export const teacherTeachingAttendanceService = {
         isLateInput: newAttendanceStatus === "Terlambat"
       }));
 
-      const checkInSuccessMsg = `CHECK IN Berhasil di Kelas ${targetGroup.className} (${targetGroup.jpLabel} - ${targetGroup.subjectName})${newAttendanceStatus === "Terlambat" ? " [Status: Terlambat]" : ""}.`;
+      let checkInSuccessMsg = "";
+      if (targetGroup.items.length > 1) {
+        const firstJpLabel = firstItem.jp || `JP ${firstItem.sequence}`;
+        const subJpLabels = subsequentItems.map(i => i.jp || `JP ${i.sequence}`).join(", ");
+        checkInSuccessMsg = `CHECK IN Berhasil di Kelas ${targetGroup.className} (${targetGroup.jpLabel} - ${targetGroup.subjectName}).\n• ${firstJpLabel}: HADIR${newAttendanceStatus === "Terlambat" ? " [Terlambat]" : ""}\n• ${subJpLabels}: BELUM TERKONFIRMASI (Perlu Check-out di akhir sesi).`;
+      } else {
+        checkInSuccessMsg = `CHECK IN Berhasil di Kelas ${targetGroup.className} (${targetGroup.jpLabel} - ${targetGroup.subjectName})${newAttendanceStatus === "Terlambat" ? " [Status: Terlambat]" : ""}.`;
+      }
 
       return {
         success: true,
@@ -2640,34 +2684,46 @@ export const teacherTeachingAttendanceService = {
       throw new Error("Sesi jadwal mengajar tidak ditemukan.");
     }
 
-    const checkInStr = item.checkInTime || "07:30";
-    const duration = calculateDurationInMinutes(checkInStr, params.manualCheckOutTime);
-
-    item.checkOutTime = params.manualCheckOutTime;
-    item.isManualCheckOut = true;
-    item.manualCheckOutByUserId = resolvedUid;
-    item.manualCheckOutByUserName = params.userName;
-    item.manualCheckOutTime = new Date().toISOString();
-    item.manualCheckOutReason = params.reason;
-    item.teachingDurationMinutes = duration;
-    item.notes = `${item.notes ? item.notes + " | " : ""}Check Out Manual oleh ${params.userName}: ${params.reason}`;
-
-    if (!item.checkInLogs || item.checkInLogs.length === 0) {
-      item.checkInLogs = [{ checkIn: checkInStr, checkOut: params.manualCheckOutTime, durationMinutes: duration, note: params.reason }];
-    } else {
-      const last = item.checkInLogs[item.checkInLogs.length - 1];
-      last.checkOut = params.manualCheckOutTime;
-      last.durationMinutes = duration;
-      last.note = params.reason;
-    }
-
-    await this.saveSingleSessionAttendance(
-      params.dateStr,
-      item,
-      resolvedUid,
-      params.userName,
-      `Check Out Manual: ${params.reason}`
+    const sessionGroupItems = items.filter(i =>
+      i.teacherId === item.teacherId &&
+      i.classId === item.classId &&
+      i.subjectId === item.subjectId
     );
+
+    for (const sessionItem of sessionGroupItems) {
+      const checkInStr = sessionItem.checkInTime || "07:30";
+      const duration = calculateDurationInMinutes(checkInStr, params.manualCheckOutTime);
+
+      sessionItem.checkOutTime = params.manualCheckOutTime;
+      sessionItem.isManualCheckOut = true;
+      sessionItem.manualCheckOutByUserId = resolvedUid;
+      sessionItem.manualCheckOutByUserName = params.userName;
+      sessionItem.manualCheckOutTime = new Date().toISOString();
+      sessionItem.manualCheckOutReason = params.reason;
+      sessionItem.teachingDurationMinutes = duration;
+      sessionItem.notes = `${sessionItem.notes ? sessionItem.notes + " | " : ""}Check Out Manual oleh ${params.userName}: ${params.reason}`;
+
+      if (sessionItem.status === "Belum Terkonfirmasi" || !sessionItem.status) {
+        sessionItem.status = "Hadir Mengajar";
+      }
+
+      if (!sessionItem.checkInLogs || sessionItem.checkInLogs.length === 0) {
+        sessionItem.checkInLogs = [{ checkIn: checkInStr, checkOut: params.manualCheckOutTime, durationMinutes: duration, note: params.reason }];
+      } else {
+        const last = sessionItem.checkInLogs[sessionItem.checkInLogs.length - 1];
+        last.checkOut = params.manualCheckOutTime;
+        last.durationMinutes = duration;
+        last.note = params.reason;
+      }
+
+      await this.saveSingleSessionAttendance(
+        params.dateStr,
+        sessionItem,
+        resolvedUid,
+        params.userName,
+        `Check Out Manual: ${params.reason}`
+      );
+    }
   },
 
   // Get QR Check-In Monitoring Indicators for Wakakur Dashboard
@@ -2719,8 +2775,8 @@ export const teacherTeachingAttendanceService = {
         belumCheckIn.push(item);
       }
 
-      // 2. Belum Check Out: Checked-in, schedule period ended (current time > endM), but no checkOutTime
-      if (item.checkInTime && !item.checkOutTime && currentM > endM) {
+      // 2. Belum Check Out: Checked-in, schedule period ended (current time > endM), but no checkOutTime or status is Belum Terkonfirmasi
+      if (item.checkInTime && (!item.checkOutTime || item.status === "Belum Terkonfirmasi") && currentM > endM) {
         belumCheckOut.push(item);
       }
 
@@ -2729,8 +2785,8 @@ export const teacherTeachingAttendanceService = {
         terlambatCheckIn.push(item);
       }
 
-      // 4. Lupa Check Out (Checked in, period ended > 60 mins ago without checkOutTime, or manual checkout performed)
-      if (item.isManualCheckOut || (item.checkInTime && !item.checkOutTime && currentM > endM + 60)) {
+      // 4. Lupa Check Out (Checked in, period ended > 60 mins ago without checkOutTime or Belum Terkonfirmasi, or manual checkout performed)
+      if (item.isManualCheckOut || (item.checkInTime && (!item.checkOutTime || item.status === "Belum Terkonfirmasi") && currentM > endM + 60)) {
         lupaCheckOut.push(item);
       }
     });

@@ -1,6 +1,7 @@
 export type AttendanceTeachingStatus =
   | "Hadir Mengajar"
   | "Terlambat"
+  | "Belum Terkonfirmasi"
   | "Izin"
   | "Sakit"
   | "Tugas Dinas"

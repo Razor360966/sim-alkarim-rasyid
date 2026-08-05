@@ -1792,6 +1792,8 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                                 ? "bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800"
                                 : item.status === "Terlambat"
                                 ? "bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800"
+                                : item.status === "Belum Terkonfirmasi"
+                                ? "bg-orange-50 text-orange-800 border-orange-300 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-800 font-semibold"
                                 : item.status === "Digantikan Guru Lain"
                                 ? "bg-purple-50 text-purple-800 border-purple-300 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800"
                                 : item.status === "Tukar Jadwal"
@@ -1807,6 +1809,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                           >
                             <option value="Hadir Mengajar">Hadir Mengajar</option>
                             <option value="Terlambat">Terlambat</option>
+                            <option value="Belum Terkonfirmasi">Belum Terkonfirmasi</option>
                             <option value="Izin">Izin</option>
                             <option value="Sakit">Sakit</option>
                             <option value="Tugas Dinas">Tugas Dinas</option>
@@ -3027,6 +3030,8 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                         <td className="py-2.5 px-3">
                           <span className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
                             r.status === "Hadir Mengajar" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" :
+                            r.status === "Terlambat" ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" :
+                            r.status === "Belum Terkonfirmasi" ? "bg-orange-100 text-orange-800 border border-orange-300 dark:bg-orange-950 dark:text-orange-300" :
                             r.status === "Tidak Hadir" ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300" :
                             r.status === "Izin" ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-950 dark:text-yellow-300" :
                             r.status === "Sakit" ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" :
