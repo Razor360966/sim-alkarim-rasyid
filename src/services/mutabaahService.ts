@@ -126,6 +126,23 @@ const DEFAULT_INDICATORS: Omit<SdmMutabaahIndicator, "createdAt" | "updatedAt" |
     excludeDuringHaid: true
   },
   {
+    id: "m_kahfi",
+    name: "Membaca Surah Al-Kahfi",
+    category: "Ibadah Sunnah",
+    inputType: "boolean",
+    target: 1,
+    unit: "kali",
+    applicableRoles: ["musrif", "guru", "staff", "wakil kepala sekolah", "kepala sekolah", "tata usaha"],
+    weight: 10,
+    isActive: true,
+    isArchived: false,
+    frequency: "harian",
+    applicableDays: ["Jumat"],
+    appliesToMale: true,
+    appliesToFemale: true,
+    excludeDuringHaid: true
+  },
+  {
     id: "m_shalat_dhuha",
     name: "Shalat Dhuha",
     category: "Ibadah Sunnah",
@@ -785,3 +802,66 @@ export function calculateMutabaahTargetDays(
 
   return Math.max(1, indicator.target || 1);
 }
+
+/**
+ * Single Source of Truth helper for filtering active Mutabaah indicators applicable on a given date.
+ * Filters by isActive, isArchived, applicableDays (or specificDates), applicableRoles, gender, and haid status.
+ */
+export function getApplicableIndicatorsForDay(
+  indicators: SdmMutabaahIndicator[],
+  dateStr: string,
+  userRole?: string,
+  userGender?: "L" | "P" | string,
+  userHaidStatus?: "Normal" | "Haid" | string
+): SdmMutabaahIndicator[] {
+  if (!dateStr) return [];
+
+  const dateObj = new Date(dateStr + "T00:00:00");
+  const dayIndex = isNaN(dateObj.getTime()) ? 1 : dateObj.getDay();
+  const dayNames = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+  const dayName = dayNames[dayIndex] || "Senin";
+
+  return indicators.filter((ind) => {
+    // 1. Must be active and not archived
+    if (!ind.isActive || ind.isArchived) return false;
+
+    // 2. Filter by Applicable Roles if specified
+    if (userRole && ind.applicableRoles && ind.applicableRoles.length > 0) {
+      const uRole = userRole.toLowerCase().trim();
+      const matchRole = ind.applicableRoles.some((r) => {
+        const checkR = r.toLowerCase().trim();
+        if (checkR === uRole) return true;
+        if (checkR === "guru" && (uRole.includes("guru") || uRole.includes("wakil") || uRole.includes("kepala") || uRole.includes("pimpinan") || uRole.includes("admin"))) return true;
+        if (checkR === "staff" && (uRole.includes("tata usaha") || uRole.includes("operator") || uRole.includes("staff"))) return true;
+        return false;
+      });
+      if (!matchRole) return false;
+    }
+
+    // 3. Filter by Gender and Haid Status if specified
+    if (userGender) {
+      const g = userGender.toLowerCase().trim();
+      const isMale = g === "l" || g.includes("laki") || g.includes("ikhwan") || g === "male";
+      const isFemale = g === "p" || g.includes("perempuan") || g.includes("akhwat") || g === "female";
+      if (isMale && ind.appliesToMale === false) return false;
+      if (isFemale && ind.appliesToFemale === false) return false;
+
+      if (isFemale && userHaidStatus === "Haid" && ind.excludeDuringHaid === true) {
+        return false;
+      }
+    }
+
+    // 4. Filter by Day or Specific Date
+    if (ind.frequency === "tanggal_tertentu") {
+      if (!ind.specificDates || ind.specificDates.length === 0 || !ind.specificDates.includes(dateStr)) {
+        return false;
+      }
+    } else if (ind.applicableDays && ind.applicableDays.length > 0) {
+      const matchDay = ind.applicableDays.some((d) => d.toLowerCase().trim() === dayName.toLowerCase().trim());
+      if (!matchDay) return false;
+    }
+
+    return true;
+  });
+}
+
