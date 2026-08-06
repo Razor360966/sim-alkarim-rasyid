@@ -1783,6 +1783,34 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                             <Clock className="w-3 h-3 text-slate-400 shrink-0" />
                             <span>{item.timeSlot ? `${item.timeSlot} WIB` : "Jam Pelajaran"}</span>
                           </div>
+                          <div className="text-[10px] space-y-0.5 mt-1 pt-1 border-t border-slate-100 dark:border-zinc-800">
+                            <div className="flex items-center gap-1 text-slate-600 dark:text-zinc-400">
+                              <span className="font-semibold">IN:</span>
+                              <span className="font-mono font-bold text-slate-900 dark:text-zinc-100">
+                                {item.checkInTime ? `${item.checkInTime.slice(0, 5)} WIB` : "-"}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1 text-slate-600 dark:text-zinc-400">
+                              <span className="font-semibold">OUT:</span>
+                              <span className="font-mono font-bold text-slate-900 dark:text-zinc-100">
+                                {item.checkOutTime
+                                  ? `${item.checkOutTime.slice(0, 5)} WIB`
+                                  : item.checkInTime
+                                  ? "Belum dilakukan"
+                                  : "-"}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1 text-slate-600 dark:text-zinc-400">
+                              <span className="font-semibold">Durasi:</span>
+                              <span className="font-bold text-indigo-600 dark:text-indigo-400">
+                                {item.teachingDurationMinutes && item.checkOutTime
+                                  ? `${item.teachingDurationMinutes}m`
+                                  : item.checkInTime && !item.checkOutTime
+                                  ? "Sedang Mengajar"
+                                  : "-"}
+                              </span>
+                            </div>
+                          </div>
                         </td>
 
                         <td className="py-3.5 px-4">

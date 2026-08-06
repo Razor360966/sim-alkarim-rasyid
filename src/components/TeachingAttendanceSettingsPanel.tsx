@@ -168,7 +168,7 @@ export const TeachingAttendanceSettingsPanel: React.FC<TeachingAttendanceSetting
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Check-In Tolerance */}
             <div className="p-4 bg-slate-50 dark:bg-zinc-800/50 rounded-xl border border-slate-200/80 dark:border-zinc-700/60 space-y-3">
               <div className="flex items-center justify-between">
@@ -223,6 +223,35 @@ export const TeachingAttendanceSettingsPanel: React.FC<TeachingAttendanceSetting
               >
                 {TOLERANCE_OPTIONS.map(opt => (
                   <option key={opt} value={opt}>{opt} Menit {opt === 15 ? "(Default Sekolah)" : ""}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* QR Scan Cooldown (Anti Double Scan) */}
+            <div className="p-4 bg-slate-50 dark:bg-zinc-800/50 rounded-xl border border-slate-200/80 dark:border-zinc-700/60 space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 flex items-center gap-1.5">
+                  <Zap className="h-4 w-4 text-amber-500" />
+                  QR Scan Cooldown
+                </label>
+                <span className="text-xs font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded-md border border-amber-200/50 dark:border-amber-900/40">
+                  {tas.qrScanCooldownSeconds ?? 30} Detik
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-zinc-400">
+                Masa tunggu Anti Double Scan setelah Check-in di mana scan selanjutnya langsung diabaikan.
+              </p>
+              <select
+                disabled={!canEdit}
+                value={tas.qrScanCooldownSeconds ?? 30}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  updateTas(prev => ({ ...prev, qrScanCooldownSeconds: val }));
+                }}
+                className="w-full px-3 py-2 text-xs font-semibold bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {[10, 15, 30, 45, 60, 120, 300].map(opt => (
+                  <option key={opt} value={opt}>{opt} Detik {opt === 30 ? "(Default Standar)" : ""}</option>
                 ))}
               </select>
             </div>

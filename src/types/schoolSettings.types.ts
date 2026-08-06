@@ -62,6 +62,7 @@ export interface JournalTimelinessRules {
 export interface TeachingAttendanceSettings {
   checkInToleranceMinutes: number; // 5, 10, 15, 20, 30
   checkOutToleranceMinutes: number; // 5, 10, 15, 20, 30
+  qrScanCooldownSeconds?: number; // default 30s for Anti Double Scan
   approvalMethod: "automatic" | "manual" | "hybrid";
   pendingValidationConditions: {
     checkInTerlambat: boolean;

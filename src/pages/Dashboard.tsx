@@ -3538,6 +3538,9 @@ export const Dashboard: React.FC = () => {
                             <th className="p-3 font-bold text-slate-500 uppercase">Mata Pelajaran</th>
                             <th className="p-3 font-bold text-slate-500 uppercase">Kelas</th>
                             <th className="p-3 font-bold text-slate-500 uppercase">JP / Sesi</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Check-In</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Check-Out</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Durasi</th>
                             <th className="p-3 font-bold text-slate-500 uppercase">Status Kehadiran</th>
                             <th className="p-3 font-bold text-slate-500 uppercase">Catatan / Pengganti</th>
                           </>
@@ -3615,6 +3618,23 @@ export const Dashboard: React.FC = () => {
                               <td className="p-3 text-slate-600 dark:text-zinc-400">{item.subjectName}</td>
                               <td className="p-3 text-slate-600 dark:text-zinc-400">{item.className}</td>
                               <td className="p-3 font-mono font-bold text-slate-700 dark:text-zinc-300">{item.jp}</td>
+                              <td className="p-3 font-mono font-bold text-emerald-700 dark:text-emerald-400">
+                                {item.checkInTime ? `${item.checkInTime.slice(0, 5)} WIB` : "-"}
+                              </td>
+                              <td className="p-3 font-mono font-bold text-blue-700 dark:text-blue-400">
+                                {item.checkOutTime
+                                  ? `${item.checkOutTime.slice(0, 5)} WIB`
+                                  : item.checkInTime
+                                  ? "Belum dilakukan"
+                                  : "-"}
+                              </td>
+                              <td className="p-3 font-bold text-indigo-600 dark:text-indigo-400">
+                                {item.teachingDurationMinutes && item.checkOutTime
+                                  ? `${item.teachingDurationMinutes} menit`
+                                  : item.checkInTime
+                                  ? "Sedang Mengajar"
+                                  : "-"}
+                              </td>
                               <td className="p-3">
                                 <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold ${
                                   item.status === "Hadir Mengajar"
@@ -3623,7 +3643,7 @@ export const Dashboard: React.FC = () => {
                                     ? "bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300"
                                     : "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300"
                                 }`}>
-                                  {item.status}
+                                  {item.checkInTime && !item.checkOutTime ? "Sedang Mengajar" : item.status}
                                 </span>
                               </td>
                               <td className="p-3 text-slate-500 dark:text-zinc-400 text-xs">

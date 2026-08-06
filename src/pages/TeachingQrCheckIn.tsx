@@ -572,8 +572,7 @@ export const TeachingQrCheckInPage: React.FC = () => {
               <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
                 {todaySchedules.map((sch, idx) => {
                   const hasCheckedOut = !!sch.checkOutTime;
-                  const isBelumTerkonfirmasi = sch.status === "Belum Terkonfirmasi";
-                  const hasCheckedIn = !!sch.checkInTime && !isBelumTerkonfirmasi;
+                  const hasCheckedIn = !!sch.checkInTime;
 
                   return (
                     <div
@@ -583,9 +582,7 @@ export const TeachingQrCheckInPage: React.FC = () => {
                           ? "bg-slate-50 dark:bg-zinc-850/60 border-slate-200 dark:border-zinc-800"
                           : hasCheckedIn
                             ? "bg-emerald-50/50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60"
-                            : isBelumTerkonfirmasi
-                              ? "bg-orange-50/60 dark:bg-orange-950/30 border-orange-200 dark:border-orange-800/60"
-                              : "bg-white dark:bg-zinc-850 border-slate-200 dark:border-zinc-750"
+                            : "bg-white dark:bg-zinc-850 border-slate-200 dark:border-zinc-750"
                       }`}
                     >
                       <div className="flex items-center justify-between">
@@ -599,18 +596,14 @@ export const TeachingQrCheckInPage: React.FC = () => {
                           hasCheckedOut
                             ? "bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 border border-blue-300"
                             : hasCheckedIn
-                              ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300"
-                              : isBelumTerkonfirmasi
-                                ? "bg-orange-100 dark:bg-orange-950 text-orange-800 dark:text-orange-300 border border-orange-300"
-                                : "bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300"
+                              ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300 animate-pulse"
+                              : "bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 border border-slate-300"
                         }`}>
                           {hasCheckedOut
-                            ? "Selesai (Checked Out)"
+                            ? "SESI SELESAI"
                             : hasCheckedIn
-                              ? "Sedang Mengajar"
-                              : isBelumTerkonfirmasi
-                                ? "Belum Terkonfirmasi"
-                                : "Belum Check In"}
+                              ? "SEDANG MENGAJAR"
+                              : "BELUM CHECK-IN"}
                         </span>
                       </div>
 
@@ -618,20 +611,39 @@ export const TeachingQrCheckInPage: React.FC = () => {
                         {sch.subjectName}
                       </div>
 
-                      <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-zinc-400 pt-2 border-t border-slate-100 dark:border-zinc-800">
-                        <div className="flex items-center gap-1">
-                          <Clock className="w-3.5 h-3.5" />
-                          <span>Waktu: <strong>{sch.timeSlot || "07:30 - 08:15"}</strong></span>
+                      <div className="grid grid-cols-3 gap-2 text-[11px] pt-2 border-t border-slate-100 dark:border-zinc-800 text-slate-600 dark:text-zinc-400">
+                        <div>
+                          <span className="block text-[9px] font-bold text-slate-400 uppercase">Jam Check-In</span>
+                          <span className="font-mono font-bold text-slate-800 dark:text-zinc-200">
+                            {sch.checkInTime ? `${sch.checkInTime} WIB` : "-"}
+                          </span>
                         </div>
-                        <div className="flex items-center gap-2 font-mono">
-                          {sch.checkInTime && <span>IN: <strong>{sch.checkInTime}</strong></span>}
-                          {sch.checkOutTime && <span>OUT: <strong>{sch.checkOutTime}</strong></span>}
+                        <div>
+                          <span className="block text-[9px] font-bold text-slate-400 uppercase">Jam Check-Out</span>
+                          <span className="font-mono font-bold text-slate-800 dark:text-zinc-200">
+                            {sch.checkOutTime
+                              ? `${sch.checkOutTime} WIB`
+                              : sch.checkInTime
+                              ? "Belum dilakukan"
+                              : "-"}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="block text-[9px] font-bold text-slate-400 uppercase">Durasi Mengajar</span>
+                          <span className="font-bold text-indigo-600 dark:text-indigo-400">
+                            {sch.teachingDurationMinutes && sch.checkOutTime
+                              ? `${sch.teachingDurationMinutes} Menit`
+                              : sch.checkInTime
+                              ? "Sedang Mengajar"
+                              : "-"}
+                          </span>
                         </div>
                       </div>
 
-                      {sch.teachingDurationMinutes && sch.teachingDurationMinutes > 0 && (
-                        <div className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold text-right">
-                          Durasi Mengajar: {sch.teachingDurationMinutes} Menit
+                      {hasCheckedIn && !hasCheckedOut && (
+                        <div className="p-2 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/40 rounded-xl text-[10px] font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
+                          <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                          <span>Menunggu waktu Check-out... (Pindai QR setelah KBM selesai)</span>
                         </div>
                       )}
 

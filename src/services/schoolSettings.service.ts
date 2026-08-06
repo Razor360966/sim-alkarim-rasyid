@@ -27,6 +27,7 @@ export const DEFAULT_JOURNAL_TIMELINESS_RULES: JournalTimelinessRules = {
 export const DEFAULT_TEACHING_ATTENDANCE_SETTINGS: TeachingAttendanceSettings = {
   checkInToleranceMinutes: 15,
   checkOutToleranceMinutes: 15,
+  qrScanCooldownSeconds: 30,
   approvalMethod: "hybrid",
   pendingValidationConditions: {
     checkInTerlambat: true,

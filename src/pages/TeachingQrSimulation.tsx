@@ -660,6 +660,7 @@ export const TeachingQrSimulationPage: React.FC = () => {
                   <th className="p-3.5">JP & Jam</th>
                   <th className="p-3.5">Check-In</th>
                   <th className="p-3.5">Check-Out</th>
+                  <th className="p-3.5">Durasi Mengajar</th>
                   <th className="p-3.5 text-center">Status JP Simulasi</th>
                   <th className="p-3.5 text-center">Aksi / Test Wakakur</th>
                 </tr>
@@ -701,13 +702,30 @@ export const TeachingQrSimulationPage: React.FC = () => {
                           <span className="px-2 py-0.5 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-bold rounded">
                             {item.checkOutTime} WIB
                           </span>
+                        ) : item.checkInTime ? (
+                          <span className="px-2 py-0.5 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 font-bold rounded">
+                            Belum dilakukan
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">-</span>
+                        )}
+                      </td>
+                      <td className="p-3.5">
+                        {item.teachingDurationMinutes && item.checkOutTime ? (
+                          <span className="font-extrabold text-indigo-600 dark:text-indigo-400">
+                            {item.teachingDurationMinutes} Menit
+                          </span>
+                        ) : item.checkInTime ? (
+                          <span className="text-amber-600 font-bold text-[11px]">
+                            Sedang Mengajar
+                          </span>
                         ) : (
                           <span className="text-slate-400">-</span>
                         )}
                       </td>
                       <td className="p-3.5 text-center">
                         <span className={`px-2.5 py-1 text-[11px] font-extrabold rounded-full ${badgeClass}`}>
-                          {status}
+                          {item.checkInTime && !item.checkOutTime ? "SEDANG MENGAJAR" : item.checkInTime && item.checkOutTime ? "SESI SELESAI" : status}
                         </span>
                       </td>
                       <td className="p-3.5 text-center">

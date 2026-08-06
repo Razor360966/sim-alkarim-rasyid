@@ -173,10 +173,11 @@ export const TeacherAttendanceTimeline: React.FC<TeacherAttendanceTimelineProps>
                                   <span>🟢 Seluruh JP Dikonfirmasi Selesai</span>
                                 </div>
                               </div>
-                            ) : isBelumTerkonfirmasi ? (
-                              <div className="space-y-0.5 text-[10px] text-orange-800 dark:text-orange-300 font-semibold">
-                                <div>🟡 Menunggu Check-Out</div>
-                                <div className="text-[9px] text-orange-600 font-normal">Check-out required to finalize JP</div>
+                            ) : checkInStr ? (
+                              <div className="space-y-0.5 text-[10px] text-amber-800 dark:text-amber-300 font-semibold">
+                                <div>Check-out: <strong>Belum dilakukan</strong></div>
+                                <div>Durasi: <strong className="text-indigo-600 dark:text-indigo-400">Sedang Mengajar</strong></div>
+                                <div className="text-[9px] text-amber-600 font-normal mt-1">Lakukan scan QR kelas setelah KBM selesai</div>
                               </div>
                             ) : (
                               <div className="text-[10px] text-slate-400">

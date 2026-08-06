@@ -2232,6 +2232,65 @@ export const teacherTeachingAttendanceService = {
       if (action === "CHECK_OUT") {
         const checkInTimeStr = targetGroup.checkInTime || currentTimeStr;
         const durationMinutes = calculateDurationInMinutes(checkInTimeStr, currentTimeStr);
+        const firstItem = targetGroup.items[0];
+
+        // 1. Check Cooldown (Anti Double Scan)
+        const cooldownSeconds = schoolSettings?.teachingAttendanceSettings?.qrScanCooldownSeconds ?? 30;
+        let secondsSinceCheckIn = 99999;
+        if (firstItem.updatedAt) {
+          const lastUpdatedMs = new Date(firstItem.updatedAt).getTime();
+          if (!isNaN(lastUpdatedMs)) {
+            secondsSinceCheckIn = Math.floor((Date.now() - lastUpdatedMs) / 1000);
+          }
+        }
+
+        // If time elapsed is less than cooldown seconds OR scan is within same minute (< cooldown)
+        if (secondsSinceCheckIn >= 0 && secondsSinceCheckIn < cooldownSeconds) {
+          // Log Ignored Double Scan in Audit Trail
+          const auditColRef = collection(db, params.isSimulation ? "teacher_attendance_audit_logs_simulation" : AUDIT_LOGS_COLLECTION);
+          await addDoc(auditColRef, sanitizeFirestorePayload({
+            attendanceDate: todayStr,
+            inputTimestamp: new Date().toISOString(),
+            userId: currentUserId,
+            userName: params.currentUser.name || "Guru",
+            userRole: params.currentUser.role || "guru",
+            action: "IGNORED_DOUBLE_SCAN",
+            scheduleId: firstItem.scheduleId,
+            teacherId: firstItem.teacherId,
+            teacherName: firstItem.teacherName,
+            classId: firstItem.classId,
+            className: firstItem.className,
+            jp: targetGroup.jpLabel,
+            subjectName: firstItem.subjectName,
+            status: firstItem.status,
+            scanTime: currentTimeStr,
+            changesDescription: `Ignored Double Scan: Scan ulang diabaikan karena masih dalam masa cooldown (${cooldownSeconds} detik).`
+          }));
+
+          return {
+            success: false,
+            message: "Check-in berhasil direkam.\n\nSilakan lanjutkan mengajar.\n\nCheck-out dapat dilakukan setelah pembelajaran selesai."
+          };
+        }
+
+        // 2. Validate Check-Out Conditions:
+        // Must meet either: (a) >= 50% of total session duration elapsed OR (b) entered last JP of session
+        const sessionStartM = targetGroup.startM;
+        const sessionEndM = targetGroup.endM;
+        const sessionTotalDurationM = sessionEndM > sessionStartM ? (sessionEndM - sessionStartM) : (40 * targetGroup.items.length);
+        const minDurationM = Math.max(1, Math.ceil(sessionTotalDurationM * 0.5));
+
+        const lastItem = targetGroup.items[targetGroup.items.length - 1];
+        const lastJpRange = getLessonPeriodTimeRange({ timeSlot: lastItem.timeSlot, sequence: lastItem.sequence });
+        const isLastJpEntered = currentM >= lastJpRange.startM;
+        const is50PercentPassed = durationMinutes >= minDurationM || (currentM - sessionStartM) >= minDurationM;
+
+        if (!is50PercentPassed && !isLastJpEntered) {
+          return {
+            success: false,
+            message: `Check-out belum dapat dilakukan.\n\nCheck-out baru dapat dilakukan setelah minimal 50% durasi mengajar berlalu (${minDurationM} menit) atau saat memasuki JP terakhir (${lastJpRange.startStr} WIB).`
+          };
+        }
 
         const firstItemStatus = targetGroup.items[0].status;
 
