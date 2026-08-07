@@ -356,7 +356,30 @@ export const teacherHalaqahAttendanceService = {
 
         // Case B: Has Check In, performing Check Out
         const checkInM = parseTimeToMinutes(existingRecord.checkInTime);
-        const durationM = Math.max(1, currentM - checkInM);
+        const durationM = Math.max(0, currentM - checkInM);
+
+        // Calculate seconds since check-in or last update
+        let secondsSinceCheckIn = durationM * 60;
+        if (existingRecord.updatedAt || (existingRecord as any).createdAt) {
+          const lastMs = new Date(existingRecord.updatedAt || (existingRecord as any).createdAt).getTime();
+          if (!isNaN(lastMs)) {
+            secondsSinceCheckIn = Math.floor((Date.now() - lastMs) / 1000);
+          }
+        }
+
+        // Double Scan / Cooldown Protection: if scanned within 60 seconds or duration < 1 minute
+        if (secondsSinceCheckIn < 60 || durationM < 1) {
+          const formattedCheckIn = existingRecord.checkInTime.replace(":", ".");
+          return {
+            success: true,
+            action: "CHECK_IN", // Keep action as CHECK_IN representation
+            isAlreadyCompleted: false,
+            groupId,
+            groupName,
+            message: `Scan terdeteksi kembali.\nCheck-in Anda sudah tercatat pukul ${formattedCheckIn}.\nCheck-out dilakukan setelah pembelajaran selesai.`,
+            record: existingRecord
+          };
+        }
 
         const updatedDocRef = doc(db, HALAQAH_ATTENDANCE_COLLECTION, existingRecord.id);
         const updateData: Partial<TeacherHalaqahAttendance> = {

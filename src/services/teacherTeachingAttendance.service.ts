@@ -2241,15 +2241,26 @@ export const teacherTeachingAttendanceService = {
         };
       }
 
+      // If target group is already fully checked out today
+      if (action === "CHECK_IN" && targetGroup.checkInTime && targetGroup.checkOutTime) {
+        return {
+          success: false,
+          isAlreadyCompleted: true,
+          message: `Sesi mengajar di kelas ${targetClassName} (${targetGroup.jpLabel}) sudah selesai.\n\nCheck-In: ${targetGroup.checkInTime} WIB\nCheck-Out: ${targetGroup.checkOutTime} WIB`
+        };
+      }
+
       // --- CHECK OUT FLOW ---
       if (action === "CHECK_OUT") {
         const checkInTimeStr = targetGroup.checkInTime || currentTimeStr;
+        const checkInM = parseTimeToMinutes(checkInTimeStr);
+        const timeDiffMinutes = Math.max(0, currentM - checkInM);
         const durationMinutes = calculateDurationInMinutes(checkInTimeStr, currentTimeStr);
         const firstItem = targetGroup.items[0];
 
-        // 1. Check Cooldown (Anti Double Scan)
-        const cooldownSeconds = schoolSettings?.teachingAttendanceSettings?.qrScanCooldownSeconds ?? 30;
-        let secondsSinceCheckIn = 99999;
+        // 1. Check Cooldown & Double Scan Protection
+        const cooldownSeconds = schoolSettings?.teachingAttendanceSettings?.qrScanCooldownSeconds ?? 60;
+        let secondsSinceCheckIn = timeDiffMinutes * 60;
         if (firstItem.updatedAt) {
           const lastUpdatedMs = new Date(firstItem.updatedAt).getTime();
           if (!isNaN(lastUpdatedMs)) {
@@ -2257,8 +2268,10 @@ export const teacherTeachingAttendanceService = {
           }
         }
 
-        // If time elapsed is less than cooldown seconds OR scan is within same minute (< cooldown)
-        if (secondsSinceCheckIn >= 0 && secondsSinceCheckIn < cooldownSeconds) {
+        const formattedCheckIn = checkInTimeStr.replace(":", ".");
+
+        // If time elapsed is less than cooldown or within same minute -> DUPLICATE SCAN
+        if (secondsSinceCheckIn < cooldownSeconds || timeDiffMinutes < 1) {
           // Log Ignored Double Scan in Audit Trail
           const auditColRef = collection(db, params.isSimulation ? "teacher_attendance_audit_logs_simulation" : AUDIT_LOGS_COLLECTION);
           await addDoc(auditColRef, sanitizeFirestorePayload({
@@ -2277,12 +2290,15 @@ export const teacherTeachingAttendanceService = {
             subjectName: firstItem.subjectName,
             status: firstItem.status,
             scanTime: currentTimeStr,
-            changesDescription: `Ignored Double Scan: Scan ulang diabaikan karena masih dalam masa cooldown (${cooldownSeconds} detik).`
+            changesDescription: `Ignored Double Scan: Scan ulang diabaikan.`
           }));
 
           return {
-            success: false,
-            message: "Check-in berhasil direkam.\n\nSilakan lanjutkan mengajar.\n\nCheck-out dapat dilakukan setelah pembelajaran selesai."
+            success: true,
+            isDuplicateScan: true,
+            action: "DUPLICATE_SCAN",
+            message: `Scan terdeteksi kembali.\nCheck-in Anda sudah tercatat pukul ${formattedCheckIn}.\nCheck-out dilakukan setelah pembelajaran selesai.`,
+            record: firstItem
           };
         }
 
@@ -2300,8 +2316,11 @@ export const teacherTeachingAttendanceService = {
 
         if (!is50PercentPassed && !isLastJpEntered) {
           return {
-            success: false,
-            message: `Check-out belum dapat dilakukan.\n\nCheck-out baru dapat dilakukan setelah minimal 50% durasi mengajar berlalu (${minDurationM} menit) atau saat memasuki JP terakhir (${lastJpRange.startStr} WIB).`
+            success: true,
+            isDuplicateScan: true,
+            action: "DUPLICATE_SCAN",
+            message: `Scan terdeteksi kembali.\nCheck-in Anda sudah tercatat pukul ${formattedCheckIn}.\nCheck-out dilakukan setelah pembelajaran selesai.`,
+            record: firstItem
           };
         }
 

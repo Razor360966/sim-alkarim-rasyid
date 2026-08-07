@@ -218,7 +218,14 @@ export const TeachingQrSimulationPage: React.FC = () => {
         isSimulation: true // EXPLICIT SIMULATION FLAG
       });
 
-      if (res.success) {
+      if ((res as any).isDuplicateScan || res.action === "DUPLICATE_SCAN" || res.action === "IGNORED_DOUBLE_SCAN") {
+        setScanResult({
+          type: "warning",
+          action: "DUPLICATE_SCAN",
+          message: res.message,
+          record: res.record
+        });
+      } else if (res.success) {
         setScanResult({
           type: "success",
           action: res.action,

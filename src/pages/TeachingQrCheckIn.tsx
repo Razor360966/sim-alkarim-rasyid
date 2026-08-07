@@ -127,6 +127,11 @@ export const TeachingQrCheckInPage: React.FC = () => {
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const scannerContainerId = "qr-reader-container";
 
+  // Scanner Lock & Debounce Refs
+  const isProcessingRef = useRef<boolean>(false);
+  const lastScanTimeRef = useRef<number>(0);
+  const lastScannedContentRef = useRef<string>("");
+
   // Check roles for Wakakur / Admin capabilities
   const isWakakurOrAdmin = user && (
     user.role === "admin" ||
@@ -226,7 +231,10 @@ export const TeachingQrCheckInPage: React.FC = () => {
 
   // Process Scanned QR Content
   const handleScanContent = async (scannedContent: string) => {
-    if (!user || processing) return;
+    if (!user) {
+      isProcessingRef.current = false;
+      return;
+    }
     setProcessing(true);
 
     try {
@@ -246,7 +254,15 @@ export const TeachingQrCheckInPage: React.FC = () => {
         semesterId: activeSemId
       });
 
-      if (res.success) {
+      if ((res as any).isDuplicateScan || res.action === "DUPLICATE_SCAN" || res.action === "IGNORED_DOUBLE_SCAN") {
+        playAudioFeedback("success_checkin");
+        setScanResult({
+          type: "warning",
+          action: "DUPLICATE_SCAN",
+          message: res.message,
+          record: res.record
+        });
+      } else if (res.success) {
         playAudioFeedback(res.action === "CHECK_OUT" ? "success_checkout" : "success_checkin");
         setScanResult({
           type: "success",
@@ -272,6 +288,9 @@ export const TeachingQrCheckInPage: React.FC = () => {
       });
     } finally {
       setProcessing(false);
+      setTimeout(() => {
+        isProcessingRef.current = false;
+      }, 1500);
     }
   };
 
@@ -295,9 +314,21 @@ export const TeachingQrCheckInPage: React.FC = () => {
         { facingMode: "environment" },
         config,
         async (decodedText) => {
-          // On QR Code detected!
-          if (processing) return;
-          stopScanner();
+          const now = Date.now();
+          // 1. Synchronous Lock Check
+          if (isProcessingRef.current || processing) return;
+
+          // 2. Throttle same QR within 5000ms window
+          if (lastScannedContentRef.current === decodedText && (now - lastScanTimeRef.current < 5000)) {
+            console.log("[Scanner Lock] Duplicate scan suppressed by frontend scanner lock.");
+            return;
+          }
+
+          isProcessingRef.current = true;
+          lastScanTimeRef.current = now;
+          lastScannedContentRef.current = decodedText;
+
+          await stopScanner();
           handleScanContent(decodedText);
         },
         () => {
@@ -311,6 +342,7 @@ export const TeachingQrCheckInPage: React.FC = () => {
         type: "error",
         message: "Gagal mengakses kamera. Pastikan izin kamera telah diberikan atau gunakan pilihan simulasi kelas di bawah."
       });
+      isProcessingRef.current = false;
     }
   };
 
@@ -493,29 +525,41 @@ export const TeachingQrCheckInPage: React.FC = () => {
             {/* Scan Result Feedback Alert Box */}
             {scanResult && (
               <div className={`p-5 rounded-2xl border transition-all animate-fade-in ${
-                scanResult.type === "success"
-                  ? scanResult.action === "CHECK_OUT"
-                    ? "bg-blue-50 dark:bg-blue-950/40 border-blue-300 dark:border-blue-800 text-blue-900 dark:text-blue-200"
-                    : "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200"
-                  : "bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200"
+                scanResult.action === "DUPLICATE_SCAN" || scanResult.type === "warning"
+                  ? "bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200"
+                  : scanResult.type === "success"
+                    ? scanResult.action === "CHECK_OUT"
+                      ? "bg-blue-50 dark:bg-blue-950/40 border-blue-300 dark:border-blue-800 text-blue-900 dark:text-blue-200"
+                      : "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200"
+                    : "bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200"
               }`}>
                 <div className="flex items-start gap-3">
                   <div className={`p-2.5 rounded-xl shrink-0 ${
-                    scanResult.type === "success"
-                      ? scanResult.action === "CHECK_OUT" ? "bg-blue-600 text-white" : "bg-emerald-600 text-white"
-                      : "bg-rose-600 text-white"
+                    scanResult.action === "DUPLICATE_SCAN" || scanResult.type === "warning"
+                      ? "bg-amber-600 text-white"
+                      : scanResult.type === "success"
+                        ? scanResult.action === "CHECK_OUT" ? "bg-blue-600 text-white" : "bg-emerald-600 text-white"
+                        : "bg-rose-600 text-white"
                   }`}>
-                    {scanResult.type === "success" ? <CheckCircle2 className="w-6 h-6" /> : <AlertCircle className="w-6 h-6" />}
+                    {scanResult.action === "DUPLICATE_SCAN" || scanResult.type === "warning" ? (
+                      <CheckCircle2 className="w-6 h-6" />
+                    ) : scanResult.type === "success" ? (
+                      <CheckCircle2 className="w-6 h-6" />
+                    ) : (
+                      <AlertCircle className="w-6 h-6" />
+                    )}
                   </div>
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
                       <span className="font-black uppercase tracking-wider text-xs">
-                        {scanResult.type === "success"
-                          ? scanResult.action === "CHECK_OUT" ? "BERHASIL CHECK OUT" : "BERHASIL CHECK IN"
-                          : "GAGAL VALIDASI CHECK-IN / CHECK-OUT"}
+                        {scanResult.action === "DUPLICATE_SCAN" || scanResult.type === "warning"
+                          ? "SCAN TERDETEKSI KEMBALI (DUPLIKAT)"
+                          : scanResult.type === "success"
+                            ? scanResult.action === "CHECK_OUT" ? "BERHASIL CHECK OUT" : "BERHASIL CHECK IN"
+                            : "GAGAL VALIDASI CHECK-IN / CHECK-OUT"}
                       </span>
                     </div>
-                    <p className="text-xs font-semibold leading-relaxed">
+                    <p className="text-xs font-semibold leading-relaxed whitespace-pre-line">
                       {scanResult.message}
                     </p>
                     {scanResult.record && (
