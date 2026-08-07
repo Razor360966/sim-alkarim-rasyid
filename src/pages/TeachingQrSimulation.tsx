@@ -31,8 +31,9 @@ import { teacherTeachingAttendanceService, getTodayDateStr, getIndonesianDayName
 import { academicYearService } from "../services/academicYearService";
 import { semesterService } from "../services/semester.service";
 import { classService } from "../services/classService";
+import { halaqahGroupService } from "../services/halaqahGroupService";
 import { userService } from "../services/user.service";
-import { Class, UserSystem } from "../types";
+import { Class, UserSystem, HalaqahGroup } from "../types";
 import { TeacherTeachingAttendance, TeacherAttendanceAuditLog } from "../types/teacherTeachingAttendance.types";
 
 export const TeachingQrSimulationPage: React.FC = () => {
@@ -57,6 +58,7 @@ export const TeachingQrSimulationPage: React.FC = () => {
   const [activeAyId, setActiveAyId] = useState<string>("");
   const [activeSemId, setActiveSemId] = useState<string>("");
   const [classes, setClasses] = useState<Class[]>([]);
+  const [halaqahGroups, setHalaqahGroups] = useState<HalaqahGroup[]>([]);
   const [teachers, setTeachers] = useState<UserSystem[]>([]);
 
   // Simulation Clock Settings
@@ -64,9 +66,10 @@ export const TeachingQrSimulationPage: React.FC = () => {
   const [customTime, setCustomTime] = useState<string>("07:30");
   const [realtimeClock, setRealtimeClock] = useState<string>("");
 
-  // Target Test Teacher & Class
+  // Target Test Teacher & Class & Halaqah
   const [selectedTeacherId, setSelectedTeacherId] = useState<string>("");
   const [selectedClassId, setSelectedClassId] = useState<string>("");
+  const [selectedHalaqahGroupId, setSelectedHalaqahGroupId] = useState<string>("");
   const [manualQrCode, setManualQrCode] = useState<string>("");
 
   // Scanner State
@@ -119,10 +122,11 @@ export const TeachingQrSimulationPage: React.FC = () => {
   const loadMasterData = async () => {
     try {
       setLoading(true);
-      const [ays, sems, classList, userList] = await Promise.all([
+      const [ays, sems, classList, halaqahList, userList] = await Promise.all([
         academicYearService.getAcademicYears(),
         semesterService.getSemesters(),
         classService.getClasses(),
+        halaqahGroupService.getGroups(),
         userService.getUsers()
       ]);
 
@@ -133,6 +137,7 @@ export const TeachingQrSimulationPage: React.FC = () => {
       if (activeSem) setActiveSemId(activeSem.id);
 
       setClasses(classList);
+      setHalaqahGroups(halaqahList);
 
       // Filter teachers/GTK
       const teacherUsers = userList.filter(u => {
@@ -147,6 +152,9 @@ export const TeachingQrSimulationPage: React.FC = () => {
       }
       if (classList.length > 0) {
         setSelectedClassId(classList[0].id);
+      }
+      if (halaqahList.length > 0) {
+        setSelectedHalaqahGroupId(halaqahList[0].id);
       }
     } catch (err) {
       console.error("Error loading master simulation data:", err);
@@ -484,12 +492,12 @@ export const TeachingQrSimulationPage: React.FC = () => {
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {/* Option A: Quick Class Picker & Single-Click Simulator */}
               <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-xl border border-slate-200 dark:border-slate-700 space-y-3">
                 <div className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                   <School className="w-4 h-4 text-indigo-600" />
-                  <span>A. Pilih Kelas Master untuk Simulasi</span>
+                  <span>A. Pilih Kelas Master KBM</span>
                 </div>
 
                 <select
@@ -513,18 +521,53 @@ export const TeachingQrSimulationPage: React.FC = () => {
                     }
                   }}
                   disabled={processing || !selectedClassId}
-                  className="w-full py-2.5 bg-gradient-to-r from-indigo-600 to-amber-600 text-white text-xs font-extrabold rounded-xl shadow-md hover:from-indigo-700 hover:to-amber-700 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  className="w-full py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white text-xs font-extrabold rounded-xl shadow-md hover:from-indigo-700 hover:to-indigo-800 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                 >
                   <Play className="w-4 h-4" />
-                  <span>Simulasi Scan QR Kelas Ini</span>
+                  <span>Simulasi Scan QR Kelas</span>
                 </button>
               </div>
 
-              {/* Option B: Live Camera Scanner OR Raw String Payload */}
+              {/* Option B: Quick Halaqah Group Picker & Simulator */}
+              <div className="bg-teal-50/50 dark:bg-teal-950/20 p-4 rounded-xl border border-teal-200 dark:border-teal-900/40 space-y-3">
+                <div className="text-xs font-bold text-teal-900 dark:text-teal-200 flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-teal-600" />
+                  <span>B. Pilih Group Halaqah Qur'an</span>
+                </div>
+
+                <select
+                  value={selectedHalaqahGroupId}
+                  onChange={(e) => setSelectedHalaqahGroupId(e.target.value)}
+                  className="w-full px-3 py-2 text-xs font-medium bg-white dark:bg-slate-900 border border-teal-200 dark:border-teal-900/50 rounded-xl"
+                >
+                  {halaqahGroups.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.groupName} ({g.musrifName || "Musrif"})
+                    </option>
+                  ))}
+                </select>
+
+                <button
+                  onClick={() => {
+                    const grp = halaqahGroups.find(g => g.id === selectedHalaqahGroupId);
+                    if (grp) {
+                      const payload = JSON.stringify({ type: "halaqah", groupId: grp.id, groupName: grp.groupName });
+                      handleProcessSimulationQr(payload);
+                    }
+                  }}
+                  disabled={processing || !selectedHalaqahGroupId}
+                  className="w-full py-2.5 bg-gradient-to-r from-teal-600 to-emerald-600 text-white text-xs font-extrabold rounded-xl shadow-md hover:from-teal-700 hover:to-emerald-700 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  <Play className="w-4 h-4" />
+                  <span>Simulasi Scan QR Halaqah</span>
+                </button>
+              </div>
+
+              {/* Option C: Live Camera Scanner OR Raw String Payload */}
               <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-xl border border-slate-200 dark:border-slate-700 space-y-3">
                 <div className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                   <Camera className="w-4 h-4 text-amber-600" />
-                  <span>B. Scan Kamera Asli ATAU Paste QR Payload</span>
+                  <span>C. Kamera / Manual Payload</span>
                 </div>
 
                 <div className="flex gap-2">
@@ -532,7 +575,7 @@ export const TeachingQrSimulationPage: React.FC = () => {
                     type="text"
                     value={manualQrCode}
                     onChange={(e) => setManualQrCode(e.target.value)}
-                    placeholder="Contoh: VII A atau CLASS_QR:VII A"
+                    placeholder="Contoh: HALAQAH_QR:GROUP 1"
                     className="flex-1 px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
                   />
                   <button
@@ -550,7 +593,7 @@ export const TeachingQrSimulationPage: React.FC = () => {
                   className="w-full py-2.5 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-xs font-extrabold rounded-xl hover:bg-slate-800 transition-all flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Camera className="w-4 h-4" />
-                  <span>Buka Kamera Scan QR Fisik</span>
+                  <span>Buka Kamera Scan QR</span>
                 </button>
               </div>
             </div>

@@ -30,6 +30,7 @@ import { schoolSettingsService, DEFAULT_TEACHING_ATTENDANCE_SETTINGS } from "./s
 import { SchoolSettings } from "../types";
 import { academicYearService } from "./academicYearService";
 import { semesterService } from "./semester.service";
+import { teacherHalaqahAttendanceService } from "./teacherHalaqahAttendance.service";
 
 const COLLECTION_NAME = "teacher_teaching_attendances";
 const AUDIT_LOGS_COLLECTION = "teacher_attendance_audit_logs";
@@ -1861,12 +1862,24 @@ export const teacherTeachingAttendanceService = {
       let targetClassIdentifier = rawContent;
 
       try {
-        if ((rawContent.startsWith("{") && rawContent.endsWith("}")) || rawContent.includes("SCHOOL_CLASS_QR")) {
+        if ((rawContent.startsWith("{") && rawContent.endsWith("}")) || rawContent.includes("SCHOOL_CLASS_QR") || rawContent.toLowerCase().includes("halaqah")) {
           parsedJson = JSON.parse(rawContent);
           targetClassIdentifier = parsedJson.className || parsedJson.classId || parsedJson.code || targetClassIdentifier;
         }
       } catch (err) {
         console.log("[QR Audit Step 3] Scanned content is plain text, not JSON");
+      }
+
+      // Check if session type is "halaqah"
+      if (parsedJson?.type === "halaqah" || rawContent.toLowerCase().startsWith("halaqah_qr:")) {
+        console.log("[Attendance Engine] Session type 'halaqah' detected. Delegation to teacherHalaqahAttendanceService...");
+        const halaqahRes = await teacherHalaqahAttendanceService.processQrCheckIn(params);
+        return {
+          success: halaqahRes.success,
+          action: halaqahRes.action,
+          message: halaqahRes.message,
+          record: halaqahRes.record as any
+        };
       }
 
       if (targetClassIdentifier.toUpperCase().startsWith("CLASS_QR:")) {

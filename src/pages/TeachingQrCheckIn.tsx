@@ -29,6 +29,7 @@ import { classService } from "../services/classService";
 import { Class } from "../types";
 import { TeacherTeachingAttendance } from "../types/teacherTeachingAttendance.types";
 import { ClassQrCardsModal } from "../components/ClassQrCardsModal";
+import { HalaqahGroupQrCardsModal } from "../components/HalaqahGroupQrCardsModal";
 
 // Synthesize pleasant chime sound on success scan
 const playAudioFeedback = (type: "success_checkin" | "success_checkout" | "error") => {
@@ -121,6 +122,7 @@ export const TeachingQrCheckInPage: React.FC = () => {
   const [classes, setClasses] = useState<Class[]>([]);
   const [selectedManualClass, setSelectedManualClass] = useState<string>("");
   const [isClassQrModalOpen, setIsClassQrModalOpen] = useState<boolean>(false);
+  const [isHalaqahQrModalOpen, setIsHalaqahQrModalOpen] = useState<boolean>(false);
 
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const scannerContainerId = "qr-reader-container";
@@ -356,6 +358,15 @@ export const TeachingQrCheckInPage: React.FC = () => {
                   <Printer className="w-4 h-4" />
                   <span>Cetak QR Code Kelas</span>
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsHalaqahQrModalOpen(true)}
+                  className="px-4 py-2.5 bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold rounded-xl transition-all shadow-md flex items-center gap-2 cursor-pointer"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Cetak QR Group Halaqah</span>
+                </button>
               </>
             )}
             <div className="bg-white/10 backdrop-blur-md border border-white/20 p-3.5 rounded-2xl flex items-center gap-3">
@@ -508,13 +519,28 @@ export const TeachingQrCheckInPage: React.FC = () => {
                       {scanResult.message}
                     </p>
                     {scanResult.record && (
-                      <div className="mt-2 text-[11px] pt-2 border-t border-black/10 dark:border-white/10 grid grid-cols-2 gap-2">
-                        <div><span className="opacity-70">Guru:</span> <strong>{scanResult.record.teacherName}</strong></div>
-                        <div><span className="opacity-70">Kelas:</span> <strong>{scanResult.record.className}</strong></div>
-                        <div><span className="opacity-70">Sesi:</span> <strong>{scanResult.record.jp} ({scanResult.record.subjectName})</strong></div>
-                        <div><span className="opacity-70">Check-In:</span> <strong>{scanResult.record.checkInTime || "-"}</strong></div>
-                        <div><span className="opacity-70">Check-Out:</span> <strong>{scanResult.record.checkOutTime || "-"}</strong></div>
-                        <div><span className="opacity-70">Durasi:</span> <strong>{scanResult.record.teachingDurationMinutes || 0} Menit</strong></div>
+                      <div className="mt-2 text-[11px] pt-2 border-t border-black/10 dark:border-white/10 space-y-2">
+                        <div className="grid grid-cols-2 gap-2">
+                          <div><span className="opacity-70">Guru:</span> <strong>{scanResult.record.teacherName}</strong></div>
+                          <div><span className="opacity-70">Lokasi/Group:</span> <strong>{(scanResult.record as any).groupName || scanResult.record.className}</strong></div>
+                          <div><span className="opacity-70">Sesi:</span> <strong>{(scanResult.record as any).sessionType === "halaqah" ? "Halaqah Qur'an" : `${scanResult.record.jp} (${scanResult.record.subjectName})`}</strong></div>
+                          <div><span className="opacity-70">Check-In:</span> <strong>{scanResult.record.checkInTime || "-"}</strong></div>
+                          <div><span className="opacity-70">Check-Out:</span> <strong>{scanResult.record.checkOutTime || "-"}</strong></div>
+                          <div><span className="opacity-70">Durasi:</span> <strong>{(scanResult.record as any).durationMinutes || scanResult.record.teachingDurationMinutes || 0} Menit</strong></div>
+                        </div>
+
+                        {/* Direct CTA to Jurnal Halaqah on Check Out */}
+                        {scanResult.action === "CHECK_OUT" && (scanResult.record as any).groupId && (
+                          <div className="pt-2">
+                            <Link
+                              to={`/musrif-journals?tab=jurnal&groupId=${(scanResult.record as any).groupId}`}
+                              className="w-full py-2 bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm transition-all"
+                            >
+                              <span>Isi Jurnal Halaqah Sekarang</span>
+                              <ChevronRight className="w-4 h-4" />
+                            </Link>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -669,6 +695,12 @@ export const TeachingQrCheckInPage: React.FC = () => {
       <ClassQrCardsModal
         isOpen={isClassQrModalOpen}
         onClose={() => setIsClassQrModalOpen(false)}
+      />
+
+      {/* Halaqah Group QR Cards Modal */}
+      <HalaqahGroupQrCardsModal
+        isOpen={isHalaqahQrModalOpen}
+        onClose={() => setIsHalaqahQrModalOpen(false)}
       />
     </div>
   );

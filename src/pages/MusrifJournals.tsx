@@ -124,6 +124,7 @@ export const MusrifJournals: React.FC = () => {
 
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
+  const groupIdParam = searchParams.get("groupId");
 
   // Tab State
   const [activeTab, setActiveTab] = useState<"kelompok" | "jurnal" | "rekap">("kelompok");
@@ -132,7 +133,12 @@ export const MusrifJournals: React.FC = () => {
     if (tabParam === "kelompok" || tabParam === "jurnal" || tabParam === "rekap") {
       setActiveTab(tabParam);
     }
-  }, [tabParam]);
+    if (groupIdParam) {
+      setGroupType("halaqah");
+      setFilterGroup(groupIdParam);
+      setJournalGroup(groupIdParam);
+    }
+  }, [tabParam, groupIdParam]);
 
   const handleTabChange = (tab: "kelompok" | "jurnal" | "rekap") => {
     setActiveTab(tab);

@@ -28,6 +28,7 @@ import { WakasarprasDashboard } from "../components/dashboard/WakasarprasDashboa
 import { ExecutiveComplianceDashboard } from "../components/dashboard/ExecutiveComplianceDashboard";
 import { ExecutiveTeachingAnalyticsWidget } from "../components/ExecutiveTeachingAnalyticsWidget";
 import { ExecutiveMutabaahWidget } from "../components/ExecutiveMutabaahWidget";
+import { ExecutiveHalaqahAttendanceWidget } from "../components/ExecutiveHalaqahAttendanceWidget";
 import { 
   X,
   Users, 
@@ -2432,6 +2433,9 @@ export const Dashboard: React.FC = () => {
 
           {/* EXECUTIVE TEACHING ANALYTICS (INDICATORS) */}
           <ExecutiveTeachingAnalyticsWidget records={todayTeachingAttendance?.items || []} />
+
+          {/* EXECUTIVE HALAQAH ATTENDANCE WIDGET */}
+          <ExecutiveHalaqahAttendanceWidget academicYearId={activeAcademicYearObj?.id} semesterId={activeSemesterObj?.id} />
 
           {/* EXECUTIVE MUTABAAH GURU DRILLDOWN WIDGET */}
           <ExecutiveMutabaahWidget />
