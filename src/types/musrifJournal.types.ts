@@ -5,6 +5,8 @@ export interface HalaqahGroup {
   groupName: string;
   location: string;
   description: string;
+  category?: string;
+  room?: string;
   createdAt: string;
   updatedAt: string;
   createdBy: string;

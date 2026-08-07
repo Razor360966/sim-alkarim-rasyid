@@ -254,7 +254,7 @@ export const TeachingQrCheckInPage: React.FC = () => {
         semesterId: activeSemId
       });
 
-      if ((res as any).isDuplicateScan || res.action === "DUPLICATE_SCAN" || res.action === "IGNORED_DOUBLE_SCAN") {
+      if ((res as any).isDuplicateScan || (res.action as string) === "DUPLICATE_SCAN" || (res.action as string) === "IGNORED_DOUBLE_SCAN") {
         playAudioFeedback("success_checkin");
         setScanResult({
           type: "warning",

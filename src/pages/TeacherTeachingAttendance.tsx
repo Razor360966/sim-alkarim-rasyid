@@ -12,6 +12,8 @@ import { semesterService } from "../services/semester.service";
 import { ClassQrCardsModal } from "../components/ClassQrCardsModal";
 import { ExecutiveTeachingAnalyticsWidget, StatusJpLegend } from "../components/ExecutiveTeachingAnalyticsWidget";
 import { TeacherAttendanceTimeline } from "../components/TeacherAttendanceTimeline";
+import { HalaqahAttendanceRecapSection } from "../components/HalaqahAttendanceRecapSection";
+import { HalaqahDailyAttendanceSection } from "../components/HalaqahDailyAttendanceSection";
 import { 
   TeacherTeachingAttendance, 
   AttendanceTeachingStatus, 
@@ -111,7 +113,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
   // Default date = today's YYYY-MM-DD
   const todayStr = getTodayDateStr();
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
-  const [activeTab, setActiveTab] = useState<"input" | "validasi" | "rekap">("input");
+  const [activeTab, setActiveTab] = useState<"input" | "validasi" | "rekap" | "absensi_halaqah" | "rekap_halaqah">("input");
 
   // Validation State
   const [validationSearchQuery, setValidationSearchQuery] = useState<string>("");
@@ -1201,7 +1203,29 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
             }`}
           >
             <BarChart2 className="w-4 h-4" />
-            Rekapitilasi Kehadiran Guru
+            Rekapitilasi Kehadiran Guru (JP 1–8)
+          </button>
+          <button
+            onClick={() => setActiveTab("absensi_halaqah")}
+            className={`px-4 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              activeTab === "absensi_halaqah"
+                ? "bg-emerald-600 text-white shadow-md"
+                : "bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300 hover:bg-slate-200 dark:hover:bg-zinc-700"
+            }`}
+          >
+            <Calendar className="w-4 h-4 text-emerald-300" />
+            Absensi Harian Halaqah
+          </button>
+          <button
+            onClick={() => setActiveTab("rekap_halaqah")}
+            className={`px-4 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              activeTab === "rekap_halaqah"
+                ? "bg-teal-600 text-white shadow-md"
+                : "bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300 hover:bg-slate-200 dark:hover:bg-zinc-700"
+            }`}
+          >
+            <BookOpen className="w-4 h-4 text-teal-300" />
+            Rekap Absensi Halaqah
           </button>
         </div>
 
@@ -2991,6 +3015,28 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
           </div>
 
         </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* TAB 4: ABSENSI HARIAN GURU HALAQAH QUR'AN                 */}
+      {/* ========================================================= */}
+      {activeTab === "absensi_halaqah" && (
+        <HalaqahDailyAttendanceSection
+          selectedAyId={selectedAyId}
+          selectedSemesterId={selectedSemesterId}
+        />
+      )}
+
+      {/* ========================================================= */}
+      {/* TAB 5: REKAP ABSENSI GURU HALAQAH QUR'AN                   */}
+      {/* ========================================================= */}
+      {activeTab === "rekap_halaqah" && (
+        <HalaqahAttendanceRecapSection
+          selectedAyId={selectedAyId}
+          selectedSemesterId={selectedSemesterId}
+          academicYears={academicYears}
+          semesters={semesters}
+        />
       )}
 
       {/* MODAL RINCIAN EXCEPTION (ACTIONABLE CARD DETAIL POPUP) */}

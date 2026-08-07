@@ -1,8 +1,8 @@
 export interface HalaqahSchedule {
   id: string;
   day: string; // "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Ahad"
-  startTime: string; // HH:mm format, e.g. "06:00"
-  endTime: string; // HH:mm format, e.g. "07:30"
+  startTime: string; // HH:mm format, e.g. "07:10"
+  endTime: string; // HH:mm format, e.g. "08:20"
   groupId: string;
   groupName: string;
   teacherId: string;
@@ -25,7 +25,7 @@ export interface TeacherHalaqahAttendance {
   checkInTime: string; // HH:mm
   checkOutTime?: string; // HH:mm
   duration?: number; // minutes
-  status: "CHECK_IN" | "CHECK_OUT" | "Sedang Membimbing" | "Selesai Membimbing" | "Terlambat" | "Hadir";
+  status: string;
   academicYearId: string;
   semesterId: string;
   createdAt: string;
@@ -33,7 +33,8 @@ export interface TeacherHalaqahAttendance {
 }
 
 export interface HalaqahAttendanceWidgetStats {
-  totalGroups: number;
+  date?: string;
+  totalGroups?: number;
   totalTeachers: number;
   alreadyCheckedIn: number;
   alreadyCheckedOut: number;

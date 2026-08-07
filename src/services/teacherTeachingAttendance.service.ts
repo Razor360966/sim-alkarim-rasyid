@@ -1782,8 +1782,10 @@ export const teacherTeachingAttendanceService = {
     isSimulation?: boolean;
   }): Promise<{
     success: boolean;
-    action?: "CHECK_IN" | "CHECK_OUT";
+    action?: "CHECK_IN" | "CHECK_OUT" | "DUPLICATE_SCAN" | "IGNORED_DOUBLE_SCAN";
     message: string;
+    isAlreadyCompleted?: boolean;
+    isDuplicateScan?: boolean;
     record?: TeacherTeachingAttendance;
   }> {
     try {
