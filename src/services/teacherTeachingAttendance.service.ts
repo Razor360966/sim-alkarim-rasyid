@@ -2434,106 +2434,172 @@ export const teacherTeachingAttendanceService = {
         };
       }
 
-      // Rule 2: Validate Check-In Time Window & Locking Threshold
-      if (currentM < targetGroup.startM - 15) {
-        const earlyMsg = `Terlalu awal. Check-In untuk kelas ${targetGroup.className} (${targetGroup.jpLabel}) baru dapat dilakukan 15 menit sebelum jam ${targetGroup.startStr} (mulai ${formatMinutesToTime(targetGroup.startM - 15)} WIB).`;
+      // Rule 2: Validate Check-In Time Window (Too Early Check)
+      const earliestStartM = Math.min(...classTeacherItems.map(i => {
+        const range = getLessonPeriodTimeRange({ timeSlot: i.timeSlot, sequence: i.sequence });
+        return range.startM;
+      }));
+      const earliestStartStr = classTeacherItems[0]?.timeSlot?.split("-")[0]?.trim() || "07:30";
+
+      if (currentM < earliestStartM - 15) {
+        const earlyMsg = `Terlalu awal. Check-In untuk kelas ${targetClassName} baru dapat dilakukan 15 menit sebelum jam ${earliestStartStr} (mulai ${formatMinutesToTime(earliestStartM - 15)} WIB).`;
         return {
           success: false,
           message: earlyMsg
         };
       }
 
-      let newAttendanceStatus: AttendanceTeachingStatus = "Hadir Mengajar";
+      // Rule 3: Evaluate missed, active, and future JPs for this class today
+      const latestEndM = Math.max(...classTeacherItems.map(i => {
+        const range = getLessonPeriodTimeRange({ timeSlot: i.timeSlot, sequence: i.sequence });
+        return range.endM;
+      }));
 
-      if (currentM > targetGroup.startM + 25) {
-        if (!targetGroup.isLateUnlocked) {
-          const lockedMsg = `Batas waktu Check-in telah terlampaui.\n\nSilakan menghadap Wakil Kepala Sekolah Bidang Kurikulum untuk mendapatkan validasi.`;
+      // Check if all scheduled JPs have ended and no prior check-in exists
+      const hasAnyCheckInToday = classTeacherItems.some(i => i.checkInTime);
 
-          const auditColRef = collection(db, params.isSimulation ? "teacher_attendance_audit_logs_simulation" : AUDIT_LOGS_COLLECTION);
-          await addDoc(auditColRef, sanitizeFirestorePayload({
-            attendanceDate: todayStr,
-            inputTimestamp: new Date().toISOString(),
-            userId: currentUserId,
-            userName: params.currentUser.name || "Guru",
-            scheduleId: targetGroup.items[0].scheduleId,
-            teacherId: targetGroup.items[0].teacherId,
-            teacherName: targetGroup.items[0].teacherName,
-            classId: targetGroup.items[0].classId,
-            className: targetGroup.items[0].className,
-            subjectId: targetGroup.items[0].subjectId,
-            subjectName: targetGroup.items[0].subjectName,
-            jp: targetGroup.jpLabel,
-            scanTime: `${currentTimeStr} WIB`,
-            previousStatus: "BELUM ABSEN",
-            newStatus: "DIKUNCI",
-            action: "REJECTED_LOCKED",
-            reason: `Keterlambatan melebihi 25 menit dari jam mulai (${targetGroup.startStr})`,
-            validationResult: "Ditolak - Sesi Terkunci Perlu Validasi Wakakur",
-            isLateInput: false
-          }));
+      if (!hasAnyCheckInToday && currentM >= latestEndM) {
+        const missedLabels: string[] = [];
+        for (const item of classTeacherItems) {
+          item.status = "Tidak Hadir";
+          item.updatedAt = new Date().toISOString();
+          if (matchedClass?.id) {
+            item.classId = matchedClass.id;
+            item.className = matchedClass.name;
+          }
+          await this.saveSingleSessionAttendance(
+            todayStr,
+            item,
+            currentUserId,
+            params.currentUser.name || "Guru",
+            `Sesi Selesai - Tidak Hadir: ${currentTimeStr}`,
+            params.isSimulation
+          );
+          missedLabels.push(item.jp || `JP ${item.sequence}`);
+        }
 
-          return {
-            success: false,
-            message: lockedMsg
-          };
+        const auditColRef = collection(db, params.isSimulation ? "teacher_attendance_audit_logs_simulation" : AUDIT_LOGS_COLLECTION);
+        await addDoc(auditColRef, sanitizeFirestorePayload({
+          attendanceDate: todayStr,
+          inputTimestamp: new Date().toISOString(),
+          userId: currentUserId,
+          userName: params.currentUser.name || "Guru",
+          scheduleId: classTeacherItems[0].scheduleId,
+          teacherId: classTeacherItems[0].teacherId,
+          teacherName: classTeacherItems[0].teacherName,
+          classId: classTeacherItems[0].classId,
+          className: classTeacherItems[0].className,
+          subjectId: classTeacherItems[0].subjectId,
+          subjectName: classTeacherItems[0].subjectName,
+          jp: missedLabels.join(", "),
+          scanTime: `${currentTimeStr} WIB`,
+          previousStatus: "BELUM ABSEN",
+          newStatus: "TIDAK HADIR",
+          action: "REJECTED_EXPIRED",
+          reason: `Seluruh sesi mengajar di kelas ${targetClassName} telah berakhir sebelum scan QR.`,
+          validationResult: "Tercatat Tidak Hadir",
+          isLateInput: false
+        }));
+
+        const latestEndStr = classTeacherItems[classTeacherItems.length - 1]?.timeSlot?.split("-")[1]?.trim() || formatMinutesToTime(latestEndM);
+        return {
+          success: false,
+          message: `Seluruh jam pelajaran mengajar di kelas ${targetClassName} untuk hari ini telah selesai (${latestEndStr} WIB).\n\nStatus seluruh JP (${missedLabels.join(", ")}) tercatat TIDAK HADIR karena pemindaian dilakukan setelah seluruh sesi berakhir.`
+        };
+      }
+
+      // Perform Per-JP Attendance Evaluation for active session check-in
+      const missedJpList: string[] = [];
+      const activeJpList: { label: string; status: AttendanceTeachingStatus }[] = [];
+      const futureJpList: string[] = [];
+
+      const sessionStartM = targetGroup.startM;
+
+      for (const item of classTeacherItems) {
+        const itemRange = getLessonPeriodTimeRange({ timeSlot: item.timeSlot, sequence: item.sequence });
+        const jpLabel = item.jp || `JP ${item.sequence}`;
+
+        if (item.checkInTime) {
+          if (item.status === "Tidak Hadir") {
+            missedJpList.push(jpLabel);
+          } else if (item.status === "Terlambat" || item.status === "Hadir Mengajar") {
+            activeJpList.push({ label: jpLabel, status: item.status as AttendanceTeachingStatus });
+          } else {
+            futureJpList.push(jpLabel);
+          }
+          continue;
+        }
+
+        if (currentM >= itemRange.endM) {
+          // JP ended before scan -> TIDAK HADIR
+          item.status = "Tidak Hadir";
+          item.updatedAt = new Date().toISOString();
+          if (matchedClass?.id) {
+            item.classId = matchedClass.id;
+            item.className = matchedClass.name;
+          }
+          await this.saveSingleSessionAttendance(
+            todayStr,
+            item,
+            currentUserId,
+            params.currentUser.name || "Guru",
+            `Auto Missed JP (${jpLabel}): Scan dilakukan pada ${currentTimeStr} setelah ${itemRange.endStr} WIB`,
+            params.isSimulation
+          );
+          missedJpList.push(jpLabel);
+        } else if (currentM >= itemRange.startM && currentM < itemRange.endM) {
+          // Active JP during scan -> Hadir Mengajar (if within tolerance) or Terlambat
+          const isPunctual = (currentM <= sessionStartM + 15);
+          const activeStatus: AttendanceTeachingStatus = isPunctual ? "Hadir Mengajar" : "Terlambat";
+
+          item.checkInTime = currentTimeStr;
+          item.checkInType = "Scan QR";
+          item.status = activeStatus;
+          item.updatedAt = new Date().toISOString();
+
+          if (matchedClass?.id) {
+            item.classId = matchedClass.id;
+            item.className = matchedClass.name;
+          }
+
+          if (!item.checkInLogs) item.checkInLogs = [];
+          item.checkInLogs.push({ checkIn: currentTimeStr });
+
+          await this.saveSingleSessionAttendance(
+            todayStr,
+            item,
+            currentUserId,
+            params.currentUser.name || "Guru",
+            `QR Code CHECK_IN (${jpLabel}): ${currentTimeStr}`,
+            params.isSimulation
+          );
+
+          activeJpList.push({ label: jpLabel, status: activeStatus });
         } else {
-          newAttendanceStatus = "Terlambat";
+          // Future JP
+          item.status = "Belum Terkonfirmasi";
+          item.updatedAt = new Date().toISOString();
+
+          if (matchedClass?.id) {
+            item.classId = matchedClass.id;
+            item.className = matchedClass.name;
+          }
+
+          await this.saveSingleSessionAttendance(
+            todayStr,
+            item,
+            currentUserId,
+            params.currentUser.name || "Guru",
+            `QR Code CHECK_IN Pending (${jpLabel}): ${currentTimeStr}`,
+            params.isSimulation
+          );
+
+          futureJpList.push(jpLabel);
         }
-      } else if (currentM > targetGroup.startM + 15) {
-        newAttendanceStatus = "Terlambat";
       }
 
-      // Execute CHECK-IN for targetGroup items according to Per-JP Multi-JP Rules:
-      // First JP in session -> HADIR (or Terlambat)
-      // Subsequent JPs in session -> BELUM TERKONFIRMASI
-      const firstItem = targetGroup.items[0];
-      const subsequentItems = targetGroup.items.slice(1);
-
-      firstItem.checkInTime = currentTimeStr;
-      firstItem.checkInType = "Scan QR";
-      firstItem.status = newAttendanceStatus;
-      firstItem.updatedAt = new Date().toISOString();
-
-      if (matchedClass?.id) {
-        firstItem.classId = matchedClass.id;
-        firstItem.className = matchedClass.name;
-      }
-
-      if (!firstItem.checkInLogs) firstItem.checkInLogs = [];
-      firstItem.checkInLogs.push({ checkIn: currentTimeStr });
-
-      await this.saveSingleSessionAttendance(
-        todayStr,
-        firstItem,
-        currentUserId,
-        params.currentUser.name || "Guru",
-        `QR Code CHECK_IN (JP Pertama): ${currentTimeStr}`,
-        params.isSimulation
-      );
-
-      for (const item of subsequentItems) {
-        item.checkInTime = currentTimeStr;
-        item.checkInType = "Scan QR";
-        item.status = "Belum Terkonfirmasi";
-        item.updatedAt = new Date().toISOString();
-
-        if (matchedClass?.id) {
-          item.classId = matchedClass.id;
-          item.className = matchedClass.name;
-        }
-
-        if (!item.checkInLogs) item.checkInLogs = [];
-        item.checkInLogs.push({ checkIn: currentTimeStr });
-
-        await this.saveSingleSessionAttendance(
-          todayStr,
-          item,
-          currentUserId,
-          params.currentUser.name || "Guru",
-          `QR Code CHECK_IN (Belum Terkonfirmasi): ${currentTimeStr}`,
-          params.isSimulation
-        );
-      }
+      const primaryActive = activeJpList[0];
+      const mainStatus = primaryActive ? primaryActive.status : "Terlambat";
 
       const auditColRef = collection(db, params.isSimulation ? "teacher_attendance_audit_logs_simulation" : AUDIT_LOGS_COLLECTION);
       await addDoc(auditColRef, sanitizeFirestorePayload({
@@ -2551,23 +2617,27 @@ export const teacherTeachingAttendanceService = {
         jp: targetGroup.jpLabel,
         scanTime: `${currentTimeStr} WIB`,
         previousStatus: "BELUM ABSEN",
-        newStatus: newAttendanceStatus,
+        newStatus: mainStatus,
         action: "CHECK_IN",
-        reason: targetGroup.isLateUnlocked
-          ? `Check-In Berhasil (Diizinkan Wakakur: ${targetGroup.lateUnlockReason || "Validasi Manual"})`
-          : newAttendanceStatus === "Terlambat" ? "Check-In Terlambat" : "Check-In Tepat Waktu",
+        reason: mainStatus === "Terlambat" ? "Check-In Terlambat" : "Check-In Tepat Waktu",
         validationResult: "Sukses",
-        isLateInput: newAttendanceStatus === "Terlambat"
+        isLateInput: mainStatus === "Terlambat"
       }));
 
-      let checkInSuccessMsg = "";
-      if (targetGroup.items.length > 1) {
-        const firstJpLabel = firstItem.jp || `JP ${firstItem.sequence}`;
-        const subJpLabels = subsequentItems.map(i => i.jp || `JP ${i.sequence}`).join(", ");
-        checkInSuccessMsg = `CHECK IN Berhasil di Kelas ${targetGroup.className} (${targetGroup.jpLabel} - ${targetGroup.subjectName}).\n• ${firstJpLabel}: HADIR${newAttendanceStatus === "Terlambat" ? " [Terlambat]" : ""}\n• ${subJpLabels}: BELUM TERKONFIRMASI (Perlu Check-out di akhir sesi).`;
-      } else {
-        checkInSuccessMsg = `CHECK IN Berhasil di Kelas ${targetGroup.className} (${targetGroup.jpLabel} - ${targetGroup.subjectName})${newAttendanceStatus === "Terlambat" ? " [Status: Terlambat]" : ""}.`;
+      const statusLines: string[] = [];
+      if (missedJpList.length > 0) {
+        statusLines.push(`• ${missedJpList.join(", ")}: TIDAK HADIR (Terlewat)`);
       }
+      if (activeJpList.length > 0) {
+        const labels = activeJpList.map(a => a.label).join(", ");
+        const badge = activeJpList.some(a => a.status === "Terlambat") ? "TERLAMBAT" : "HADIR (Tepat Waktu)";
+        statusLines.push(`• ${labels}: ${badge}`);
+      }
+      if (futureJpList.length > 0) {
+        statusLines.push(`• ${futureJpList.join(", ")}: BELUM TERKONFIRMASI (Perlu Check-out di akhir sesi)`);
+      }
+
+      const checkInSuccessMsg = `CHECK IN Berhasil di Kelas ${targetClassName} (${targetGroup.subjectName}).\n\nDetail Status JP Hari Ini:\n${statusLines.join("\n")}`;
 
       return {
         success: true,
