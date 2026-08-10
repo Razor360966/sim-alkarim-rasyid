@@ -399,6 +399,12 @@ export default function Schedules() {
   // Save changes from manual slot editor
   const handleSaveManualSlot = (subjectId: string, teacherId: string) => {
     if (!selectedSlot) return;
+
+    if (selectedSlot.matchedSchedule?.isLocked) {
+      toast("Gagal mengubah: Slot ini dalam keadaan TERKUNCI. Buka kunci terlebih dahulu untuk mengubah jadwal ini.", "error");
+      return;
+    }
+
     const matrixItem = curriculumMatrix.find(m => m.subjectId === subjectId);
     if (!matrixItem) return;
 
@@ -447,6 +453,11 @@ export default function Schedules() {
   const handleDeleteManualSlot = () => {
     if (!selectedSlot) return;
 
+    if (selectedSlot.matchedSchedule?.isLocked) {
+      toast("Gagal menghapus: Slot ini dalam keadaan TERKUNCI. Buka kunci terlebih dahulu untuk menghapus jadwal ini.", "error");
+      return;
+    }
+
     let updatedSchedules = previewSchedules !== null ? [...previewSchedules] : [...dbSchedules];
 
     updatedSchedules = updatedSchedules.filter(s => 
@@ -461,8 +472,23 @@ export default function Schedules() {
 
   // Paste a copied slot to target (Bagian 18)
   const handlePasteSlot = (source: Schedule, targetClass: Class, targetPeriod: LessonPeriod) => {
+    if (source.isLocked) {
+      toast("Gagal menempel: Jadwal yang disalin dalam keadaan TERKUNCI.", "error");
+      return;
+    }
+
     const targetDayLower = targetPeriod.day.toLowerCase();
-    
+    const existingTarget = activeSchedules.find(s => 
+      (s.classId === targetClass.id || s.classId === targetClass.classId) && 
+      s.day.toLowerCase() === targetDayLower && 
+      s.sequence === targetPeriod.sequence
+    );
+
+    if (existingTarget?.isLocked) {
+      toast("Gagal menempel: Slot tujuan dalam keadaan TERKUNCI. Buka kunci terlebih dahulu.", "error");
+      return;
+    }
+
     // Check teacher conflict
     const isTeacherOccupied = activeSchedules.some(s => 
       s.teacherId === source.teacherId && 
@@ -522,8 +548,23 @@ export default function Schedules() {
       if (!dataStr) return;
       const { sched, sourceClassId } = JSON.parse(dataStr) as { sched: Schedule; sourceClassId: string };
       
+      if (sched.isLocked) {
+        toast("Gagal memindahkan: Jadwal yang ditarik dalam keadaan TERKUNCI.", "error");
+        return;
+      }
+
       const targetDayLower = targetPeriod.day.toLowerCase();
-      
+      const existingTarget = activeSchedules.find(s => 
+        (s.classId === targetClass.id || s.classId === targetClass.classId) && 
+        s.day.toLowerCase() === targetDayLower && 
+        s.sequence === targetPeriod.sequence
+      );
+
+      if (existingTarget?.isLocked) {
+        toast("Gagal memindahkan: Slot tujuan dalam keadaan TERKUNCI. Buka kunci terlebih dahulu.", "error");
+        return;
+      }
+
       // Prevent dropping on itself
       if (sourceClassId === targetClass.id && sched.day.toLowerCase() === targetDayLower && sched.sequence === targetPeriod.sequence) {
         return;
@@ -1363,14 +1404,36 @@ export default function Schedules() {
   // 5. Publish Schedules
   const handlePublish = async () => {
     if (!selectedYearId || !selectedSemesterId) return;
+
+    if (previewSchedules !== null) {
+      try {
+        await saveSchedules({
+          scheds: previewSchedules,
+          ayId: selectedYearId,
+          semId: selectedSemesterId,
+          classIdToOverwrite: classToGenerate !== "ALL" ? classToGenerate : undefined,
+          mode: 'manual-edit'
+        });
+        setPreviewSchedules(null);
+        setPreviewMetrics(null);
+        setClassToGenerate("ALL");
+      } catch (err) {
+        console.error("Gagal menyimpan perubahan jadwal sebelum publish:", err);
+        toast("Gagal menyimpan perubahan jadwal sebelum dipublikasikan.", "error");
+        return;
+      }
+    }
+
     const yearName = academicYears.find(y => y.id === selectedYearId)?.name || "";
     const semName = semesters.find(s => s.id === selectedSemesterId)?.name || "";
     const desc = `Mempublikasikan jadwal pelajaran resmi untuk Tahun Pelajaran ${yearName} - ${semName}.`;
     
     try {
       await publishSchedules(desc);
+      toast("Jadwal pelajaran resmi berhasil dipublikasikan!", "success");
     } catch (err) {
       console.error(err);
+      toast("Gagal mempublikasikan jadwal pelajaran.", "error");
     }
   };
 
@@ -2674,17 +2737,24 @@ export default function Schedules() {
                             const targetClass = activeClasses.find(c => c.id === selectedCell.classId || c.classId === selectedCell.classId);
                             const targetPeriod = sortedPeriods.find(p => p.day.toLowerCase() === selectedCell.day.toLowerCase() && p.sequence === selectedCell.sequence);
                             if (targetClass && targetPeriod) {
+                              const matchedTarget = activeSchedules.find(s => 
+                                (s.classId === targetClass.id || s.classId === targetClass.classId) && 
+                                s.day.toLowerCase() === targetPeriod.day.toLowerCase() && 
+                                s.sequence === targetPeriod.sequence
+                              );
+
+                              if (matchedTarget?.isLocked) {
+                                toast("Gagal mengosongkan: Slot ini dalam keadaan TERKUNCI. Buka kunci terlebih dahulu.", "error");
+                                return;
+                              }
+
                               setSelectedSlot({
                                 classId: targetClass.classId || targetClass.id,
                                 className: targetClass.name,
                                 day: targetPeriod.day,
                                 sequence: targetPeriod.sequence,
                                 jp: targetPeriod.title,
-                                matchedSchedule: activeSchedules.find(s => 
-                                  (s.classId === targetClass.id || s.classId === targetClass.classId) && 
-                                  s.day.toLowerCase() === targetPeriod.day.toLowerCase() && 
-                                  s.sequence === targetPeriod.sequence
-                                )
+                                matchedSchedule: matchedTarget
                               });
                               // Clear directly
                               let updated = previewSchedules !== null ? [...previewSchedules] : [...dbSchedules];

@@ -9,7 +9,8 @@ export type AttendanceTeachingStatus =
   | "Tukar Jadwal"
   | "Tidak Hadir"
   | "KBM Ditiadakan"
-  | "Belum Diverifikasi";
+  | "Belum Diverifikasi"
+  | "Belum Dimulai";
 
 export type AttendanceApprovalStatus = "Pending" | "Approved" | "Rejected";
 export type AttendanceApprovalType = "Automatic" | "Manual";

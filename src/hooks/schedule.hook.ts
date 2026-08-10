@@ -46,13 +46,15 @@ export function useSchedules(academicYearId?: string, semesterId?: string) {
       scheds, 
       ayId, 
       semId, 
-      classIdToOverwrite 
+      classIdToOverwrite,
+      mode
     }: { 
       scheds: Schedule[]; 
       ayId: string; 
       semId: string; 
       classIdToOverwrite?: string;
-    }) => scheduleService.saveSchedules(scheds, ayId, semId, operatorId, operatorName, classIdToOverwrite),
+      mode?: 'manual-edit' | 'auto-generate';
+    }) => scheduleService.saveSchedules(scheds, ayId, semId, operatorId, operatorName, classIdToOverwrite, mode),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["schedules"] });
       toast("Jadwal pelajaran berhasil disimpan ke database!", "success");

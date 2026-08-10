@@ -150,64 +150,138 @@ export const scheduleService = {
     }
   },
 
-  // 4. Save bulk schedules (supporting overwriting unlocked schedules)
+  // 4. Save bulk schedules using intelligent diff / upsert
   async saveSchedules(
     schedules: Schedule[], 
     academicYearId: string, 
     semesterId: string, 
     operatorId: string, 
     operatorName: string,
-    classIdToOverwrite?: string
+    classIdToOverwrite?: string,
+    mode?: 'manual-edit' | 'auto-generate'
   ): Promise<void> {
     try {
-      // Fetch current schedules to see what to delete
+      // 1. Query existing schedules in Firestore for active Academic Year & Semester
       const q = query(
         collection(db, COLLECTION_NAME),
-        where("academicYearId", "==", academicYearId),
-        where("semesterId", "==", semesterId)
+        where("academicYearId", "==", academicYearId)
       );
       const snapshot = await getDocs(q);
-      const existingDocs = snapshot.docs;
+      
+      // Filter by semesterId in memory
+      const allExistingDocs = snapshot.docs.filter(docSnap => {
+        const d = docSnap.data();
+        return !semesterId || d.semesterId === semesterId;
+      });
 
-      // 1. Delete old unlocked schedules that are to be overwritten
-      const batchDelete = writeBatch(db);
-      existingDocs.forEach((docSnap) => {
+      // 2. Determine target existing docs scope based on classIdToOverwrite
+      const targetExistingDocs = allExistingDocs.filter(docSnap => {
+        const d = docSnap.data();
+        if (!classIdToOverwrite || classIdToOverwrite === "ALL") return true;
+        return d.classId === classIdToOverwrite;
+      });
+
+      const existingDocsMap = new Map<string, { ref: any; data: Schedule }>();
+      targetExistingDocs.forEach(docSnap => {
+        existingDocsMap.set(docSnap.id, {
+          ref: docSnap.ref,
+          data: { id: docSnap.id, ...docSnap.data() } as Schedule
+        });
+      });
+
+      // 3. Determine target incoming schedules scope
+      const targetIncomingSchedules = schedules.filter(s => {
+        const matchesAy = !s.academicYearId || s.academicYearId === academicYearId;
+        const matchesSem = !s.semesterId || s.semesterId === semesterId;
+        const matchesClass = !classIdToOverwrite || classIdToOverwrite === "ALL" || s.classId === classIdToOverwrite;
+        return matchesAy && matchesSem && matchesClass;
+      });
+
+      const incomingIdsSet = new Set<string>();
+      targetIncomingSchedules.forEach(s => {
+        if (s.id) incomingIdsSet.add(s.id);
+      });
+
+      // 4. Prepare Batch Write Operations
+      const batchOps: Array<(batch: any) => void> = [];
+      let updatedCount = 0;
+      let addedCount = 0;
+      let deletedCount = 0;
+
+      // A. Identify deletions: docs in DB scope that are NOT in incoming set
+      targetExistingDocs.forEach(docSnap => {
         const data = docSnap.data();
-        const matchesClass = !classIdToOverwrite || data.classId === classIdToOverwrite;
-        if (matchesClass && !data.isLocked) {
-          batchDelete.delete(docSnap.ref);
+        if (!incomingIdsSet.has(docSnap.id)) {
+          // Do NOT delete locked schedules!
+          if (!data.isLocked) {
+            batchOps.push((batch) => batch.delete(docSnap.ref));
+            deletedCount++;
+          }
         }
       });
-      await batchDelete.commit();
 
-      // 2. Add new schedules in batches (max 400 per batch)
-      const newSchedules = schedules.filter(s => {
-        // Only save newly generated schedules (which don't have ids or are unlocked in the preview)
-        return !s.id;
+      // B. Process incoming schedules (Updates & Creates)
+      targetIncomingSchedules.forEach((sched) => {
+        const cleanPayload = {
+          academicYearId: sched.academicYearId || academicYearId,
+          semesterId: sched.semesterId || semesterId,
+          classId: sched.classId || "",
+          className: sched.className || "",
+          day: sched.day || "",
+          sequence: sched.sequence || 1,
+          jp: sched.jp || `JP ${sched.sequence || 1}`,
+          subjectId: sched.subjectId || "",
+          subjectName: sched.subjectName || "",
+          teacherId: sched.teacherId || "",
+          teacherName: sched.teacherName || "",
+          isLocked: sched.isLocked || false,
+          lessonPeriodId: sched.lessonPeriodId || "LPERIOD_FALLBACK",
+          createdBy: sched.createdBy || operatorId,
+          createdAt: sched.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+
+        if (sched.id && existingDocsMap.has(sched.id)) {
+          // Existing document: UPSERT/UPDATE with same ID
+          const existingItem = existingDocsMap.get(sched.id)!;
+          const targetRef = existingItem.ref;
+          
+          // Preserve locked status if existing was locked
+          if (existingItem.data.isLocked) {
+            cleanPayload.isLocked = true;
+          }
+
+          batchOps.push((batch) => {
+            batch.set(targetRef, { ...cleanPayload, id: sched.id }, { merge: true });
+          });
+          updatedCount++;
+        } else {
+          // New document: CREATE with new ID
+          const newDocRef = doc(collection(db, COLLECTION_NAME));
+          sched.id = newDocRef.id; // Assign generated ID back to memory object!
+
+          batchOps.push((batch) => {
+            batch.set(newDocRef, {
+              ...cleanPayload,
+              id: newDocRef.id
+            });
+          });
+          addedCount++;
+        }
       });
 
-      const chunks: Schedule[][] = [];
-      for (let i = 0; i < newSchedules.length; i += 400) {
-        chunks.push(newSchedules.slice(i, i + 400));
-      }
-
-      for (const chunk of chunks) {
+      // 5. Execute Batch Operations in Chunks (max 400 per batch)
+      const chunkSize = 400;
+      for (let i = 0; i < batchOps.length; i += chunkSize) {
+        const chunk = batchOps.slice(i, i + chunkSize);
         const batchWrite = writeBatch(db);
-        chunk.forEach((sched) => {
-          const docRef = doc(collection(db, COLLECTION_NAME));
-          batchWrite.set(docRef, {
-            ...sched,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            createdBy: operatorId
-          });
-        });
+        chunk.forEach(op => op(batchWrite));
         await batchWrite.commit();
       }
 
-      const desc = classIdToOverwrite 
-        ? `Menyimpan jadwal otomatis baru untuk kelas tertentu (ID: ${classIdToOverwrite}).`
-        : `Menyimpan seluruh jadwal pelajaran otomatis baru (${newSchedules.length} slot baru ditambahkan).`;
+      const desc = mode === 'auto-generate' || (classIdToOverwrite && classIdToOverwrite !== "ALL")
+        ? `Menyimpan jadwal hasil sinkronisasi (${addedCount} baru, ${updatedCount} diperbarui, ${deletedCount} dihapus).`
+        : `Menyimpan perubahan jadwal pelajaran (${updatedCount} diperbarui, ${addedCount} ditambahkan, ${deletedCount} dihapus).`;
 
       await logScheduleActivity(
         operatorId,
@@ -308,7 +382,7 @@ export const scheduleService = {
     }
 
     // Active Day filtering
-    const activeDays = settings.activeDays || ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+    const activeDays = settings.activeDays || ["Sabtu", "Minggu", "Senin", "Selasa", "Rabu", "Kamis"];
     
     // Filtering down active/non-deleted classes and active lesson periods
     const classes = classesList.filter(c => c.status === "Aktif" && !c.isDeleted);
