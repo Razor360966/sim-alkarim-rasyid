@@ -25,9 +25,12 @@ export const subjectService = {
       const items: Subject[] = [];
 
       querySnapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        const fallbackType: "UMUM" | "PONDOK" = data.subjectType || (data.categoryType === "diniyah_pondok" ? "PONDOK" : "UMUM");
         items.push({
           id: docSnap.id,
-          ...docSnap.data()
+          ...data,
+          subjectType: fallbackType
         } as Subject);
       });
 

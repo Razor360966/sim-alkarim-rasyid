@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo } from "react";
+import React, { useState, useRef, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { studentService } from "../services/studentService";
 import { classService } from "../services/classService";
@@ -14,6 +14,7 @@ import { Dialog } from "../components/Dialog";
 import { useToast } from "../contexts/ToastContext";
 import { Loading } from "../components/Loading";
 import { exportToExcel, exportToPDF } from "../utils/exportUtils";
+import { sortClasses, compareClassNames, getGradeLevelWeight } from "../utils/classSorter";
 import { 
   Users, 
   Plus, 
@@ -25,7 +26,13 @@ import {
   AlertCircle,
   FileSpreadsheet,
   CheckCircle2,
-  Download
+  Download,
+  Filter,
+  Layers,
+  RotateCcw,
+  Building2,
+  Calendar,
+  Sparkles
 } from "lucide-react";
 
 const studentSchema = z.object({
@@ -42,6 +49,44 @@ const studentSchema = z.object({
 });
 
 type StudentFormValues = any;
+
+/**
+ * Helper to normalize grade level from Class object.
+ * Priority: class.gradeLevel ("VII" | "VIII" | "IX") -> class.grade -> class.name fallback.
+ */
+function getNormalizedGradeLevel(cls?: Class | null): string {
+  if (!cls) return "";
+  
+  const gl = (cls.gradeLevel || "").toString().trim().toUpperCase();
+  if (gl === "VII" || gl === "7") return "VII";
+  if (gl === "VIII" || gl === "8") return "VIII";
+  if (gl === "IX" || gl === "9") return "IX";
+  if (gl) return gl;
+
+  const g = (cls.grade || "").toString().trim().toUpperCase();
+  if (g === "7" || g === "VII") return "VII";
+  if (g === "8" || g === "VIII") return "VIII";
+  if (g === "9" || g === "IX") return "IX";
+  if (g) return g;
+
+  const name = (cls.name || "").toString().toUpperCase();
+  if (name.includes("VIII") || name.includes(" 8") || name.startsWith("8")) return "VIII";
+  if (name.includes("VII") || name.includes(" 7") || name.startsWith("7")) return "VII";
+  if (name.includes("IX") || name.includes(" 9") || name.startsWith("9")) return "IX";
+
+  return "";
+}
+
+/**
+ * Helper to get user-friendly label for grade level
+ */
+function getGradeLabel(gradeLevel: string): string {
+  if (gradeLevel === "VII") return "Kelas VII";
+  if (gradeLevel === "VIII") return "Kelas VIII";
+  if (gradeLevel === "IX") return "Kelas IX";
+  if (gradeLevel === "NO_CLASS") return "Tanpa Kelas";
+  return `Kelas ${gradeLevel}`;
+}
 
 export const Students: React.FC = () => {
   const queryClient = useQueryClient();
@@ -79,52 +124,224 @@ export const Students: React.FC = () => {
 
   const isLoading = isLoadingStudents || isLoadingClasses || isLoadingYears;
 
-  const activeYear = academicYears.find((y) => y.isActive);
+  const activeYear = useMemo(() => academicYears.find((y) => y.isActive), [academicYears]);
 
-  // Sorting students: 1. By Class Name, 2. Alphabetical (Name), 3. NISN/NIS
+  // Filtering States
+  const [filterAcademicYearId, setFilterAcademicYearId] = useState<string>("ACTIVE");
+  const [filterGradeLevel, setFilterGradeLevel] = useState<string>("ALL"); // "ALL" | "VII" | "VIII" | "IX" | "NO_CLASS"
+  const [filterClassId, setFilterClassId] = useState<string>("ALL"); // "ALL" | class.id
+  const [filterStatus, setFilterStatus] = useState<string>("ALL"); // "ALL" | "Aktif" | "Lulus" | "Pindah" | "Keluar"
+
+  // Effective Academic Year ID
+  const effectiveAcademicYearId = useMemo(() => {
+    if (filterAcademicYearId === "ACTIVE") {
+      return activeYear?.id || "";
+    }
+    return filterAcademicYearId;
+  }, [filterAcademicYearId, activeYear]);
+
+  // Map of classes by ID for fast lookup
+  const classMap = useMemo(() => {
+    const map = new Map<string, Class>();
+    classes.forEach((c) => {
+      map.set(c.id, c);
+      if (c.classId && c.classId !== c.id) {
+        map.set(c.classId, c);
+      }
+    });
+    return map;
+  }, [classes]);
+
+  // Available grade levels dynamically derived from classes master
+  const availableGradeLevels = useMemo(() => {
+    const levelsSet = new Set<string>();
+    classes.forEach((c) => {
+      const gl = getNormalizedGradeLevel(c);
+      if (gl) levelsSet.add(gl);
+    });
+    // Ensure default SMP standard levels exist in list
+    ["VII", "VIII", "IX"].forEach((lvl) => levelsSet.add(lvl));
+
+    return Array.from(levelsSet).sort((a, b) => {
+      const wA = getGradeLevelWeight(a);
+      const wB = getGradeLevelWeight(b);
+      if (wA !== wB) return wA - wB;
+      return a.localeCompare(b);
+    });
+  }, [classes]);
+
+  // Rombel dropdown options filtered by selected Grade Level & Academic Year
+  const availableClassesForFilter = useMemo(() => {
+    let list = [...classes];
+
+    // Filter by selected Grade Level if specific level chosen
+    if (filterGradeLevel !== "ALL" && filterGradeLevel !== "NO_CLASS") {
+      list = list.filter((c) => getNormalizedGradeLevel(c) === filterGradeLevel);
+    }
+
+    return sortClasses(list);
+  }, [classes, filterGradeLevel]);
+
+  // Handle Changing Grade Level
+  const handleGradeLevelChange = (newGradeLevel: string) => {
+    setFilterGradeLevel(newGradeLevel);
+    if (newGradeLevel === "ALL" || newGradeLevel === "NO_CLASS") {
+      setFilterClassId("ALL");
+    } else {
+      // If currently selected rombel does not belong to the newly selected grade level, reset to "ALL"
+      if (filterClassId !== "ALL") {
+        const selectedCls = classMap.get(filterClassId);
+        if (!selectedCls || getNormalizedGradeLevel(selectedCls) !== newGradeLevel) {
+          setFilterClassId("ALL");
+        }
+      }
+    }
+  };
+
+  // Reset all filters
+  const handleResetFilters = () => {
+    setFilterAcademicYearId("ACTIVE");
+    setFilterGradeLevel("ALL");
+    setFilterClassId("ALL");
+    setFilterStatus("ALL");
+  };
+
+  const isFilterActive = 
+    filterAcademicYearId !== "ACTIVE" || 
+    filterGradeLevel !== "ALL" || 
+    filterClassId !== "ALL" || 
+    filterStatus !== "ALL";
+
+  // Filtered Students List
+  const filteredStudents = useMemo(() => {
+    return students.filter((student) => {
+      // 1. Filter by Academic Year
+      if (effectiveAcademicYearId && effectiveAcademicYearId !== "ALL") {
+        if (student.academicYearId && student.academicYearId !== effectiveAcademicYearId) {
+          return false;
+        }
+      }
+
+      // 2. Filter by Status
+      if (filterStatus !== "ALL") {
+        if (student.status !== filterStatus) {
+          return false;
+        }
+      }
+
+      // 3. Filter by Grade Level
+      const cls = student.classId ? classMap.get(student.classId) : null;
+      const studentGradeLevel = getNormalizedGradeLevel(cls);
+
+      if (filterGradeLevel === "NO_CLASS") {
+        if (student.classId && cls) return false;
+      } else if (filterGradeLevel !== "ALL") {
+        if (studentGradeLevel !== filterGradeLevel) {
+          return false;
+        }
+      }
+
+      // 4. Filter by Specific Rombel (Class ID)
+      if (filterClassId !== "ALL") {
+        if (student.classId !== filterClassId) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [students, classMap, effectiveAcademicYearId, filterStatus, filterGradeLevel, filterClassId]);
+
+  // Sorted Students List: 1. Grade/Class, 2. Alphabetical Name, 3. NISN/NIS
   const sortedStudents = useMemo(() => {
-    return [...students].sort((a, b) => {
-      // 1. Class sorting
-      const classA = classes.find((c) => c.id === a.classId);
-      const classB = classes.find((c) => c.id === b.classId);
+    return [...filteredStudents].sort((a, b) => {
+      const classA = a.classId ? classMap.get(a.classId) : null;
+      const classB = b.classId ? classMap.get(b.classId) : null;
 
-      // Handle "Tanpa Kelas" (empty classId or class not found)
-      // We sort students with classes first, then without classes at the bottom
+      // Handle students without classes (place at the bottom)
       if (classA && !classB) return -1;
       if (!classA && classB) return 1;
       if (!classA && !classB) {
-        // Both are "Tanpa Kelas", sort by name then NISN/NIS
         const stdNameA = a.name || "";
         const stdNameB = b.name || "";
         if (stdNameA.localeCompare(stdNameB, "id", { sensitivity: "base" }) !== 0) {
           return stdNameA.localeCompare(stdNameB, "id", { sensitivity: "base" });
         }
-        const nisnA = a.nisn || a.nis || "";
-        const nisnB = b.nisn || b.nis || "";
-        return nisnA.localeCompare(nisnB, "id", { numeric: true });
+        return (a.nisn || a.nis || "").localeCompare(b.nisn || b.nis || "", "id", { numeric: true });
       }
 
-      // Both have classes, compare by class name (e.g. "Kelas 7A", "Kelas 8B")
-      const nameA = classA?.name || "";
-      const nameB = classB?.name || "";
-      
-      if (nameA !== nameB) {
-        return nameA.localeCompare(nameB, "id", { numeric: true, sensitivity: "base" });
+      // Compare class names using standard hierarchy (VII -> VIII -> IX, A -> B -> C)
+      const compClass = compareClassNames(classA?.name || "", classB?.name || "");
+      if (compClass !== 0) {
+        return compClass;
       }
 
-      // 2. Alphabetical (Name) sorting within the same class
+      // Alphabetical by student name
       const stdNameA = a.name || "";
       const stdNameB = b.name || "";
       if (stdNameA.localeCompare(stdNameB, "id", { sensitivity: "base" }) !== 0) {
         return stdNameA.localeCompare(stdNameB, "id", { sensitivity: "base" });
       }
 
-      // 3. NISN/NIS sorting as fallback
-      const idA = a.nisn || a.nis || "";
-      const idB = b.nisn || b.nis || "";
-      return idA.localeCompare(idB, "id", { numeric: true });
+      // NISN / NIS fallback
+      return (a.nisn || a.nis || "").localeCompare(b.nisn || b.nis || "", "id", { numeric: true });
     });
-  }, [students, classes]);
+  }, [filteredStudents, classMap]);
+
+  // Filter Summary Details & Stats
+  const filterSummary = useMemo(() => {
+    const total = sortedStudents.length;
+    const maleCount = sortedStudents.filter((s) => s.gender === "L").length;
+    const femaleCount = sortedStudents.filter((s) => s.gender === "P").length;
+
+    // Count unique rombel among filtered students
+    const rombelSet = new Set<string>();
+    sortedStudents.forEach((s) => {
+      if (s.classId && classMap.has(s.classId)) {
+        rombelSet.add(s.classId);
+      }
+    });
+    const uniqueRombelCount = rombelSet.size;
+
+    let title = "Semua Tingkat & Rombel";
+    let subtitle = `Menampilkan ${total} siswa dari ${uniqueRombelCount} rombel`;
+
+    const selectedClassObj = filterClassId !== "ALL" ? classMap.get(filterClassId) : null;
+
+    if (filterGradeLevel !== "ALL" && filterGradeLevel !== "NO_CLASS") {
+      const gradeLabel = getGradeLabel(filterGradeLevel);
+      if (filterClassId === "ALL") {
+        title = `${gradeLabel} — Semua Rombel`;
+        subtitle = `Menampilkan ${total} siswa dari ${uniqueRombelCount} rombel tingkat ${filterGradeLevel}`;
+      } else {
+        title = `${gradeLabel} • ${selectedClassObj?.name || filterClassId}`;
+        subtitle = `Menampilkan ${total} siswa${selectedClassObj?.homeroomTeacherName ? ` (Wali Kelas: ${selectedClassObj.homeroomTeacherName})` : ""}`;
+      }
+    } else if (filterGradeLevel === "NO_CLASS") {
+      title = "Siswa Tanpa Kelas";
+      subtitle = `Menampilkan ${total} siswa yang belum ditempatkan pada rombongan belajar`;
+    } else if (filterClassId !== "ALL") {
+      title = `Rombel: ${selectedClassObj?.name || filterClassId}`;
+      subtitle = `Menampilkan ${total} siswa${selectedClassObj?.homeroomTeacherName ? ` (Wali Kelas: ${selectedClassObj.homeroomTeacherName})` : ""}`;
+    }
+
+    const selectedYearObj = academicYears.find((y) => y.id === effectiveAcademicYearId);
+    const yearLabel = selectedYearObj
+      ? `${selectedYearObj.year} (${selectedYearObj.semester})`
+      : effectiveAcademicYearId === "ALL"
+      ? "Semua Tahun Ajaran"
+      : "Tahun Ajaran Aktif";
+
+    return {
+      total,
+      maleCount,
+      femaleCount,
+      uniqueRombelCount,
+      title,
+      subtitle,
+      yearLabel
+    };
+  }, [sortedStudents, classMap, filterGradeLevel, filterClassId, effectiveAcademicYearId, academicYears]);
 
   // Forms
   const createForm = useForm<StudentFormValues>({
@@ -137,7 +354,8 @@ export const Students: React.FC = () => {
   });
 
   const handleCreateOpen = () => {
-    if (!activeYear) {
+    const yearId = effectiveAcademicYearId && effectiveAcademicYearId !== "ALL" ? effectiveAcademicYearId : (activeYear?.id || "");
+    if (!yearId) {
       toast("Harap aktifkan salah satu Tahun Ajaran terlebih dahulu!", "warning");
       return;
     }
@@ -150,8 +368,8 @@ export const Students: React.FC = () => {
       birthDate: "",
       address: "",
       status: "Aktif",
-      classId: "",
-      academicYearId: activeYear.id
+      classId: filterClassId !== "ALL" ? filterClassId : "",
+      academicYearId: yearId
     });
     setIsCreateOpen(true);
   };
@@ -321,7 +539,8 @@ export const Students: React.FC = () => {
 
   const handleImportSubmit = () => {
     if (importData.length === 0) return;
-    if (!activeYear) {
+    const yearId = effectiveAcademicYearId && effectiveAcademicYearId !== "ALL" ? effectiveAcademicYearId : (activeYear?.id || "");
+    if (!yearId) {
       toast("Tidak ada Tahun Ajaran aktif", "error");
       return;
     }
@@ -332,49 +551,66 @@ export const Students: React.FC = () => {
       ...std,
       status: "Aktif" as const,
       classId: importClassId || "",
-      academicYearId: activeYear.id
+      academicYearId: yearId
     }));
 
     importMutation.mutate(formattedStudents);
   };
 
-  // Downloads / Exports
+  // Downloads / Exports respecting current filters
   const handleExportExcel = () => {
-    const formatted = sortedStudents.map((s) => {
-      const cls = classes.find((c) => c.id === s.classId);
+    const formatted = sortedStudents.map((s, idx) => {
+      const cls = s.classId ? classMap.get(s.classId) : null;
       const tp = academicYears.find((y) => y.id === s.academicYearId);
+      const grade = getNormalizedGradeLevel(cls);
       return {
+        "No": idx + 1,
         "NIS": s.nis,
         "NISN": s.nisn,
         "Nama Lengkap": s.name,
         "JK": s.gender === "L" ? "Laki-laki" : "Perempuan",
-        "Tempat Lahir": s.birthPlace,
-        "Tanggal Lahir": s.birthDate,
-        "Kelas": cls ? cls.name : "Tanpa Kelas",
-        "Tahun Pelajaran": tp ? tp.year : "-",
+        "Tingkat": grade || "-",
+        "Rombel (Kelas)": cls ? cls.name : "Tanpa Kelas",
+        "Wali Kelas": cls?.homeroomTeacherName || cls?.waliKelasName || "-",
+        "Tahun Pelajaran": tp ? `${tp.year} (${tp.semester})` : "-",
         "Status Keaktifan": s.status,
-        "Alamat Tinggal": s.address
+        "Tempat Lahir": s.birthPlace || "-",
+        "Tanggal Lahir": s.birthDate || "-",
+        "Alamat Tinggal": s.address || "-"
       };
     });
-    exportToExcel(formatted, "Daftar_Siswa_SMP_Alkarim", "Daftar Siswa");
-    toast("Excel berhasil diunduh!", "success");
+
+    const filePrefix = filterGradeLevel !== "ALL" 
+      ? `Daftar_Siswa_Kelas_${filterGradeLevel}_${filterClassId !== "ALL" ? (classMap.get(filterClassId)?.name || filterClassId) : "Semua_Rombel"}`
+      : `Daftar_Siswa_Semua_Kelas`;
+
+    exportToExcel(formatted, `${filePrefix}_SMP_Alkarim`, "Daftar Siswa");
+    toast(`Excel berhasil diunduh (${formatted.length} siswa)!`, "success");
   };
 
   const handleExportPDF = () => {
-    const headers = ["NIS", "Nama Lengkap", "Gender", "Kelas", "Status", "Alamat"];
-    const rows = sortedStudents.map((s) => {
-      const cls = classes.find((c) => c.id === s.classId);
+    const headers = ["No", "NIS", "Nama Lengkap", "JK", "Tingkat", "Rombel", "Status"];
+    const rows = sortedStudents.map((s, idx) => {
+      const cls = s.classId ? classMap.get(s.classId) : null;
+      const grade = getNormalizedGradeLevel(cls);
       return [
-        s.nis,
+        String(idx + 1),
+        s.nis || "-",
         s.name,
-        s.gender,
+        s.gender === "L" ? "L" : "P",
+        grade || "-",
         cls ? cls.name : "Tanpa Kelas",
-        s.status,
-        s.address
+        s.status
       ];
     });
-    exportToPDF("DAFTAR INDUK SISWA", headers, rows, "Daftar_Siswa_SMP_Alkarim");
-    toast("PDF berhasil diunduh!", "success");
+
+    const pdfTitle = `DAFTAR SISWA - ${filterSummary.title.toUpperCase()} (${filterSummary.yearLabel.toUpperCase()})`;
+    const filePrefix = filterGradeLevel !== "ALL" 
+      ? `Daftar_Siswa_Kelas_${filterGradeLevel}`
+      : `Daftar_Siswa_Semua_Kelas`;
+
+    exportToPDF(pdfTitle, headers, rows, `${filePrefix}_SMP_Alkarim`);
+    toast(`PDF berhasil diunduh (${rows.length} siswa)!`, "success");
   };
 
   // Helper download template excel
@@ -397,9 +633,7 @@ export const Students: React.FC = () => {
       student.address
     ];
     const filledOptional = optionalFields.filter(val => val && val.trim() !== "").length;
-    const totalFields = 8; // name, gender, classId + 5 optional fields
-    const filledTotal = 3 + (student.classId ? 1 : 0) + (student.name ? 1 : 0) + (student.gender ? 1 : 0) - 3 + filledOptional;
-    // Simple 8-field calculation: name, gender, classId (mandatory) + 5 optional
+    const totalFields = 8;
     const actualFilledTotal = 3 + filledOptional;
     const percentage = Math.round((actualFilledTotal / totalFields) * 100);
     return {
@@ -412,17 +646,26 @@ export const Students: React.FC = () => {
 
   // Columns definition
   const columns: Column<Student>[] = [
+    {
+      header: "No",
+      accessor: (_item, index) => (
+        <span className="font-mono text-xs text-gray-500 dark:text-zinc-400 font-semibold">
+          {index !== undefined ? index + 1 : "-"}
+        </span>
+      ),
+      className: "w-12 text-center"
+    },
     { 
       header: "Nama Lengkap", 
       accessor: (item) => {
         const { isComplete, percentage } = getCompleteness(item);
         return (
-          <div className="flex flex-col gap-1.5 py-1">
+          <div className="flex flex-col gap-1 py-0.5">
             <span className="font-extrabold text-gray-900 dark:text-zinc-100">{item.name}</span>
             {!isComplete && (
-              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-amber-50 text-amber-700 dark:bg-amber-950/20 dark:text-amber-400 border border-amber-200/60 dark:border-amber-900/40 w-fit">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400 border border-amber-200/60 dark:border-amber-900/40 w-fit">
                 <AlertCircle className="h-3 w-3 text-amber-500 shrink-0" />
-                ⚠️ Data Belum Lengkap ({percentage}%)
+                Data Belum Lengkap ({percentage}%)
               </span>
             )}
           </div>
@@ -433,25 +676,59 @@ export const Students: React.FC = () => {
     },
     { 
       header: "NIS", 
-      accessor: (item) => item.nis ? <span className="font-mono text-gray-800 dark:text-zinc-200 font-bold">{item.nis}</span> : <span className="text-xs text-gray-400 dark:text-zinc-600 italic font-medium">Kosong</span>, 
+      accessor: (item) => item.nis ? (
+        <span className="font-mono text-gray-800 dark:text-zinc-200 font-bold">{item.nis}</span>
+      ) : (
+        <span className="text-xs text-gray-400 dark:text-zinc-600 italic font-medium">Kosong</span>
+      ), 
       sortable: true, 
       sortKey: "nis" 
     },
     { 
       header: "NISN", 
-      accessor: (item) => item.nisn ? <span className="font-mono text-gray-800 dark:text-zinc-200 font-bold">{item.nisn}</span> : <span className="text-xs text-gray-400 dark:text-zinc-600 italic font-medium">Kosong</span>, 
+      accessor: (item) => item.nisn ? (
+        <span className="font-mono text-gray-800 dark:text-zinc-200 font-bold">{item.nisn}</span>
+      ) : (
+        <span className="text-xs text-gray-400 dark:text-zinc-600 italic font-medium">Kosong</span>
+      ), 
       sortable: true, 
       sortKey: "nisn" 
     },
-    { header: "Gender", accessor: (item) => item.gender === "L" ? "Laki-laki" : "Perempuan", sortable: true, sortKey: "gender" },
+    { 
+      header: "Gender", 
+      accessor: (item) => (
+        <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-bold ${
+          item.gender === "L" 
+            ? "bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-400 border border-blue-200/50 dark:border-blue-900/40"
+            : "bg-pink-50 text-pink-700 dark:bg-pink-950/30 dark:text-pink-400 border border-pink-200/50 dark:border-pink-900/40"
+        }`}>
+          {item.gender === "L" ? "L (Laki-laki)" : "P (Perempuan)"}
+        </span>
+      ), 
+      sortable: true, 
+      sortKey: "gender" 
+    },
     {
       header: "Rombel (Kelas)",
       accessor: (item) => {
-        const clsObj = classes.find((c) => c.id === item.classId);
-        return clsObj ? (
-          <span className="font-semibold text-gray-800 dark:text-zinc-200">{clsObj.name}</span>
-        ) : (
-          <span className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400 px-2 py-0.5 rounded-md font-bold">Tanpa Kelas</span>
+        const clsObj = item.classId ? classMap.get(item.classId) : null;
+        if (!clsObj) {
+          return (
+            <span className="inline-flex items-center text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400 px-2 py-0.5 rounded-md font-bold border border-amber-200/50 dark:border-amber-900/30">
+              Tanpa Kelas
+            </span>
+          );
+        }
+        const grade = getNormalizedGradeLevel(clsObj);
+        return (
+          <div className="flex items-center gap-1.5">
+            {grade && (
+              <span className="px-1.5 py-0.5 text-[10px] font-extrabold bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 border border-indigo-200/60 dark:border-indigo-800/40 rounded-md">
+                Tk. {grade}
+              </span>
+            )}
+            <span className="font-bold text-gray-800 dark:text-zinc-200">{clsObj.name}</span>
+          </div>
         );
       },
       sortable: true,
@@ -460,9 +737,14 @@ export const Students: React.FC = () => {
     {
       header: "Status",
       accessor: (item) => {
-        const bgClasses = { Aktif: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-400", Lulus: "bg-blue-50 text-blue-700 dark:bg-blue-950/20 dark:text-blue-400", Pindah: "bg-amber-50 text-amber-700 dark:bg-amber-950/20 dark:text-amber-400", Keluar: "bg-rose-50 text-rose-700 dark:bg-rose-950/20 dark:text-rose-400" };
+        const bgClasses = { 
+          Aktif: "bg-emerald-50 text-emerald-700 border-emerald-200/60 dark:bg-emerald-950/30 dark:text-emerald-400 dark:border-emerald-900/40", 
+          Lulus: "bg-blue-50 text-blue-700 border-blue-200/60 dark:bg-blue-950/30 dark:text-blue-400 dark:border-blue-900/40", 
+          Pindah: "bg-amber-50 text-amber-700 border-amber-200/60 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-900/40", 
+          Keluar: "bg-rose-50 text-rose-700 border-rose-200/60 dark:bg-rose-950/30 dark:text-rose-400 dark:border-rose-900/40" 
+        };
         return (
-          <span className={`px-2 py-0.5 text-xs font-semibold rounded-full ${bgClasses[item.status]}`}>
+          <span className={`px-2.5 py-0.5 text-xs font-bold rounded-full border ${bgClasses[item.status] || "bg-gray-50 text-gray-700"}`}>
             {item.status}
           </span>
         );
@@ -487,11 +769,11 @@ export const Students: React.FC = () => {
             Daftar Induk Siswa (Siswa)
           </h1>
           <p className="text-xs text-gray-400 dark:text-zinc-500 mt-1">
-            Kelola profil lengkap murid, pembagian kelas, serta status kelulusan/keaktifan akademik
+            Kelola profil lengkap murid, filter berjenjang tingkat & rombel, serta status kelulusan/keaktifan akademik
           </p>
         </div>
         
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button
             onClick={() => setIsImportOpen(true)}
             className="flex items-center gap-2 px-3.5 py-2.5 border border-gray-200 hover:bg-gray-50 dark:border-zinc-800 dark:hover:bg-zinc-800 text-gray-600 dark:text-zinc-300 rounded-xl text-xs font-semibold transition-all cursor-pointer"
@@ -510,6 +792,200 @@ export const Students: React.FC = () => {
         </div>
       </div>
 
+      {/* Advanced Filter Bento Card */}
+      <div className="bg-white dark:bg-zinc-900 p-5 rounded-2xl border border-gray-150 dark:border-zinc-800 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-2 border-b border-gray-100 dark:border-zinc-800">
+          <div className="flex items-center gap-2">
+            <Filter className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+            <h3 className="text-xs font-extrabold text-gray-700 dark:text-zinc-300 uppercase tracking-wider">
+              Filter Tingkat, Rombel & Tahun Ajaran
+            </h3>
+          </div>
+
+          {/* Quick Tingkat Switcher Pills */}
+          <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0">
+            <span className="text-[11px] font-bold text-gray-400 dark:text-zinc-500 mr-1 hidden md:inline">
+              Pintas Tingkat:
+            </span>
+            <button
+              type="button"
+              onClick={() => handleGradeLevelChange("ALL")}
+              className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer whitespace-nowrap ${
+                filterGradeLevel === "ALL"
+                  ? "bg-blue-600 text-white shadow-xs"
+                  : "bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+              }`}
+            >
+              Semua Tingkat
+            </button>
+            {availableGradeLevels.map((lvl) => (
+              <button
+                key={lvl}
+                type="button"
+                onClick={() => handleGradeLevelChange(lvl)}
+                className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer whitespace-nowrap ${
+                  filterGradeLevel === lvl
+                    ? "bg-blue-600 text-white shadow-xs"
+                    : "bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                }`}
+              >
+                {getGradeLabel(lvl)}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => handleGradeLevelChange("NO_CLASS")}
+              className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer whitespace-nowrap ${
+                filterGradeLevel === "NO_CLASS"
+                  ? "bg-amber-600 text-white shadow-xs"
+                  : "bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+              }`}
+            >
+              Tanpa Kelas
+            </button>
+          </div>
+        </div>
+
+        {/* 4-Dropdown Filter Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 pt-1">
+          
+          {/* 1. Tahun Ajaran */}
+          <div>
+            <label className="block text-[11px] font-bold text-gray-500 dark:text-zinc-400 mb-1 flex items-center gap-1.5">
+              <Calendar className="h-3.5 w-3.5 text-gray-400" />
+              Tahun Ajaran
+            </label>
+            <select
+              value={filterAcademicYearId}
+              onChange={(e) => setFilterAcademicYearId(e.target.value)}
+              className="w-full px-3 py-2 text-xs bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 dark:text-zinc-100 font-medium transition-all"
+            >
+              {activeYear && (
+                <option value="ACTIVE">
+                  ⭐ {activeYear.year} ({activeYear.semester}) — Aktif
+                </option>
+              )}
+              <option value="ALL">Semua Tahun Ajaran</option>
+              {academicYears.map((y) => (
+                <option key={y.id} value={y.id}>
+                  {y.year} ({y.semester}) {y.isActive ? " (Aktif)" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* 2. Tingkat Kelas */}
+          <div>
+            <label className="block text-[11px] font-bold text-gray-500 dark:text-zinc-400 mb-1 flex items-center gap-1.5">
+              <Layers className="h-3.5 w-3.5 text-gray-400" />
+              Tingkat Kelas
+            </label>
+            <select
+              value={filterGradeLevel}
+              onChange={(e) => handleGradeLevelChange(e.target.value)}
+              className="w-full px-3 py-2 text-xs bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 dark:text-zinc-100 font-medium transition-all"
+            >
+              <option value="ALL">Semua Tingkat</option>
+              {availableGradeLevels.map((lvl) => (
+                <option key={lvl} value={lvl}>
+                  {getGradeLabel(lvl)}
+                </option>
+              ))}
+              <option value="NO_CLASS">Tanpa Kelas / Belum Ditempatkan</option>
+            </select>
+          </div>
+
+          {/* 3. Rombel (Kelas) */}
+          <div>
+            <label className="block text-[11px] font-bold text-gray-500 dark:text-zinc-400 mb-1 flex items-center gap-1.5">
+              <Building2 className="h-3.5 w-3.5 text-gray-400" />
+              Rombongan Belajar (Rombel)
+            </label>
+            <select
+              value={filterClassId}
+              onChange={(e) => setFilterClassId(e.target.value)}
+              disabled={filterGradeLevel === "NO_CLASS"}
+              className="w-full px-3 py-2 text-xs bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 dark:text-zinc-100 font-medium transition-all disabled:opacity-50"
+            >
+              <option value="ALL">
+                {filterGradeLevel !== "ALL" && filterGradeLevel !== "NO_CLASS"
+                  ? `Semua Rombel Tingkat ${filterGradeLevel} (${availableClassesForFilter.length} Rombel)`
+                  : "Semua Rombel"}
+              </option>
+              {availableClassesForFilter.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} {c.homeroomTeacherName ? `(Wali: ${c.homeroomTeacherName})` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* 4. Status Siswa */}
+          <div className="flex items-end gap-2">
+            <div className="flex-1">
+              <label className="block text-[11px] font-bold text-gray-500 dark:text-zinc-400 mb-1">
+                Status Keaktifan
+              </label>
+              <select
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value)}
+                className="w-full px-3 py-2 text-xs bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 dark:text-zinc-100 font-medium transition-all"
+              >
+                <option value="ALL">Semua Status</option>
+                <option value="Aktif">Aktif</option>
+                <option value="Lulus">Lulus</option>
+                <option value="Pindah">Pindah</option>
+                <option value="Keluar">Keluar</option>
+              </select>
+            </div>
+
+            {isFilterActive && (
+              <button
+                type="button"
+                onClick={handleResetFilters}
+                className="p-2 text-gray-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 dark:hover:text-rose-400 rounded-xl border border-gray-200 dark:border-zinc-800 transition-colors cursor-pointer shrink-0"
+                title="Reset Semua Filter"
+              >
+                <RotateCcw className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Summary & Active Filter Results Banner */}
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 p-4 bg-gradient-to-r from-blue-50/80 via-indigo-50/50 to-slate-50 dark:from-blue-950/20 dark:via-zinc-900 dark:to-zinc-900 border border-blue-100 dark:border-zinc-800 rounded-2xl">
+        <div className="space-y-0.5">
+          <div className="flex items-center gap-2">
+            <span className="px-2 py-0.5 text-[11px] font-extrabold uppercase tracking-wider bg-blue-600 text-white rounded-md">
+              {filterGradeLevel !== "ALL" ? getGradeLabel(filterGradeLevel) : "Semua Tingkat"}
+            </span>
+            <h2 className="text-sm font-bold text-gray-900 dark:text-zinc-100">
+              {filterSummary.title}
+            </h2>
+          </div>
+          <p className="text-xs text-gray-600 dark:text-zinc-400">
+            {filterSummary.subtitle} • <span className="font-semibold text-blue-700 dark:text-blue-300">{filterSummary.yearLabel}</span>
+          </p>
+        </div>
+
+        {/* Quick Stat Badges */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="px-3 py-1 bg-white dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 rounded-xl text-xs font-bold text-gray-700 dark:text-zinc-200 shadow-2xs">
+            Total: <span className="text-blue-600 dark:text-blue-400 font-extrabold">{filterSummary.total}</span> Siswa
+          </div>
+          <div className="px-2.5 py-1 bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200/60 dark:border-blue-900/40 rounded-xl text-xs font-bold text-blue-700 dark:text-blue-300">
+            L: {filterSummary.maleCount}
+          </div>
+          <div className="px-2.5 py-1 bg-pink-50/80 dark:bg-pink-950/40 border border-pink-200/60 dark:border-pink-900/40 rounded-xl text-xs font-bold text-pink-700 dark:text-pink-300">
+            P: {filterSummary.femaleCount}
+          </div>
+          <div className="px-2.5 py-1 bg-indigo-50/80 dark:bg-indigo-950/40 border border-indigo-200/60 dark:border-indigo-900/40 rounded-xl text-xs font-bold text-indigo-700 dark:text-indigo-300">
+            {filterSummary.uniqueRombelCount} Rombel
+          </div>
+        </div>
+      </div>
+
       {/* Main Table Card */}
       <div className="bg-white dark:bg-zinc-900 p-6 rounded-3xl border border-gray-100 dark:border-zinc-800 shadow-xs">
         <DataTable
@@ -517,13 +993,14 @@ export const Students: React.FC = () => {
           columns={columns}
           rowKey={(s) => s.id}
           searchKeys={["name", "nis", "nisn"]}
-          searchPlaceholder="Cari berdasarkan NIS, NISN, atau Nama Siswa..."
+          searchPlaceholder={`Cari di ${filterSummary.title} (Nama, NIS, NISN)...`}
+          emptyStateText={`Tidak ada data siswa ditemukan untuk kriteria filter "${filterSummary.title}"`}
           rightHeaderActions={
             <div className="flex items-center gap-1.5 border border-gray-200 dark:border-zinc-800 rounded-xl px-2 py-1 bg-gray-50/50 dark:bg-zinc-900">
               <button
                 onClick={handleExportExcel}
                 className="p-1.5 hover:bg-gray-200/50 dark:hover:bg-zinc-800 text-gray-500 hover:text-emerald-600 dark:text-zinc-400 dark:hover:text-emerald-400 rounded-lg transition-colors cursor-pointer"
-                title="Ekspor ke Excel"
+                title="Ekspor Hasil Filter ke Excel"
               >
                 <TableProperties className="h-4 w-4" />
               </button>
@@ -531,7 +1008,7 @@ export const Students: React.FC = () => {
               <button
                 onClick={handleExportPDF}
                 className="p-1.5 hover:bg-gray-200/50 dark:hover:bg-zinc-800 text-gray-500 hover:text-rose-600 dark:text-zinc-400 dark:hover:text-rose-400 rounded-lg transition-colors cursor-pointer"
-                title="Ekspor ke PDF"
+                title="Ekspor Hasil Filter ke PDF"
               >
                 <FileDown className="h-4 w-4" />
               </button>
@@ -542,14 +1019,14 @@ export const Students: React.FC = () => {
               <button
                 onClick={() => handleEditOpen(item)}
                 className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50/50 dark:hover:bg-zinc-800 rounded-lg transition-colors cursor-pointer"
-                title="Edit data"
+                title="Edit data murid"
               >
                 <Edit2 className="h-4 w-4" />
               </button>
               <button
                 onClick={() => handleDeleteOpen(item)}
                 className="p-1.5 text-gray-500 hover:text-rose-600 hover:bg-rose-50/50 dark:hover:bg-zinc-800 rounded-lg transition-colors cursor-pointer"
-                title="Hapus data"
+                title="Hapus data murid"
               >
                 <Trash2 className="h-4 w-4" />
               </button>
@@ -619,7 +1096,10 @@ export const Students: React.FC = () => {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <FormSelect
               label="Rombongan Belajar (Kelas)"
-              options={classes.map((c) => ({ value: c.id, label: c.name }))}
+              options={classes.map((c) => {
+                const gr = getNormalizedGradeLevel(c);
+                return { value: c.id, label: `${c.name} ${gr ? `(Tk. ${gr})` : ""}` };
+              })}
               placeholder="-- Pilih Rombel --"
               required
               register={createForm.register("classId")}
@@ -639,7 +1119,7 @@ export const Students: React.FC = () => {
             />
             <FormSelect
               label="Tahun Ajaran Terdaftar"
-              options={academicYears.map((y) => ({ value: y.id, label: `${y.year} (${y.semester})` }))}
+              options={academicYears.map((y) => ({ value: y.id, label: `${y.year} (${y.semester}) ${y.isActive ? "⭐" : ""}` }))}
               required
               register={createForm.register("academicYearId")}
               error={createForm.formState.errors.academicYearId?.message}
@@ -657,14 +1137,14 @@ export const Students: React.FC = () => {
             <button
               type="button"
               onClick={() => setIsCreateOpen(false)}
-              className="px-4 py-2 border border-gray-200 dark:border-zinc-800 text-gray-600 dark:text-zinc-350 rounded-xl text-xs font-semibold hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
+              className="px-4 py-2 border border-gray-200 dark:border-zinc-800 text-gray-600 dark:text-zinc-350 rounded-xl text-xs font-semibold hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
             >
               Batal
             </button>
             <button
               type="submit"
               disabled={createMutation.isPending}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors disabled:opacity-50"
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
             >
               {createMutation.isPending ? "Menyimpan..." : "Daftarkan Siswa"}
             </button>
@@ -733,7 +1213,10 @@ export const Students: React.FC = () => {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <FormSelect
               label="Rombongan Belajar (Kelas)"
-              options={classes.map((c) => ({ value: c.id, label: c.name }))}
+              options={classes.map((c) => {
+                const gr = getNormalizedGradeLevel(c);
+                return { value: c.id, label: `${c.name} ${gr ? `(Tk. ${gr})` : ""}` };
+              })}
               placeholder="-- Pilih Rombel --"
               required
               register={editForm.register("classId")}
@@ -753,7 +1236,7 @@ export const Students: React.FC = () => {
             />
             <FormSelect
               label="Tahun Ajaran Terdaftar"
-              options={academicYears.map((y) => ({ value: y.id, label: `${y.year} (${y.semester})` }))}
+              options={academicYears.map((y) => ({ value: y.id, label: `${y.year} (${y.semester}) ${y.isActive ? "⭐" : ""}` }))}
               required
               register={editForm.register("academicYearId")}
               error={editForm.formState.errors.academicYearId?.message}
@@ -771,14 +1254,14 @@ export const Students: React.FC = () => {
             <button
               type="button"
               onClick={() => setIsEditOpen(false)}
-              className="px-4 py-2 border border-gray-200 dark:border-zinc-800 text-gray-600 dark:text-zinc-350 rounded-xl text-xs font-semibold hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
+              className="px-4 py-2 border border-gray-200 dark:border-zinc-800 text-gray-600 dark:text-zinc-350 rounded-xl text-xs font-semibold hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
             >
               Batal
             </button>
             <button
               type="submit"
               disabled={updateMutation.isPending}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors disabled:opacity-50"
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
             >
               {updateMutation.isPending ? "Memperbarui..." : "Simpan Perubahan"}
             </button>
@@ -801,14 +1284,14 @@ export const Students: React.FC = () => {
             <button
               type="button"
               onClick={() => setIsDeleteOpen(false)}
-              className="px-4 py-2 border border-gray-200 dark:border-zinc-800 text-gray-600 dark:text-zinc-350 rounded-xl text-xs font-semibold hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
+              className="px-4 py-2 border border-gray-200 dark:border-zinc-800 text-gray-600 dark:text-zinc-350 rounded-xl text-xs font-semibold hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
             >
               Batal
             </button>
             <button
               onClick={handleDeleteConfirm}
               disabled={deleteMutation.isPending}
-              className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors disabled:opacity-50"
+              className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
             >
               {deleteMutation.isPending ? "Menghapus..." : "Ya, Hapus Murid"}
             </button>
@@ -838,7 +1321,7 @@ export const Students: React.FC = () => {
             </div>
             <button
               onClick={handleDownloadTemplate}
-              className="flex items-center gap-1.5 px-3.5 py-2 border border-blue-200 bg-white hover:bg-blue-50 text-blue-700 rounded-xl text-xs font-bold transition-all flex-shrink-0"
+              className="flex items-center gap-1.5 px-3.5 py-2 border border-blue-200 bg-white hover:bg-blue-50 text-blue-700 rounded-xl text-xs font-bold transition-all flex-shrink-0 cursor-pointer"
             >
               <Download className="h-3.5 w-3.5" />
               Unduh Template
@@ -897,9 +1380,14 @@ export const Students: React.FC = () => {
                     onChange={(e) => setImportClassId(e.target.value)}
                   >
                     <option value="">Masukkan sebagai Tanpa Kelas</option>
-                    {classes.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
+                    {classes.map((c) => {
+                      const gr = getNormalizedGradeLevel(c);
+                      return (
+                        <option key={c.id} value={c.id}>
+                          {c.name} {gr ? `(Tk. ${gr})` : ""}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
               </div>
@@ -945,14 +1433,14 @@ export const Students: React.FC = () => {
                 setImportData([]);
                 setImportClassId("");
               }}
-              className="px-4 py-2 border border-gray-200 dark:border-zinc-800 text-gray-600 dark:text-zinc-350 rounded-xl text-xs font-semibold hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
+              className="px-4 py-2 border border-gray-200 dark:border-zinc-800 text-gray-600 dark:text-zinc-350 rounded-xl text-xs font-semibold hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
             >
               Batal
             </button>
             <button
               onClick={handleImportSubmit}
               disabled={importData.length === 0 || importLoading}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors disabled:opacity-50"
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
             >
               {importLoading ? "Mengimpor..." : "Lakukan Impor"}
             </button>
@@ -965,3 +1453,4 @@ export const Students: React.FC = () => {
 };
 
 export default Students;
+

@@ -50,7 +50,23 @@ export interface Student {
   className?: string; // cached
   academicYearId: string; // References AcademicYear.id
   createdAt: string;
+
+  // Additional Biodata Fields for e-Rapor
+  nik?: string;
+  religion?: string; // Agama: Islam, etc.
+  fatherName?: string; // Nama Ayah
+  motherName?: string; // Nama Ibu
+  guardianName?: string; // Nama Wali
+  parentPhone?: string; // Nomor kontak orang tua/wali
+  village?: string; // Desa/Kelurahan
+  district?: string; // Kecamatan
+  city?: string; // Kabupaten/Kota
+  province?: string; // Provinsi
+  photoUrl?: string; // Foto Siswa
 }
+
+export type SubjectLearningType = "REGULER" | "BLOK";
+export type SubjectReportDisplay = "TAMPIL_RAPOR" | "TIDAK_TAMPIL_RAPOR";
 
 export interface Subject {
   id: string;
@@ -61,6 +77,10 @@ export interface Subject {
   grades: ("7" | "8" | "9")[];
   grade?: "7" | "8" | "9" | "Semua"; // Legacy field for existing Firestore documents
   categoryType?: "umum_pai" | "diniyah_pondok"; // Journal filing rule
+  subjectType?: "UMUM" | "KEPESANTRENAN" | "PONDOK"; // e-Rapor classification
+  learningType?: SubjectLearningType; // Jenis Pembelajaran: REGULER | BLOK
+  reportDisplay?: SubjectReportDisplay; // Status Tampil di Rapor: TAMPIL_RAPOR | TIDAK_TAMPIL_RAPOR
+  teacherId?: string;
   createdAt: string;
 }
 

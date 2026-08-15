@@ -37,25 +37,27 @@ export interface AppConfig {
   principalDegree: string;
   principalNipNiy: string;
   principalSignatureUrl?: string;
+  headmasterName?: string;
+  headmasterSignatureUrl?: string;
 }
 
 export const APP_CONFIG: AppConfig = {
   // Identitas Sekolah Default
-  foundationName: "Yayasan Alkarim Rasyid Indonesia",
+  foundationName: "Yayasan Alkarim Rasyid",
   schoolName: "SMP Alkarim Rasyid",
   schoolAbbreviation: "SMP AKR",
   logoUrl: "/logo.png",
   faviconUrl: "/favicon.ico",
-  address: "Ds. Sukabanjar, Kec. Gedong Tataan, Kab. Pesawaran",
-  village: "Sukabanjar",
-  district: "Gedong Tataan",
-  regency: "Kabupaten Pesawaran",
-  province: "Lampung",
-  postalCode: "-",
-  phone: "-",
-  whatsapp: "-",
-  email: "-",
-  website: "-",
+  address: "Jl. Alkarim Rasyid No. 1",
+  village: "Cibinong",
+  district: "Cibinong",
+  regency: "Kabupaten Bogor",
+  province: "Jawa Barat",
+  postalCode: "16911",
+  phone: "(021) 1234567",
+  whatsapp: "081234567890",
+  email: "info@alkarimrasyid.sch.id",
+  website: "https://alkarimrasyid.sch.id",
 
   // Identitas Aplikasi Default
   name: "SIMAK",
@@ -66,7 +68,7 @@ export const APP_CONFIG: AppConfig = {
   buildNumber: "103",
   buildDate: "2026-07-30",
   developer: "M. Rakhman Azizi, S.Pd., Gr.",
-  developerNote: "Developed by M. Rakhman Azizi, S.Pd., Gr., with the support of Artificial Intelligence technologies powered by ChatGPT (OpenAI) and Google AI Studio.",
+  developerNote: "Dikembangkan oleh M. Rakhman Azizi, S.Pd., Gr. dengan bantuan ChatGPT (OpenAI) dan Google AI Studio sebagai AI Development Assistant.",
   releaseYear: "2026",
   techStack: [
     "React",
@@ -82,9 +84,9 @@ export const APP_CONFIG: AppConfig = {
   copyright: "© 2026 SMP Alkarim Rasyid. All Rights Reserved.",
 
   // Identitas Kepala Sekolah Default
-  principalName: "Samhari",
-  principalDegree: "S.Sos",
-  principalNipNiy: "NIY",
+  principalName: "H. Abdullah",
+  principalDegree: "M.Pd.",
+  principalNipNiy: "NIY. 202001001",
   principalSignatureUrl: ""
 };
 

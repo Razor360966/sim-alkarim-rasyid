@@ -39,6 +39,8 @@ import {
   Heart,
   QrCode,
   FlaskConical,
+  UserCheck,
+  Layers,
   Info
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
@@ -208,6 +210,14 @@ export const MainLayout: React.FC = () => {
     { name: "Supervisi Akademik", path: "/supervision-academic", icon: Shield, roles: ["admin", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan", "guru"], group: "Supervisi" },
     { name: "Supervisi Manajerial", path: "/supervision-managerial", icon: Shield, roles: ["admin", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan"], group: "Supervisi" },
     { name: "Instrumen Supervisi", path: "/supervision-instruments", icon: FileCheck, roles: ["admin", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan"], group: "Supervisi" },
+
+    // Modul e-Rapor
+    { name: "Biodata & Cover Rapor", path: "/e-rapor/student-biodata", icon: UserCheck, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "operator"], group: "Modul e-Rapor" },
+    { name: "Input Nilai Mapel", path: "/e-rapor/input", icon: BookOpen, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "operator"], group: "Modul e-Rapor" },
+    { name: "Wali Kelas & Verifikasi", path: "/e-rapor/wali-kelas", icon: Shield, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "operator"], group: "Modul e-Rapor" },
+    { name: "Leger Nilai", path: "/e-rapor/leger", icon: Layers, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "operator"], group: "Modul e-Rapor" },
+    { name: "Executive Dashboard", path: "/e-rapor/dashboard", icon: LayoutDashboard, roles: ["admin", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "operator", "ketua yayasan"], group: "Modul e-Rapor" },
+    { name: "Pengaturan Bobot", path: "/e-rapor/settings", icon: SettingsIcon, roles: ["admin", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "operator"], group: "Modul e-Rapor" },
 
     { name: "Rapor Kinerja SDM", path: "/sdm-performance", icon: Award, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Evaluasi Kinerja" },
 

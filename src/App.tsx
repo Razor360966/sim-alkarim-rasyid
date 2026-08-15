@@ -23,53 +23,60 @@ import { SplashScreen } from "./components/SplashScreen";
 
 // Layout
 import MainLayout from "./layout/MainLayout";
+import { lazyRetry } from "./utils/lazyRetry";
 
-// Lazy Loaded Pages
-const Login = lazy(() => import("./pages/Login"));
-const ChangePassword = lazy(() => import("./pages/ChangePassword"));
-const Dashboard = lazy(() => import("./pages/Dashboard"));
-const AcademicYears = lazy(() => import("./pages/AcademicYears"));
-const Subjects = lazy(() => import("./pages/Subjects"));
-const Classes = lazy(() => import("./pages/Classes"));
-const Teachers = lazy(() => import("./pages/Teachers"));
-const Students = lazy(() => import("./pages/Students"));
-const CurriculumMatrixPage = lazy(() => import("./pages/CurriculumMatrix"));
-const Semesters = lazy(() => import("./pages/Semesters"));
-const Users = lazy(() => import("./pages/Users"));
-const Settings = lazy(() => import("./pages/Settings"));
-const Profile = lazy(() => import("./pages/Profile"));
-const SchoolAgendas = lazy(() => import("./pages/SchoolAgendas"));
-const LessonPeriods = lazy(() => import("./pages/LessonPeriods"));
-const Schedules = lazy(() => import("./pages/Schedules"));
-const AcademicCalendar = lazy(() => import("./pages/AcademicCalendar"));
-const AnnualActivityTimeline = lazy(() => import("./pages/AnnualActivityTimeline"));
-const EffectiveWeeks = lazy(() => import("./pages/EffectiveWeeks"));
-const EffectiveDays = lazy(() => import("./pages/EffectiveDays"));
-const EffectiveJp = lazy(() => import("./pages/EffectiveJp"));
-const AcademicReferences = lazy(() => import("./pages/AcademicReferences"));
-const AnnualProgram = lazy(() => import("./pages/AnnualProgram"));
-const SemesterProgram = lazy(() => import("./pages/SemesterProgram"));
-const LessonPlans = lazy(() => import("./pages/LessonPlans").then(m => ({ default: m.LessonPlans })));
-const TeachingJournals = lazy(() => import("./pages/TeachingJournals"));
-const MySchedule = lazy(() => import("./pages/MySchedule").then(m => ({ default: m.MySchedule })));
-const MusrifJournals = lazy(() => import("./pages/MusrifJournals"));
-const MutabaahHarian = lazy(() => import("./pages/MutabaahHarian").then(m => ({ default: m.MutabaahHarian })));
-const SdmPerformance = lazy(() => import("./pages/SdmPerformance"));
-const GtkDevelopment = lazy(() => import("./pages/GtkDevelopment"));
-const SupervisionAcademic = lazy(() => import("./pages/SupervisionAcademic"));
-const SupervisionManagerial = lazy(() => import("./pages/SupervisionManagerial"));
-const SupervisionSchedules = lazy(() => import("./pages/SupervisionSchedules"));
-const SupervisionInstruments = lazy(() => import("./pages/SupervisionInstruments"));
-const InventarisMasukSantri = lazy(() => import("./pages/InventarisMasukSantri"));
-const TeacherTeachingAttendancePage = lazy(() => import("./pages/TeacherTeachingAttendance"));
-const TeachingQrCheckInPage = lazy(() => import("./pages/TeachingQrCheckIn"));
-const TeachingQrSimulationPage = lazy(() => import("./pages/TeachingQrSimulation").then(m => ({ default: m.TeachingQrSimulationPage })));
-const StudentAttendancePage = lazy(() => import("./pages/StudentAttendance").then(m => ({ default: m.StudentAttendancePage })));
-const TeacherDisciplinePage = lazy(() => import("./pages/TeacherDiscipline").then(m => ({ default: m.TeacherDisciplinePage })));
-const ExecutiveMutabaahGuruPage = lazy(() => import("./pages/ExecutiveMutabaahGuruPage"));
-const AboutApp = lazy(() => import("./pages/AboutApp"));
-const OfflinePage = lazy(() => import("./pages/OfflinePage"));
-const NotFound = lazy(() => import("./pages/NotFound"));
+// Lazy Loaded Pages with Auto Retry
+const Login = lazyRetry(() => import("./pages/Login"), "Login");
+const ChangePassword = lazyRetry(() => import("./pages/ChangePassword"), "ChangePassword");
+const Dashboard = lazyRetry(() => import("./pages/Dashboard"), "Dashboard");
+const AcademicYears = lazyRetry(() => import("./pages/AcademicYears"), "AcademicYears");
+const Subjects = lazyRetry(() => import("./pages/Subjects"), "Subjects");
+const Classes = lazyRetry(() => import("./pages/Classes"), "Classes");
+const Teachers = lazyRetry(() => import("./pages/Teachers"), "Teachers");
+const Students = lazyRetry(() => import("./pages/Students"), "Students");
+const CurriculumMatrixPage = lazyRetry(() => import("./pages/CurriculumMatrix"), "CurriculumMatrix");
+const Semesters = lazyRetry(() => import("./pages/Semesters"), "Semesters");
+const Users = lazyRetry(() => import("./pages/Users"), "Users");
+const Settings = lazyRetry(() => import("./pages/Settings"), "Settings");
+const Profile = lazyRetry(() => import("./pages/Profile"), "Profile");
+const SchoolAgendas = lazyRetry(() => import("./pages/SchoolAgendas"), "SchoolAgendas");
+const LessonPeriods = lazyRetry(() => import("./pages/LessonPeriods"), "LessonPeriods");
+const Schedules = lazyRetry(() => import("./pages/Schedules"), "Schedules");
+const AcademicCalendar = lazyRetry(() => import("./pages/AcademicCalendar"), "AcademicCalendar");
+const AnnualActivityTimeline = lazyRetry(() => import("./pages/AnnualActivityTimeline"), "AnnualActivityTimeline");
+const EffectiveWeeks = lazyRetry(() => import("./pages/EffectiveWeeks"), "EffectiveWeeks");
+const EffectiveDays = lazyRetry(() => import("./pages/EffectiveDays"), "EffectiveDays");
+const EffectiveJp = lazyRetry(() => import("./pages/EffectiveJp"), "EffectiveJp");
+const AcademicReferences = lazyRetry(() => import("./pages/AcademicReferences"), "AcademicReferences");
+const AnnualProgram = lazyRetry(() => import("./pages/AnnualProgram"), "AnnualProgram");
+const SemesterProgram = lazyRetry(() => import("./pages/SemesterProgram"), "SemesterProgram");
+const LessonPlans = lazyRetry(() => import("./pages/LessonPlans"), "LessonPlans");
+const TeachingJournals = lazyRetry(() => import("./pages/TeachingJournals"), "TeachingJournals");
+const MySchedule = lazyRetry(() => import("./pages/MySchedule"), "MySchedule");
+const MusrifJournals = lazyRetry(() => import("./pages/MusrifJournals"), "MusrifJournals");
+const MutabaahHarian = lazyRetry(() => import("./pages/MutabaahHarian"), "MutabaahHarian");
+const SdmPerformance = lazyRetry(() => import("./pages/SdmPerformance"), "SdmPerformance");
+const GtkDevelopment = lazyRetry(() => import("./pages/GtkDevelopment"), "GtkDevelopment");
+const SupervisionAcademic = lazyRetry(() => import("./pages/SupervisionAcademic"), "SupervisionAcademic");
+const SupervisionManagerial = lazyRetry(() => import("./pages/SupervisionManagerial"), "SupervisionManagerial");
+const SupervisionSchedules = lazyRetry(() => import("./pages/SupervisionSchedules"), "SupervisionSchedules");
+const SupervisionInstruments = lazyRetry(() => import("./pages/SupervisionInstruments"), "SupervisionInstruments");
+const InventarisMasukSantri = lazyRetry(() => import("./pages/InventarisMasukSantri"), "InventarisMasukSantri");
+const TeacherTeachingAttendancePage = lazyRetry(() => import("./pages/TeacherTeachingAttendance"), "TeacherTeachingAttendance");
+const TeachingQrCheckInPage = lazyRetry(() => import("./pages/TeachingQrCheckIn"), "TeachingQrCheckIn");
+const TeachingQrSimulationPage = lazyRetry(() => import("./pages/TeachingQrSimulation"), "TeachingQrSimulation");
+const StudentAttendancePage = lazyRetry(() => import("./pages/StudentAttendance"), "StudentAttendance");
+const TeacherDisciplinePage = lazyRetry(() => import("./pages/TeacherDiscipline"), "TeacherDiscipline");
+const ExecutiveMutabaahGuruPage = lazyRetry(() => import("./pages/ExecutiveMutabaahGuruPage"), "ExecutiveMutabaahGuruPage");
+const ERaporTeacherInput = lazyRetry(() => import("./pages/ERaporTeacherInput"), "ERaporTeacherInput");
+const ERaporHomeroomView = lazyRetry(() => import("./pages/ERaporHomeroomView"), "ERaporHomeroomView");
+const ERaporStudentBiodataPage = lazyRetry(() => import("./pages/ERaporStudentBiodataPage"), "ERaporStudentBiodataPage");
+const ERaporLegerPage = lazyRetry(() => import("./pages/ERaporLegerPage"), "ERaporLegerPage");
+const ERaporExecutiveDashboard = lazyRetry(() => import("./pages/ERaporExecutiveDashboard"), "ERaporExecutiveDashboard");
+const ERaporSettingsPage = lazyRetry(() => import("./pages/ERaporSettingsPage"), "ERaporSettingsPage");
+const AboutApp = lazyRetry(() => import("./pages/AboutApp"), "AboutApp");
+const OfflinePage = lazyRetry(() => import("./pages/OfflinePage"), "OfflinePage");
+const NotFound = lazyRetry(() => import("./pages/NotFound"), "NotFound");
 
 // Inner component to dynamically update Document Title based on SSOT identity
 function AppTitleUpdater() {
@@ -176,6 +183,14 @@ export default function App() {
                         <Route path="student-attendance" element={<StudentAttendancePage />} />
                         <Route path="teacher-discipline" element={<TeacherDisciplinePage />} />
                         <Route path="executive-mutabaah-guru" element={<ExecutiveMutabaahGuruPage />} />
+
+                        {/* Modul e-Rapor Kurikulum Merdeka */}
+                        <Route path="e-rapor/input" element={<ERaporTeacherInput />} />
+                        <Route path="e-rapor/student-biodata" element={<ERaporStudentBiodataPage />} />
+                        <Route path="e-rapor/wali-kelas" element={<ERaporHomeroomView />} />
+                        <Route path="e-rapor/leger" element={<ERaporLegerPage />} />
+                        <Route path="e-rapor/dashboard" element={<ERaporExecutiveDashboard />} />
+                        <Route path="e-rapor/settings" element={<ERaporSettingsPage />} />
                       </Route>
 
                       {/* 404 Catch All Route */}

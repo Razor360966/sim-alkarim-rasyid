@@ -38,11 +38,13 @@ import {
   Mail,
   Phone,
   User,
-  Loader2
+  Loader2,
+  Printer
 } from "lucide-react";
 import { generateDailySchedule, TimelineBlock, minutesToTime, timeToMinutes } from "../utils/scheduleCalculator";
 import { SchoolSettings, BreakTime, RoutineActivity } from "../types";
 import { TeachingAttendanceSettingsPanel } from "../components/TeachingAttendanceSettingsPanel";
+import { ERaporPrintSettingsPanel } from "../components/ERaporPrintSettingsPanel";
 
 const DAYS_OF_WEEK = ["Sabtu", "Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat"];
 
@@ -365,6 +367,8 @@ export default function Settings() {
     // Reset Form
     setNewRoutineName("");
     setNewRoutineDesc("");
+    setNewRoutineStart("07:00");
+    setNewRoutineDuration(15);
   };
 
   // Delete routine activity
@@ -590,14 +594,16 @@ export default function Settings() {
         startTime: localSettings.schoolHours?.startTime || localSettings.startTime || "07:00",
         endTime: localSettings.schoolHours?.endTime || localSettings.endTime || "14:00",
         jpDuration: localSettings.lessonPeriod || localSettings.jpDuration || 40,
+        lessonPeriod: localSettings.lessonPeriod || localSettings.jpDuration || 40,
         updatedBy: user?.uid || "system"
       };
 
       await updateSettings(payload, "Menyempurnakan konfigurasi School Settings lengkap.");
       setShowPreviewModal(false);
       fetchHistoryItems();
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      toast(e?.message || "Gagal menyimpan pengaturan sekolah", "error");
     }
   };
 
@@ -674,8 +680,9 @@ export default function Settings() {
     { id: "waktu-istirahat", label: "5. Waktu Istirahat", icon: Coffee },
     ...(canAccessTeachingSettings ? [{ id: "absensi-mengajar", label: "6. Kebijakan Absensi Mengajar", icon: UserCheck }] : []),
     { id: "hari-libur", label: "7. Hari Libur Khusus", icon: ShieldAlert },
-    { id: "simpan", label: "8. Simpan Pengaturan", icon: Save },
-    { id: "riwayat", label: "9. Riwayat & Rollback", icon: RotateCcw },
+    { id: "cetak-rapor", label: "8. Pengaturan Cetak Rapor", icon: Printer },
+    { id: "simpan", label: "9. Simpan Pengaturan", icon: Save },
+    { id: "riwayat", label: "10. Riwayat & Rollback", icon: RotateCcw },
   ];
 
   return (
@@ -1583,6 +1590,20 @@ export default function Settings() {
                         </div>
                       </div>
                     )}
+
+                    {hasWriteAccess && (
+                      <div className="flex justify-end pt-3 border-t border-slate-100 dark:border-zinc-850 mt-4">
+                        <button
+                          type="button"
+                          onClick={handleSaveAllSettings}
+                          disabled={isUpdating}
+                          className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                        >
+                          {isUpdating ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                          Simpan Perubahan Kegiatan Rutin
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1805,7 +1826,10 @@ export default function Settings() {
                 </div>
               )}
 
-              {/* 7. SIMPAN PENGATURAN */}
+              {/* 8. PENGATURAN CETAK RAPOR */}
+              {activeTab === "cetak-rapor" && <ERaporPrintSettingsPanel />}
+
+              {/* 9. SIMPAN PENGATURAN */}
               {activeTab === "simpan" && (
                 <div className="space-y-4">
                   <div className="border-b border-slate-100 dark:border-zinc-850 pb-3">
@@ -1983,7 +2007,7 @@ export default function Settings() {
                 <button
                   type="button"
                   onClick={handleSaveAllSettings}
-                  disabled={isUpdating || !!routineOverlapError || !!breakOverlapError}
+                  disabled={isUpdating}
                   className="w-full flex items-center justify-center gap-2 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold shadow-sm transition-all disabled:opacity-50 cursor-pointer text-xs"
                 >
                   {isUpdating ? (
@@ -2248,7 +2272,7 @@ export default function Settings() {
                 <button
                   type="button"
                   onClick={handleSaveAllSettings}
-                  disabled={isUpdating || !!routineOverlapError || !!breakOverlapError}
+                  disabled={isUpdating}
                   className="flex items-center gap-2 px-5 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md transition-all cursor-pointer disabled:opacity-50"
                 >
                   {isUpdating ? (

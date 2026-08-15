@@ -3,7 +3,7 @@ import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Search, FileDown } f
 
 export interface Column<T> {
   header: string;
-  accessor: keyof T | ((item: T) => React.ReactNode);
+  accessor: keyof T | ((item: T, index: number) => React.ReactNode);
   sortKey?: keyof T;
   sortable?: boolean;
   className?: string;
@@ -196,15 +196,16 @@ export function DataTable<T>({
                 </td>
               </tr>
             ) : (
-              paginatedData.map((item) => (
+              paginatedData.map((item, itemIdx) => (
                 <tr
                   key={rowKey(item)}
                   className="hover:bg-slate-50/50 dark:hover:bg-zinc-900/30 text-slate-750 dark:text-zinc-300 transition-colors"
                 >
                   {columns.map((col, colIdx) => {
+                    const globalIdx = (adjustedCurrentPage - 1) * itemsPerPage + itemIdx;
                     const value =
                       typeof col.accessor === "function"
-                        ? col.accessor(item)
+                        ? col.accessor(item, globalIdx)
                         : (item[col.accessor] as React.ReactNode);
 
                     return (
