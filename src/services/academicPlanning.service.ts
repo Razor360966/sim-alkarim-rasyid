@@ -569,9 +569,17 @@ export const academicPlanningService = {
     semesterId: string
   ): Promise<{ isEffective: boolean; notes?: string }> {
     try {
-      const dateObj = new Date(dateStr);
+      if (!dateStr) return { isEffective: true, notes: "Hari Efektif KBM" };
+
+      // Parse local date components safely to prevent timezone offset issues
+      const parts = dateStr.split("-").map(Number);
+      if (parts.length < 3 || isNaN(parts[0]) || isNaN(parts[1]) || isNaN(parts[2])) {
+        return { isEffective: true, notes: "Hari Efektif KBM" };
+      }
+      const [year, month, day] = parts;
+      const dateObj = new Date(year, month - 1, day);
       if (isNaN(dateObj.getTime())) {
-        return { isEffective: true };
+        return { isEffective: true, notes: "Hari Efektif KBM" };
       }
 
       // 1. Direct Weekend Check based on activeDays (Default: Jumat is libur)
@@ -585,7 +593,7 @@ export const academicPlanningService = {
           activeDays = settings.activeDays;
         }
       } catch (err) {
-        // Fallback to Friday libur
+        // Fallback to default activeDays
       }
 
       const isWeekend = !activeDays.some(ad => ad.toLowerCase() === dayName.toLowerCase());
@@ -599,16 +607,22 @@ export const academicPlanningService = {
         const dayMatch = calDays.find(d => d.date === dateStr);
         if (dayMatch && dayMatch.events && dayMatch.events.length > 0) {
           const nonEffectiveEvt = dayMatch.events.find(
-            e => e.isEffectiveDay === false || e.categoryName?.toLowerCase().includes("libur") || e.statusName?.toLowerCase().includes("tidak efektif")
+            e => e.isEffectiveDay === false || 
+                 e.categoryId === "EVENT_LIBUR" ||
+                 e.categoryName?.toLowerCase().includes("libur") || 
+                 e.statusId === "STATUS_TIDAK_EFEKTIF" ||
+                 e.statusName?.toLowerCase().includes("tidak efektif")
           );
           if (nonEffectiveEvt) {
             return {
               isEffective: false,
-              notes: nonEffectiveEvt.title || "Hari Libur / Tidak Efektif"
+              notes: nonEffectiveEvt.title || "Hari Libur / Tidak Efektif KBM"
             };
           }
           const explicitEffectiveEvt = dayMatch.events.find(
-            e => e.isEffectiveDay === true || e.statusName?.toLowerCase().includes("efektif")
+            e => e.isEffectiveDay === true || 
+                 e.statusId === "STATUS_EFEKTIF" ||
+                 e.statusName?.toLowerCase().includes("efektif")
           );
           if (explicitEffectiveEvt) {
             return {
@@ -619,67 +633,32 @@ export const academicPlanningService = {
         }
       }
 
-      if (!semesterId) {
-        return { isEffective: true };
-      }
-      const semRef = doc(db, "semesters", semesterId);
-      const semSnap = await getDoc(semRef);
-      if (!semSnap.exists()) {
-        return { isEffective: true };
-      }
-      const semData = semSnap.data();
-      
-      const monthNames = [
-        "Januari", "Februari", "Maret", "April", "Mei", "Juni", 
-        "Juli", "Agustus", "September", "Oktober", "November", "Desember"
-      ];
-      const monthName = monthNames[dateObj.getMonth()];
-      const year = dateObj.getFullYear();
-      const monthYearKey = `${monthName} ${year}`;
-
-      // Check manual config
-      if (semData.manualWeeksConfigured && Array.isArray(semData.details)) {
-        const detail = semData.details.find((d: any) => d.month === monthYearKey || d.month.startsWith(monthName));
-        if (detail) {
-          const weekIdx = this.getWeekIndexInMonth(dateObj);
-          if (Array.isArray(detail.weeks) && detail.weeks[weekIdx]) {
-            const isEffective = detail.weeks[weekIdx].isEffective === true;
-            return { 
-              isEffective, 
-              notes: isEffective ? "Hari Efektif KBM" : (detail.weeks[weekIdx].notes || detail.notes || "Minggu Tidak Efektif") 
-            };
+      // 3. Check Semester Date Boundaries (if semester has configured start/end dates)
+      if (semesterId) {
+        try {
+          const semRef = doc(db, "semesters", semesterId);
+          const semSnap = await getDoc(semRef);
+          if (semSnap.exists()) {
+            const semData = semSnap.data();
+            if (semData.startDate && semData.endDate) {
+              if (dateStr < semData.startDate || dateStr > semData.endDate) {
+                return {
+                  isEffective: false,
+                  notes: `Di Luar Periode Semester Aktif (${semData.startDate} s/d ${semData.endDate})`
+                };
+              }
+            }
           }
-          const isEffective = weekIdx < Number(detail.effectiveWeeks);
-          return { isEffective, notes: isEffective ? "Hari Efektif KBM" : (detail.notes || "Minggu Tidak Efektif") };
+        } catch (e) {
+          // ignore lookup error
         }
       }
 
-      // Automatically analyze from calendar days
-      const weeksAnalysis = await this.analyzeEffectiveWeeks(
-        semData.startDate,
-        semData.endDate,
-        academicYearId,
-        semesterId
-      );
-      
-      const detail = weeksAnalysis.details.find((d: any) => d.month === monthYearKey || d.month.startsWith(monthName));
-      if (!detail) {
-        return { isEffective: true };
-      }
-      
-      const weekIdx = this.getWeekIndexInMonth(dateObj);
-      if (Array.isArray(detail.weeks) && detail.weeks[weekIdx]) {
-        const isEffective = detail.weeks[weekIdx].isEffective === true;
-        return { 
-          isEffective, 
-          notes: isEffective ? "Hari Efektif KBM" : (detail.weeks[weekIdx].notes || detail.notes || "Minggu Tidak Efektif") 
-        };
-      }
-      const isEffective = weekIdx < detail.effectiveWeeks;
-      return { isEffective, notes: isEffective ? "Hari Efektif KBM" : (detail.notes || "Minggu Tidak Efektif") };
+      // If it is an active school day without holiday events in calendar, it is an effective learning day
+      return { isEffective: true, notes: "Hari Efektif KBM" };
     } catch (error) {
       console.error("Error checking date effectiveness:", error);
-      return { isEffective: true };
+      return { isEffective: true, notes: "Hari Efektif KBM" };
     }
   },
 
