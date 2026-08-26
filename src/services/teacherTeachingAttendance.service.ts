@@ -2262,7 +2262,8 @@ export const teacherTeachingAttendanceService = {
       }
 
       // 8. Determine State Machine Action for Scanned Session Group
-      let activeCheckInGroup = sessionGroups.find(g => g.checkInTime && !g.checkOutTime);
+      // Active group that has checked in but NOT checked out yet -> Action is CHECK_OUT
+      const activeCheckInGroup = sessionGroups.find(g => g.checkInTime && !g.checkOutTime);
 
       let targetGroup: SessionGroup | null = null;
       let action: "CHECK_IN" | "CHECK_OUT" = "CHECK_IN";
@@ -2271,18 +2272,95 @@ export const teacherTeachingAttendanceService = {
         targetGroup = activeCheckInGroup;
         action = "CHECK_OUT";
       } else {
-        targetGroup = sessionGroups.find(g => currentM >= g.startM - 15 && currentM <= g.endM + 60) || null;
+        action = "CHECK_IN";
 
-        if (!targetGroup) {
-          targetGroup = sessionGroups.find(g => !g.checkOutTime) || null;
-        }
+        // Session-aware targetGroup resolution for CHECK_IN:
+        // Rule A: Exclude sessions that are already completed (both checkInTime AND checkOutTime exist)
+        const openGroups = sessionGroups.filter(g => !(g.checkInTime && g.checkOutTime));
 
-        if (!targetGroup) {
+        if (openGroups.length > 0) {
+          // Rule B: Calculate effective tolerance window for each session group.
+          // Effective end of tolerance must NOT swallow the start time of the next session group.
+          const groupsWithWindows = openGroups.map(g => {
+            const originalIndex = sessionGroups.findIndex(sg => sg.sessionKey === g.sessionKey);
+            const nextGroup = (originalIndex >= 0 && originalIndex + 1 < sessionGroups.length) 
+              ? sessionGroups[originalIndex + 1] 
+              : null;
+            
+            const rawToleranceEndM = g.endM + 60;
+            // Cap effective tolerance end before next session startM if a next session exists
+            const effectiveToleranceEndM = nextGroup 
+              ? Math.min(rawToleranceEndM, nextGroup.startM) 
+              : rawToleranceEndM;
+            
+            const windowStartM = g.startM - 15;
+            const inWindow = (currentM >= windowStartM && currentM <= effectiveToleranceEndM);
+            const distanceToStart = Math.abs(currentM - g.startM);
+
+            return {
+              group: g,
+              windowStartM,
+              effectiveToleranceEndM,
+              inWindow,
+              distanceToStart
+            };
+          });
+
+          // Rule C: Prioritize open sessions whose active/tolerance window contains currentM
+          const inWindowCandidates = groupsWithWindows.filter(w => w.inWindow);
+
+          if (inWindowCandidates.length > 0) {
+            // Sort by:
+            // 1. Closest distance to startM (smallest distance first)
+            // 2. Unstarted sessions (!checkInTime) preferred over partial
+            inWindowCandidates.sort((a, b) => {
+              if (a.distanceToStart !== b.distanceToStart) {
+                return a.distanceToStart - b.distanceToStart;
+              }
+              const aStarted = Boolean(a.group.checkInTime);
+              const bStarted = Boolean(b.group.checkInTime);
+              if (aStarted !== bStarted) {
+                return aStarted ? 1 : -1;
+              }
+              return a.group.startM - b.group.startM;
+            });
+            targetGroup = inWindowCandidates[0].group;
+          } else {
+            // Rule D: If outside tolerance windows (e.g. too early before first window or late after last window):
+            // Pick open group with closest start time to current time
+            groupsWithWindows.sort((a, b) => a.distanceToStart - b.distanceToStart);
+            targetGroup = groupsWithWindows[0].group;
+          }
+        } else {
+          // If all sessions for today are already completed, pick the last completed session
+          // This will lead to the "Sesi mengajar sudah selesai" message in Rule 1
           targetGroup = sessionGroups[sessionGroups.length - 1];
         }
-
-        action = "CHECK_IN";
       }
+
+      // [Attendance Session Resolution] Debug Logging
+      console.log("[Attendance Session Resolution]", {
+        currentTime: currentTimeStr,
+        currentMinutes: currentM,
+        sessionGroups: sessionGroups.map((g, idx) => {
+          const nextG = (idx + 1 < sessionGroups.length) ? sessionGroups[idx + 1] : null;
+          const effectiveEnd = nextG ? Math.min(g.endM + 60, nextG.startM) : (g.endM + 60);
+          return {
+            sessionIndex: idx + 1,
+            jpLabel: g.jpLabel,
+            time: `${g.startStr}–${g.endStr}`,
+            startM: g.startM,
+            endM: g.endM,
+            effectiveToleranceEndM: effectiveEnd,
+            status: (g.checkInTime && g.checkOutTime) ? "COMPLETED" : (g.checkInTime ? "CHECKED_IN" : "NOT_STARTED"),
+            checkInTime: g.checkInTime,
+            checkOutTime: g.checkOutTime
+          };
+        }),
+        activeCheckInGroup: activeCheckInGroup ? activeCheckInGroup.jpLabel : null,
+        selectedTarget: targetGroup ? targetGroup.jpLabel : null,
+        action
+      });
 
       if (!targetGroup) {
         return {
@@ -2910,13 +2988,59 @@ export const teacherTeachingAttendanceService = {
       throw new Error("Sesi jadwal mengajar tidak ditemukan.");
     }
 
-    const sessionGroupItems = items.filter(i =>
-      i.teacherId === item.teacherId &&
-      i.classId === item.classId &&
-      i.subjectId === item.subjectId
-    );
+    let breakTimes: any[] = [];
+    try {
+      const schoolSettings = await schoolSettingsService.getSettings();
+      breakTimes = schoolSettings?.breakTimes || [];
+    } catch (e) {
+      breakTimes = [];
+    }
 
-    for (const sessionItem of sessionGroupItems) {
+    const teacherClassSubjectItems = items
+      .filter(i =>
+        i.teacherId === item.teacherId &&
+        i.classId === item.classId &&
+        i.subjectId === item.subjectId
+      )
+      .sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
+
+    // Group into contiguous session groups separated by break (gap >= 10 mins or school break times)
+    const sessionGroups: TeacherTeachingAttendance[][] = [];
+    let currentGroup: TeacherTeachingAttendance[] = [];
+
+    for (let i = 0; i < teacherClassSubjectItems.length; i++) {
+      const it = teacherClassSubjectItems[i];
+      const range = getLessonPeriodTimeRange({ timeSlot: it.timeSlot, sequence: it.sequence || (i + 1) });
+
+      if (currentGroup.length === 0) {
+        currentGroup.push(it);
+      } else {
+        const prevIt = currentGroup[currentGroup.length - 1];
+        const prevRange = getLessonPeriodTimeRange({ timeSlot: prevIt.timeSlot, sequence: prevIt.sequence || i });
+
+        const isSeparatedByBreak = breakTimes.some((b: any) => {
+          const bStartM = parseTimeToMinutes(b.start);
+          const bEndM = parseTimeToMinutes(b.end || b.start);
+          return prevRange.endM <= bStartM && range.startM >= bEndM;
+        }) || (range.startM - prevRange.endM >= 10);
+
+        if (isSeparatedByBreak) {
+          sessionGroups.push(currentGroup);
+          currentGroup = [it];
+        } else {
+          currentGroup.push(it);
+        }
+      }
+    }
+
+    if (currentGroup.length > 0) {
+      sessionGroups.push(currentGroup);
+    }
+
+    // Find the specific session group containing the target scheduleId
+    const targetSessionGroup = sessionGroups.find(grp => grp.some(gItem => gItem.scheduleId === params.scheduleId)) || [item];
+
+    for (const sessionItem of targetSessionGroup) {
       const checkInStr = sessionItem.checkInTime || "07:30";
       const duration = calculateDurationInMinutes(checkInStr, params.manualCheckOutTime);
 
