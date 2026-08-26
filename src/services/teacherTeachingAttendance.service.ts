@@ -747,7 +747,7 @@ export const teacherTeachingAttendanceService = {
     });
 
     // Spanning JP Resolution: If a teacher checked in & out in a class spanning multiple JPs of the same subject
-    // (e.g. CheckIn JP 1, CheckOut JP 2), propagate attendance to all covered JPs in the time range for THAT subject.
+    // (e.g. CheckIn JP 1, CheckOut JP 2), propagate attendance ONLY to contiguous JPs not separated by break/gap.
     const teacherClassSessionsMap = new Map<string, TeacherTeachingAttendance[]>();
     items.forEach(it => {
       if (it.teacherId && it.classId && it.subjectId) {
@@ -759,42 +759,88 @@ export const teacherTeachingAttendanceService = {
       }
     });
 
-    teacherClassSessionsMap.forEach((sessionGroup) => {
-      const checkedRecords = sessionGroup.filter(s => s.checkInTime && s.checkOutTime);
-      if (checkedRecords.length === 0) return;
+    let schoolSettingsForSpanning: any = null;
+    try {
+      schoolSettingsForSpanning = await schoolSettingsService.getSettings();
+    } catch (e) {
+      // Fallback
+    }
+    const spanningBreakTimes = schoolSettingsForSpanning?.breakTimes || [];
 
-      checkedRecords.forEach((masterRec) => {
-        const masterInM = parseTimeToMinutes(masterRec.checkInTime);
-        const masterOutM = parseTimeToMinutes(masterRec.checkOutTime);
-        if (masterInM <= 0 || masterOutM <= 0 || masterOutM <= masterInM) return;
+    teacherClassSessionsMap.forEach((allClassTeacherItems) => {
+      // Sort items by sequence
+      allClassTeacherItems.sort((a, b) => a.sequence - b.sequence);
 
-        sessionGroup.forEach((targetRec) => {
-          let targetStartM = 0;
-          let targetEndM = 0;
-          if (targetRec.timeSlot && targetRec.timeSlot.includes("-")) {
-            const [s, e] = targetRec.timeSlot.split("-").map(x => x.trim());
-            targetStartM = parseTimeToMinutes(s);
-            targetEndM = parseTimeToMinutes(e);
+      // Subdivide into session groups separated by break or gap >= 10 mins
+      const sessionGroups: TeacherTeachingAttendance[][] = [];
+      let curGroup: TeacherTeachingAttendance[] = [];
+
+      for (let i = 0; i < allClassTeacherItems.length; i++) {
+        const item = allClassTeacherItems[i];
+        const range = getLessonPeriodTimeRange({ timeSlot: item.timeSlot, sequence: item.sequence || (i + 1) });
+
+        if (curGroup.length === 0) {
+          curGroup.push(item);
+        } else {
+          const prevItem = curGroup[curGroup.length - 1];
+          const prevRange = getLessonPeriodTimeRange({ timeSlot: prevItem.timeSlot, sequence: prevItem.sequence || i });
+
+          const isSeparatedByBreak = spanningBreakTimes.some((b: any) => {
+            const bStartM = parseTimeToMinutes(b.start);
+            const bEndM = parseTimeToMinutes(b.end || b.start);
+            return prevRange.endM <= bStartM && range.startM >= bEndM;
+          }) || (range.startM - prevRange.endM >= 10);
+
+          if (isSeparatedByBreak) {
+            sessionGroups.push(curGroup);
+            curGroup = [item];
           } else {
-            targetStartM = 450 + (targetRec.sequence - 1) * 45;
-            targetEndM = targetStartM + 45;
+            curGroup.push(item);
           }
+        }
+      }
+      if (curGroup.length > 0) {
+        sessionGroups.push(curGroup);
+      }
 
-          if (masterInM <= targetEndM - 10 && masterOutM >= targetStartM + 10) {
-            targetRec.checkInTime = masterRec.checkInTime;
-            targetRec.checkOutTime = masterRec.checkOutTime;
-            targetRec.checkInLogs = masterRec.checkInLogs;
-            targetRec.checkInType = masterRec.checkInType || "Scan QR";
-            targetRec.status = masterRec.status === "Terlambat" ? "Terlambat" : "Hadir Mengajar";
-            targetRec.teachingDurationMinutes = masterRec.teachingDurationMinutes;
+      // Propagate attendance strictly WITHIN each session group only
+      sessionGroups.forEach(subGroup => {
+        const checkedRecords = subGroup.filter(s => s.checkInTime && s.checkOutTime);
+        if (checkedRecords.length === 0) return;
 
-            const evalRes = this.evaluateAttendanceApprovalStatus(targetRec);
-            if (!targetRec.validatedByUserId) {
-              targetRec.attendanceStatus = evalRes.attendanceStatus;
-              targetRec.approvalType = evalRes.approvalType;
-              targetRec.pendingReason = evalRes.pendingReason;
+        checkedRecords.forEach((masterRec) => {
+          const masterInM = parseTimeToMinutes(masterRec.checkInTime);
+          const masterOutM = parseTimeToMinutes(masterRec.checkOutTime);
+          if (masterInM <= 0 || masterOutM <= 0 || masterOutM <= masterInM) return;
+
+          subGroup.forEach((targetRec) => {
+            let targetStartM = 0;
+            let targetEndM = 0;
+            if (targetRec.timeSlot && targetRec.timeSlot.includes("-")) {
+              const [s, e] = targetRec.timeSlot.split("-").map(x => x.trim());
+              targetStartM = parseTimeToMinutes(s);
+              targetEndM = parseTimeToMinutes(e);
+            } else {
+              targetStartM = 450 + (targetRec.sequence - 1) * 45;
+              targetEndM = targetStartM + 45;
             }
-          }
+
+            if (masterInM <= targetEndM - 10 && masterOutM >= targetStartM + 10) {
+              targetRec.checkInTime = masterRec.checkInTime;
+              targetRec.checkOutTime = masterRec.checkOutTime;
+              targetRec.checkInLogs = masterRec.checkInLogs;
+              targetRec.checkInType = masterRec.checkInType || "Scan QR";
+              targetRec.status = masterRec.status === "Terlambat" ? "Terlambat" : "Hadir Mengajar";
+              targetRec.teachingDurationMinutes = masterRec.teachingDurationMinutes;
+
+              const evalRes = this.evaluateAttendanceApprovalStatus(targetRec);
+              if (!targetRec.validatedByUserId) {
+                targetRec.attendanceStatus = evalRes.attendanceStatus;
+                targetRec.approvalType = evalRes.approvalType;
+                targetRec.pendingReason = evalRes.pendingReason;
+              }
+            }
+          });
         });
       });
     });
@@ -2075,7 +2121,7 @@ export const teacherTeachingAttendanceService = {
         };
       }
 
-      // 8. Session Selection (Active Check-In Check & Time Slot Matching)
+      // 8. Session Selection (Break-aware Session Grouping)
       let schoolSettings: any = null;
       try {
         schoolSettings = await schoolSettingsService.getSettings();
@@ -2084,92 +2130,7 @@ export const teacherTeachingAttendanceService = {
       }
       const breakTimes = schoolSettings?.breakTimes || [];
 
-      let selectedScheduleItem: TeacherTeachingAttendance | null = null;
-      let isLateCheckIn = false;
-
-      // Check if there is an active checked-in session in this class that needs Check-Out
-      const activeCheckedInItem = classTeacherItems.find(item => {
-        if (item.checkInLogs && item.checkInLogs.length > 0) {
-          return item.checkInLogs.some(l => !l.checkOut);
-        }
-        return item.checkInTime && !item.checkOutTime;
-      });
-
-      if (activeCheckedInItem) {
-        selectedScheduleItem = activeCheckedInItem;
-        console.log("[QR Audit Step 8] Found active checked-in session needing CHECK-OUT:", selectedScheduleItem.className, selectedScheduleItem.jp);
-      } else {
-        // Evaluate time slots for new CHECK-IN
-        for (const item of classTeacherItems) {
-          let startM = 0;
-          let endM = 0;
-
-          if (item.timeSlot && item.timeSlot.includes("-")) {
-            const [startStr, endStr] = item.timeSlot.split("-").map(s => s.trim());
-            startM = parseTimeToMinutes(startStr);
-            endM = parseTimeToMinutes(endStr);
-          } else {
-            const defaultStartHour = 7 + Math.floor((item.sequence - 1) * 0.75);
-            const defaultStartMin = ((item.sequence - 1) * 45) % 60;
-            startM = defaultStartHour * 60 + defaultStartMin;
-            endM = startM + 45;
-          }
-
-          const earliestCheckInM = startM - 15; // Strict 15 mins tolerance before period start
-          const latestValidM = endM + 60; // Up to 60 mins tolerance after period end
-
-          if (currentM >= earliestCheckInM && currentM <= latestValidM) {
-            selectedScheduleItem = item;
-            if (currentM > startM + 15) {
-              isLateCheckIn = true;
-            }
-            console.log("[QR Audit Step 8] Selected session by time window:", item.className, item.jp, "Start:", startM, "End:", endM, "Late:", isLateCheckIn);
-            break;
-          }
-        }
-
-        if (!selectedScheduleItem) {
-          // If no session matched exact window, check uncompleted session
-          const uncompleted = classTeacherItems.find(i => !i.checkOutTime);
-          if (uncompleted) {
-            let startStr = "07:30";
-            if (uncompleted.timeSlot && uncompleted.timeSlot.includes("-")) {
-              startStr = uncompleted.timeSlot.split("-")[0].trim();
-            }
-            const startM = parseTimeToMinutes(startStr);
-            if (currentM < startM - 15) {
-              console.warn("[QR Audit Step 8 FAILED] Check-in attempted too early");
-              return {
-                success: false,
-                message: `Terlalu awal. Check-In untuk kelas ${uncompleted.className} (${uncompleted.jp}) baru dapat dilakukan 15 menit sebelum jam ${startStr} (mulai ${formatMinutesToTime(startM - 15)} WIB).`
-              };
-            }
-            selectedScheduleItem = uncompleted;
-            if (currentM > startM + 15) {
-              isLateCheckIn = true;
-            }
-            console.log("[QR Audit Step 8] Selected fallback uncompleted session:", selectedScheduleItem.className, selectedScheduleItem.jp);
-          } else {
-            selectedScheduleItem = classTeacherItems[0];
-          }
-        }
-      }
-
-      if (!selectedScheduleItem) {
-        console.warn("[QR Audit Step 8 FAILED] Unable to resolve schedule session for class:", targetClassName);
-        return {
-          success: false,
-          message: `Sesi jadwal mengajar di kelas ${targetClassName} tidak dapat ditentukan.`
-        };
-      }
-
-      // Check schedule start time tolerance for new check-in
-      let scheduleStartM = 0;
-      let scheduleEndM = 0;
-      let startStr = "07:30";
-      let endStr = "08:15";
-
-      // 7. Group classTeacherItems into Sessions (Break Time Exception)
+      // Group classTeacherItems into Sessions (Break Time Exception)
       // If two JPs are separated by official school break time (or >= 10 mins gap), they form 2 DIFFERENT sessions.
       // If contiguous without break, they form 1 SESSION.
       classTeacherItems.sort((a, b) => a.sequence - b.sequence);
