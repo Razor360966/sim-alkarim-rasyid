@@ -9,6 +9,17 @@ import { getFirestore, Firestore, FieldValue } from "firebase-admin/firestore";
 const app = express();
 const PORT = 3000;
 
+// Enable CORS for API routes
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept");
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+  next();
+});
+
 // Explicit JSON body parsing
 app.use(express.json());
 
@@ -116,6 +127,11 @@ app.post("/api/users/reset-password", async (req, res) => {
   res.setHeader("Content-Type", "application/json");
 
   const { uid, operatorId, operatorName } = req.body || {};
+
+  // Safe logging (method, path, target userId, operatorId - NO sensitive passwords or credentials)
+  console.log(
+    `[RESET PASSWORD] method: ${req.method}, path: /api/users/reset-password, targetUserId: ${uid || "undefined"}, operatorId: ${operatorId || "undefined"}`
+  );
 
   if (!uid || typeof uid !== "string" || uid.trim() === "") {
     return res.status(400).json({
@@ -266,3 +282,5 @@ async function startServer() {
 }
 
 startServer();
+
+export default app;
