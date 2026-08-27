@@ -571,14 +571,12 @@ export const userService = {
       if (!response.ok) {
         const errorMsg =
           data?.message ||
-          data?.error?.message ||
-          (typeof data?.error === "string" ? data.error : null) ||
           (responseText && responseText.length < 200 && !responseText.includes("<!DOCTYPE") ? responseText : `Server error (HTTP ${response.status})`);
         throw new Error(errorMsg);
       }
 
       if (!data || !data.success) {
-        throw new Error(data?.message || data?.error?.message || "Gagal mereset kata sandi akun di Firebase Authentication.");
+        throw new Error(data?.message || "Gagal mereset kata sandi akun di Firebase Authentication.");
       }
 
       return data.message || "Reset akun berhasil. Password telah dikembalikan ke password awal sistem. Pengguna wajib mengganti password setelah login.";
