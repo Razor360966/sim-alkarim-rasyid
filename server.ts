@@ -126,34 +126,43 @@ app.get("/api/health", (_req, res) => {
 app.post("/api/users/reset-password", async (req, res) => {
   res.setHeader("Content-Type", "application/json");
 
-  const { uid, operatorId, operatorName } = req.body || {};
-
-  // Safe logging (method, path, target userId, operatorId - NO sensitive passwords or credentials)
-  console.log(
-    `[RESET PASSWORD] method: ${req.method}, path: /api/users/reset-password, targetUserId: ${uid || "undefined"}, operatorId: ${operatorId || "undefined"}`
-  );
-
-  if (!uid || typeof uid !== "string" || uid.trim() === "") {
-    return res.status(400).json({
-      success: false,
-      message: "UID pengguna target wajib disertakan.",
-    });
-  }
-
-  if (!operatorId || typeof operatorId !== "string" || operatorId.trim() === "") {
-    return res.status(400).json({
-      success: false,
-      message: "Operator ID wajib disertakan untuk otorisasi dan audit trail.",
-    });
-  }
-
-  const { adminAuth, adminDb, initError: adminErr } = getFirebaseAdmin();
-
   try {
+    const targetUid = (req.body?.uid || req.body?.userId || "").toString().trim();
+    const operatorId = (req.body?.operatorId || "").toString().trim();
+    const operatorName = (req.body?.operatorName || "").toString().trim();
+
+    // Safe logging (method, path, target userId, operatorId - NO sensitive passwords or credentials)
+    console.log(
+      `[RESET PASSWORD] method: ${req.method}, path: /api/users/reset-password, targetUserId: ${targetUid || "undefined"}, operatorId: ${operatorId || "undefined"}`
+    );
+
+    if (!targetUid) {
+      return res.status(400).json({
+        success: false,
+        message: "UID pengguna target wajib disertakan.",
+      });
+    }
+
+    if (!operatorId) {
+      return res.status(400).json({
+        success: false,
+        message: "Operator ID wajib disertakan untuk otorisasi dan audit trail.",
+      });
+    }
+
+    const { adminAuth, adminDb, initError: adminErr } = getFirebaseAdmin();
+
+    console.log(
+      `[RESET PASSWORD] Firebase Admin Status - App: ${!!adminApp}, Auth: ${!!adminAuth}, Firestore: ${!!adminDb}`
+    );
+
     if (!adminAuth) {
+      console.error(
+        `[RESET PASSWORD ERROR]\nmessage: Konfigurasi Firebase Admin belum tersedia (${adminErr || "No admin auth"})\ncode: CONFIG_UNAVAILABLE\nstack: ${new Error().stack}`
+      );
       return res.status(500).json({
         success: false,
-        message: `Firebase Admin SDK belum terinisialisasi: ${adminErr || "Kredensial Admin tidak ditemukan."}`,
+        message: "Konfigurasi Firebase Admin belum tersedia",
       });
     }
 
@@ -179,14 +188,14 @@ app.post("/api/users/reset-password", async (req, res) => {
     }
 
     // 2. Fetch target user info for logging & verification
-    let targetUserName = uid;
+    let targetUserName = targetUid;
     let targetEmail = "";
     if (adminDb) {
       try {
-        const targetDoc = await adminDb.collection("users").doc(uid).get();
+        const targetDoc = await adminDb.collection("users").doc(targetUid).get();
         if (targetDoc.exists) {
           const targetData = targetDoc.data() || {};
-          targetUserName = targetData.name || uid;
+          targetUserName = targetData.name || targetUid;
           targetEmail = targetData.email || "";
         }
       } catch (fetchTargetErr: any) {
@@ -194,29 +203,52 @@ app.post("/api/users/reset-password", async (req, res) => {
       }
     }
 
-    // 3. CRITICAL: Execute password update in Firebase Authentication
-    console.log(`[Server] Resetting password for user ${uid} (${targetEmail || targetUserName}) to default credentials...`);
-    await adminAuth.updateUser(uid, {
+    // 3. Check if user exists in Firebase Authentication
+    try {
+      await adminAuth.getUser(targetUid);
+    } catch (getUserErr: any) {
+      if (getUserErr.code === "auth/user-not-found") {
+        console.warn(
+          `[RESET PASSWORD ERROR]\nmessage: User not found in Firebase Auth\ncode: ${getUserErr.code}\nstack: ${getUserErr.stack}`
+        );
+        return res.status(404).json({
+          success: false,
+          message: "User tidak ditemukan",
+        });
+      }
+      if (getUserErr.code === "auth/invalid-uid") {
+        return res.status(400).json({
+          success: false,
+          message: "Format UID pengguna tidak valid",
+        });
+      }
+      // If other error, rethrow to be caught by catch block
+      throw getUserErr;
+    }
+
+    // 4. CRITICAL: Execute password update in Firebase Authentication
+    console.log(`[Server] Resetting password for user ${targetUid} (${targetEmail || targetUserName}) to default credentials...`);
+    await adminAuth.updateUser(targetUid, {
       password: DEFAULT_SYSTEM_PASSWORD,
     });
-    console.log(`[Server] Firebase Auth password updated successfully for user ${uid}`);
+    console.log(`[Server] Firebase Auth password updated successfully for user ${targetUid}`);
 
-    // 4. Update Firestore user document ONLY AFTER Firebase Auth update succeeds
+    // 5. Update Firestore user document ONLY AFTER Firebase Auth update succeeds
     if (adminDb) {
       try {
-        await adminDb.collection("users").doc(uid).update({
+        await adminDb.collection("users").doc(targetUid).update({
           requirePasswordChange: true,
           updatedAt: FieldValue.serverTimestamp(),
           updatedBy: operatorId,
         });
 
-        // 5. Write audit log in activity_logs
+        // 6. Write audit log in activity_logs
         await adminDb.collection("activity_logs").add({
           userId: operatorId,
           userName: operatorName || "Operator",
           action: "RESET_PASSWORD",
           collection: "users",
-          documentId: uid,
+          documentId: targetUid,
           description: `Mengatur ulang kata sandi pengguna ${targetUserName} (${targetEmail}) ke kata sandi default sistem. Pengguna wajib mengganti kata sandi pada login berikutnya.`,
           createdAt: FieldValue.serverTimestamp(),
         });
@@ -227,13 +259,23 @@ app.post("/api/users/reset-password", async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: "Reset akun berhasil. Password telah dikembalikan ke password awal sistem. Pengguna wajib mengganti password setelah login.",
+      message: "Akun berhasil direset",
     });
   } catch (error: any) {
-    console.error(`[Server] Failed to reset password for user ${uid}:`, error);
+    console.error(
+      `[RESET PASSWORD ERROR]\nmessage: ${error.message}\ncode: ${error.code || "UNKNOWN"}\nstack: ${error.stack || "N/A"}`
+    );
+
+    if (error.code === "auth/user-not-found") {
+      return res.status(404).json({
+        success: false,
+        message: "User tidak ditemukan",
+      });
+    }
+
     return res.status(500).json({
       success: false,
-      message: `Reset akun gagal. Password pengguna di Firebase Authentication tidak diubah: ${error.message}`,
+      message: `Gagal mereset akun: ${error.message || "Kesalahan pada server"}`,
     });
   }
 });

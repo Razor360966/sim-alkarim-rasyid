@@ -23,7 +23,12 @@ try {
 const projectId = process.env.VITE_FIREBASE_PROJECT_ID || firebaseConfigJson.projectId || "smp-alkarim-rasyid";
 const DEFAULT_SYSTEM_PASSWORD = process.env.DEFAULT_SYSTEM_PASSWORD || "Alkarim123";
 
-function getFirebaseAdmin() {
+function getFirebaseAdmin(): {
+  adminApp: App | null;
+  adminAuth: Auth | null;
+  adminDb: Firestore | null;
+  initError: string | null;
+} {
   if (!adminApp) {
     try {
       if (getApps().length === 0) {
@@ -71,98 +76,87 @@ function getFirebaseAdmin() {
   return { adminApp, adminAuth, adminDb, initError };
 }
 
-async function parseBody(req: any): Promise<any> {
-  if (req.body && typeof req.body === "object") {
-    return req.body;
-  }
-  if (req.body && typeof req.body === "string") {
-    try {
-      return JSON.parse(req.body);
-    } catch {
-      return {};
+function parseBody(req: any): any {
+  if (req.body) {
+    if (typeof req.body === "object") return req.body;
+    if (typeof req.body === "string") {
+      try {
+        return JSON.parse(req.body);
+      } catch {
+        return {};
+      }
     }
   }
-  return new Promise((resolve) => {
-    let data = "";
-    req.on("data", (chunk: any) => {
-      data += chunk;
-    });
-    req.on("end", () => {
-      try {
-        resolve(data ? JSON.parse(data) : {});
-      } catch {
-        resolve({});
-      }
-    });
-    req.on("error", () => resolve({}));
-  });
+  return {};
+}
+
+function sendJson(res: any, status: number, data: any) {
+  if (!res.headersSent) {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept");
+    res.setHeader("Content-Type", "application/json");
+  }
+  if (typeof res.status === "function" && typeof res.json === "function") {
+    return res.status(status).json(data);
+  }
+  res.statusCode = status;
+  res.end(JSON.stringify(data));
 }
 
 export default async function handler(req: any, res: any) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept");
-  res.setHeader("Content-Type", "application/json");
+  try {
+    if (req.method === "OPTIONS") {
+      res.statusCode = 200;
+      res.end();
+      return;
+    }
 
-  if (req.method === "OPTIONS") {
-    res.statusCode = 200;
-    res.end();
-    return;
-  }
-
-  if (req.method !== "POST") {
-    res.statusCode = 405;
-    res.end(
-      JSON.stringify({
+    if (req.method !== "POST") {
+      return sendJson(res, 405, {
         success: false,
         message: `Method ${req.method} tidak diizinkan. Endpoint ini hanya menerima POST.`,
-      })
+      });
+    }
+
+    const body = parseBody(req);
+    const targetUid = (body?.uid || body?.userId || "").toString().trim();
+    const operatorId = (body?.operatorId || "").toString().trim();
+    const operatorName = (body?.operatorName || "").toString().trim();
+
+    // Safe logging (NO sensitive passwords or credentials)
+    console.log(
+      `[RESET PASSWORD] method: ${req.method}, path: /api/users/reset-password, targetUserId: ${targetUid || "undefined"}, operatorId: ${operatorId || "undefined"}`
     );
-    return;
-  }
 
-  const body = await parseBody(req);
-  const { uid, operatorId, operatorName } = body || {};
-
-  // Safe logging (NO sensitive passwords or credentials)
-  console.log(
-    `[RESET PASSWORD] method: ${req.method}, path: /api/users/reset-password, targetUserId: ${uid || "undefined"}, operatorId: ${operatorId || "undefined"}`
-  );
-
-  if (!uid || typeof uid !== "string" || uid.trim() === "") {
-    res.statusCode = 400;
-    res.end(
-      JSON.stringify({
+    if (!targetUid) {
+      return sendJson(res, 400, {
         success: false,
         message: "UID pengguna target wajib disertakan.",
-      })
-    );
-    return;
-  }
+      });
+    }
 
-  if (!operatorId || typeof operatorId !== "string" || operatorId.trim() === "") {
-    res.statusCode = 400;
-    res.end(
-      JSON.stringify({
+    if (!operatorId) {
+      return sendJson(res, 400, {
         success: false,
         message: "Operator ID wajib disertakan untuk otorisasi dan audit trail.",
-      })
+      });
+    }
+
+    const { adminAuth: auth, adminDb: db, initError: adminErr } = getFirebaseAdmin();
+
+    console.log(
+      `[RESET PASSWORD] Firebase Admin Status - App: ${!!adminApp}, Auth: ${!!auth}, Firestore: ${!!db}`
     );
-    return;
-  }
 
-  const { adminAuth: auth, adminDb: db, initError: adminErr } = getFirebaseAdmin();
-
-  try {
     if (!auth) {
-      res.statusCode = 500;
-      res.end(
-        JSON.stringify({
-          success: false,
-          message: `Firebase Admin SDK belum terinisialisasi: ${adminErr || "Kredensial Admin tidak ditemukan."}`,
-        })
+      console.error(
+        `[RESET PASSWORD ERROR]\nmessage: Konfigurasi Firebase Admin belum tersedia (${adminErr || "No admin auth"})\ncode: CONFIG_UNAVAILABLE\nstack: ${new Error().stack}`
       );
-      return;
+      return sendJson(res, 500, {
+        success: false,
+        message: "Konfigurasi Firebase Admin belum tersedia",
+      });
     }
 
     // 1. Verify operator permission from Firestore (Admin, Kepala Sekolah, Waka, Operator, Tata Usaha)
@@ -175,14 +169,10 @@ export default async function handler(req: any, res: any) {
           const allowedRoles = ["admin", "kepala sekolah", "wakil kepala sekolah", "operator", "tata usaha"];
           const hasPermission = roles.some((r: string) => allowedRoles.includes(r.toLowerCase()));
           if (!hasPermission) {
-            res.statusCode = 403;
-            res.end(
-              JSON.stringify({
-                success: false,
-                message: "Akses ditolak: Anda tidak memiliki izin untuk mereset kata sandi akun pengguna.",
-              })
-            );
-            return;
+            return sendJson(res, 403, {
+              success: false,
+              message: "Akses ditolak: Anda tidak memiliki izin untuk mereset kata sandi akun pengguna.",
+            });
           }
         }
       } catch (authCheckErr: any) {
@@ -191,14 +181,14 @@ export default async function handler(req: any, res: any) {
     }
 
     // 2. Fetch target user info for logging & verification
-    let targetUserName = uid;
+    let targetUserName = targetUid;
     let targetEmail = "";
     if (db) {
       try {
-        const targetDoc = await db.collection("users").doc(uid).get();
+        const targetDoc = await db.collection("users").doc(targetUid).get();
         if (targetDoc.exists) {
           const targetData = targetDoc.data() || {};
-          targetUserName = targetData.name || uid;
+          targetUserName = targetData.name || targetUid;
           targetEmail = targetData.email || "";
         }
       } catch (fetchTargetErr: any) {
@@ -206,29 +196,52 @@ export default async function handler(req: any, res: any) {
       }
     }
 
-    // 3. Execute password update in Firebase Authentication
-    console.log(`[Vercel API] Resetting password for user ${uid} (${targetEmail || targetUserName}) to default credentials...`);
-    await auth.updateUser(uid, {
+    // 3. Check if user exists in Firebase Authentication
+    try {
+      await auth.getUser(targetUid);
+    } catch (getUserErr: any) {
+      if (getUserErr.code === "auth/user-not-found") {
+        console.warn(
+          `[RESET PASSWORD ERROR]\nmessage: User not found in Firebase Auth\ncode: ${getUserErr.code}\nstack: ${getUserErr.stack}`
+        );
+        return sendJson(res, 404, {
+          success: false,
+          message: "User tidak ditemukan",
+        });
+      }
+      if (getUserErr.code === "auth/invalid-uid") {
+        return sendJson(res, 400, {
+          success: false,
+          message: "Format UID pengguna tidak valid",
+        });
+      }
+      // If error is other than user-not-found, rethrow to be handled by general catch
+      throw getUserErr;
+    }
+
+    // 4. Execute password update in Firebase Authentication
+    console.log(`[Vercel API] Resetting password for user ${targetUid} (${targetEmail || targetUserName}) to default credentials...`);
+    await auth.updateUser(targetUid, {
       password: DEFAULT_SYSTEM_PASSWORD,
     });
-    console.log(`[Vercel API] Firebase Auth password updated successfully for user ${uid}`);
+    console.log(`[Vercel API] Firebase Auth password updated successfully for user ${targetUid}`);
 
-    // 4. Update Firestore user document
+    // 5. Update Firestore user document WITHOUT modifying roles/profile/NIY/NUPTK
     if (db) {
       try {
-        await db.collection("users").doc(uid).update({
+        await db.collection("users").doc(targetUid).update({
           requirePasswordChange: true,
           updatedAt: FieldValue.serverTimestamp(),
           updatedBy: operatorId,
         });
 
-        // 5. Write audit log in activity_logs
+        // 6. Write audit log in activity_logs
         await db.collection("activity_logs").add({
           userId: operatorId,
           userName: operatorName || "Operator",
           action: "RESET_PASSWORD",
           collection: "users",
-          documentId: uid,
+          documentId: targetUid,
           description: `Mengatur ulang kata sandi pengguna ${targetUserName} (${targetEmail}) ke kata sandi default sistem. Pengguna wajib mengganti kata sandi pada login berikutnya.`,
           createdAt: FieldValue.serverTimestamp(),
         });
@@ -237,21 +250,25 @@ export default async function handler(req: any, res: any) {
       }
     }
 
-    res.statusCode = 200;
-    res.end(
-      JSON.stringify({
-        success: true,
-        message: "Reset akun berhasil. Password telah dikembalikan ke password awal sistem. Pengguna wajib mengganti password setelah login.",
-      })
-    );
+    return sendJson(res, 200, {
+      success: true,
+      message: "Akun berhasil direset",
+    });
   } catch (error: any) {
-    console.error(`[Vercel API] Failed to reset password for user ${uid}:`, error);
-    res.statusCode = 500;
-    res.end(
-      JSON.stringify({
-        success: false,
-        message: `Reset akun gagal. Password pengguna di Firebase Authentication tidak diubah: ${error.message}`,
-      })
+    console.error(
+      `[RESET PASSWORD ERROR]\nmessage: ${error.message}\ncode: ${error.code || "UNKNOWN"}\nstack: ${error.stack || "N/A"}`
     );
+
+    if (error.code === "auth/user-not-found") {
+      return sendJson(res, 404, {
+        success: false,
+        message: "User tidak ditemukan",
+      });
+    }
+
+    return sendJson(res, 500, {
+      success: false,
+      message: `Gagal mereset akun: ${error.message || "Kesalahan pada server"}`,
+    });
   }
 }
