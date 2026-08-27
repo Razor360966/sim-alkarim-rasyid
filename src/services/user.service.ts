@@ -548,6 +548,7 @@ export const userService = {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "Accept": "application/json",
         },
         body: JSON.stringify({
           uid: targetUserId,
@@ -556,12 +557,29 @@ export const userService = {
         }),
       });
 
-      const data = await response.json();
-      if (!response.ok || !data.success) {
-        throw new Error(data.message || "Gagal mereset kata sandi akun di Firebase Authentication.");
+      const responseText = await response.text();
+      let data: any = null;
+
+      if (responseText && responseText.trim().length > 0) {
+        try {
+          data = JSON.parse(responseText);
+        } catch (parseErr) {
+          console.warn("[userService] Non-JSON response received:", responseText);
+        }
       }
 
-      return data.message || "Reset akun berhasil. Password telah dikembalikan ke password awal sistem.";
+      if (!response.ok) {
+        const errorMsg =
+          data?.message ||
+          (responseText && responseText.length < 200 && !responseText.includes("<!DOCTYPE") ? responseText : `Server error (HTTP ${response.status})`);
+        throw new Error(errorMsg);
+      }
+
+      if (!data || !data.success) {
+        throw new Error(data?.message || "Gagal mereset kata sandi akun di Firebase Authentication.");
+      }
+
+      return data.message || "Reset akun berhasil. Password telah dikembalikan ke password awal sistem. Pengguna wajib mengganti password setelah login.";
     } catch (error: any) {
       console.error("Error in resetUserPassword:", error);
       throw new Error(error.message || "Terjadi kesalahan saat memproses reset akun.");

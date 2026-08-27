@@ -3,13 +3,26 @@ import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { initializeApp, cert, getApps, getApp, App } from "firebase-admin/app";
-import { getAuth } from "firebase-admin/auth";
-import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import { getAuth, Auth } from "firebase-admin/auth";
+import { getFirestore, Firestore, FieldValue } from "firebase-admin/firestore";
 
 const app = express();
 const PORT = 3000;
 
+// Explicit JSON body parsing
 app.use(express.json());
+
+// Handle malformed JSON request bodies gracefully with JSON response
+app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err instanceof SyntaxError && "body" in err) {
+    res.setHeader("Content-Type", "application/json");
+    return res.status(400).json({
+      success: false,
+      message: "Format JSON pada body request tidak valid.",
+    });
+  }
+  next();
+});
 
 // Load project configuration
 let firebaseConfigJson: any = {};
@@ -19,41 +32,64 @@ try {
     firebaseConfigJson = JSON.parse(fs.readFileSync(configPath, "utf-8"));
   }
 } catch (e) {
-  console.warn("Could not load firebase-applet-config.json:", e);
+  console.warn("[Server] Could not load firebase-applet-config.json:", e);
 }
 
 const projectId = process.env.VITE_FIREBASE_PROJECT_ID || firebaseConfigJson.projectId || "smp-alkarim-rasyid";
 const DEFAULT_SYSTEM_PASSWORD = process.env.DEFAULT_SYSTEM_PASSWORD || "Alkarim123";
 
-// Initialize Firebase Admin SDK safely
+// Lazy Firebase Admin SDK Initializer
 let adminApp: App | null = null;
-let adminAuth: any = null;
-let adminDb: any = null;
+let adminAuth: Auth | null = null;
+let adminDb: Firestore | null = null;
+let initError: string | null = null;
 
-try {
-  if (getApps().length === 0) {
-    if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
-      const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
-      adminApp = initializeApp({
-        credential: cert(serviceAccount),
-        projectId: serviceAccount.project_id || projectId,
-      });
-    } else {
-      adminApp = initializeApp({
-        projectId: projectId,
-      });
+function getFirebaseAdmin(): { adminApp: App | null; adminAuth: Auth | null; adminDb: Firestore | null; initError: string | null } {
+  if (!adminApp) {
+    try {
+      if (getApps().length === 0) {
+        if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+          try {
+            const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+            adminApp = initializeApp({
+              credential: cert(serviceAccount),
+              projectId: serviceAccount.project_id || projectId,
+            });
+          } catch (saErr: any) {
+            console.error("[Server] Error parsing FIREBASE_SERVICE_ACCOUNT_KEY:", saErr.message);
+            adminApp = initializeApp({ projectId });
+          }
+        } else {
+          adminApp = initializeApp({ projectId });
+        }
+      } else {
+        adminApp = getApp();
+      }
+    } catch (err: any) {
+      initError = err.message;
+      console.error("[Server] Error initializing Firebase Admin App:", err.message);
     }
-  } else {
-    adminApp = getApp();
   }
 
-  if (adminApp) {
-    adminAuth = getAuth(adminApp);
-    adminDb = getFirestore(adminApp);
-    console.log(`[Server] Firebase Admin initialized for project: ${projectId}`);
+  if (adminApp && !adminAuth) {
+    try {
+      adminAuth = getAuth(adminApp);
+    } catch (err: any) {
+      initError = err.message;
+      console.error("[Server] Error getting Admin Auth:", err.message);
+    }
   }
-} catch (error: any) {
-  console.warn("[Server] Warning during Firebase Admin initialization:", error.message);
+
+  if (adminApp && !adminDb) {
+    try {
+      adminDb = getFirestore(adminApp);
+    } catch (err: any) {
+      initError = err.message;
+      console.error("[Server] Error getting Admin Firestore:", err.message);
+    }
+  }
+
+  return { adminApp, adminAuth, adminDb, initError };
 }
 
 // -------------------------------------------------------------
@@ -61,10 +97,13 @@ try {
 // -------------------------------------------------------------
 
 app.get("/api/health", (_req, res) => {
-  res.json({
+  const { adminAuth, initError: err } = getFirebaseAdmin();
+  res.setHeader("Content-Type", "application/json");
+  return res.status(200).json({
     status: "ok",
     projectId,
     adminInitialized: !!adminAuth,
+    initError: err || null,
   });
 });
 
@@ -74,60 +113,73 @@ app.get("/api/health", (_req, res) => {
  * and flags requirePasswordChange: true in Firestore.
  */
 app.post("/api/users/reset-password", async (req, res) => {
-  const { uid, operatorId, operatorName } = req.body;
+  res.setHeader("Content-Type", "application/json");
 
-  if (!uid) {
+  const { uid, operatorId, operatorName } = req.body || {};
+
+  if (!uid || typeof uid !== "string" || uid.trim() === "") {
     return res.status(400).json({
       success: false,
       message: "UID pengguna target wajib disertakan.",
     });
   }
 
-  if (!operatorId) {
+  if (!operatorId || typeof operatorId !== "string" || operatorId.trim() === "") {
     return res.status(400).json({
       success: false,
       message: "Operator ID wajib disertakan untuk otorisasi dan audit trail.",
     });
   }
 
+  const { adminAuth, adminDb, initError: adminErr } = getFirebaseAdmin();
+
   try {
     if (!adminAuth) {
-      throw new Error(
-        "Firebase Admin SDK belum terinisialisasi pada server. Pastikan kredensial Admin / Service Account telah dikonfigurasi."
-      );
+      return res.status(500).json({
+        success: false,
+        message: `Firebase Admin SDK belum terinisialisasi: ${adminErr || "Kredensial Admin tidak ditemukan."}`,
+      });
     }
 
-    // 1. Verify operator permission from Firestore (Admin, Kepala Sekolah, Waka, Operator)
-    if (adminDb) {
-      const operatorDoc = await adminDb.collection("users").doc(operatorId).get();
-      if (operatorDoc.exists) {
-        const opData = operatorDoc.data();
-        const roles = opData.roles || (opData.role ? [opData.role] : []);
-        const allowedRoles = ["admin", "kepala sekolah", "wakil kepala sekolah", "operator", "tata usaha"];
-        const hasPermission = roles.some((r: string) => allowedRoles.includes(r.toLowerCase())) || operatorId === "system";
-        if (!hasPermission) {
-          return res.status(403).json({
-            success: false,
-            message: "Akses ditolak: Anda tidak memiliki izin untuk mereset kata sandi akun pengguna.",
-          });
+    // 1. Verify operator permission from Firestore (Admin, Kepala Sekolah, Waka, Operator, Tata Usaha)
+    if (adminDb && operatorId !== "system") {
+      try {
+        const operatorDoc = await adminDb.collection("users").doc(operatorId).get();
+        if (operatorDoc.exists) {
+          const opData = operatorDoc.data() || {};
+          const roles: string[] = opData.roles || (opData.role ? [opData.role] : []);
+          const allowedRoles = ["admin", "kepala sekolah", "wakil kepala sekolah", "operator", "tata usaha"];
+          const hasPermission = roles.some((r: string) => allowedRoles.includes(r.toLowerCase()));
+          if (!hasPermission) {
+            return res.status(403).json({
+              success: false,
+              message: "Akses ditolak: Anda tidak memiliki izin untuk mereset kata sandi akun pengguna.",
+            });
+          }
         }
+      } catch (authCheckErr: any) {
+        console.warn("[Server] Operator permission check warning:", authCheckErr.message);
       }
     }
 
-    // 2. Fetch target user info for logging
+    // 2. Fetch target user info for logging & verification
     let targetUserName = uid;
     let targetEmail = "";
     if (adminDb) {
-      const targetDoc = await adminDb.collection("users").doc(uid).get();
-      if (targetDoc.exists) {
-        const targetData = targetDoc.data();
-        targetUserName = targetData.name || uid;
-        targetEmail = targetData.email || "";
+      try {
+        const targetDoc = await adminDb.collection("users").doc(uid).get();
+        if (targetDoc.exists) {
+          const targetData = targetDoc.data() || {};
+          targetUserName = targetData.name || uid;
+          targetEmail = targetData.email || "";
+        }
+      } catch (fetchTargetErr: any) {
+        console.warn("[Server] Fetch target info warning:", fetchTargetErr.message);
       }
     }
 
     // 3. CRITICAL: Execute password update in Firebase Authentication
-    console.log(`[Server] Resetting password for user ${uid} (${targetEmail}) to default credentials...`);
+    console.log(`[Server] Resetting password for user ${uid} (${targetEmail || targetUserName}) to default credentials...`);
     await adminAuth.updateUser(uid, {
       password: DEFAULT_SYSTEM_PASSWORD,
     });
@@ -135,25 +187,29 @@ app.post("/api/users/reset-password", async (req, res) => {
 
     // 4. Update Firestore user document ONLY AFTER Firebase Auth update succeeds
     if (adminDb) {
-      await adminDb.collection("users").doc(uid).update({
-        requirePasswordChange: true,
-        updatedAt: FieldValue.serverTimestamp(),
-        updatedBy: operatorId,
-      });
+      try {
+        await adminDb.collection("users").doc(uid).update({
+          requirePasswordChange: true,
+          updatedAt: FieldValue.serverTimestamp(),
+          updatedBy: operatorId,
+        });
 
-      // 5. Write audit log in activity_logs
-      await adminDb.collection("activity_logs").add({
-        userId: operatorId,
-        userName: operatorName || "Operator",
-        action: "RESET_PASSWORD",
-        collection: "users",
-        documentId: uid,
-        description: `Mengatur ulang kata sandi pengguna ${targetUserName} (${targetEmail}) ke kata sandi default sistem. Pengguna wajib mengganti kata sandi pada login berikutnya.`,
-        createdAt: FieldValue.serverTimestamp(),
-      });
+        // 5. Write audit log in activity_logs
+        await adminDb.collection("activity_logs").add({
+          userId: operatorId,
+          userName: operatorName || "Operator",
+          action: "RESET_PASSWORD",
+          collection: "users",
+          documentId: uid,
+          description: `Mengatur ulang kata sandi pengguna ${targetUserName} (${targetEmail}) ke kata sandi default sistem. Pengguna wajib mengganti kata sandi pada login berikutnya.`,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+      } catch (dbErr: any) {
+        console.warn("[Server] Firestore update warning after Auth reset:", dbErr.message);
+      }
     }
 
-    return res.json({
+    return res.status(200).json({
       success: true,
       message: "Reset akun berhasil. Password telah dikembalikan ke password awal sistem. Pengguna wajib mengganti password setelah login.",
     });
@@ -164,6 +220,25 @@ app.post("/api/users/reset-password", async (req, res) => {
       message: `Reset akun gagal. Password pengguna di Firebase Authentication tidak diubah: ${error.message}`,
     });
   }
+});
+
+// Fallback JSON for unhandled API routes
+app.all("/api/*", (_req, res) => {
+  res.setHeader("Content-Type", "application/json");
+  return res.status(404).json({
+    success: false,
+    message: "Endpoint API tidak ditemukan.",
+  });
+});
+
+// Global Error Handler returning valid JSON
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error("[Server Error]", err);
+  res.setHeader("Content-Type", "application/json");
+  return res.status(500).json({
+    success: false,
+    message: err.message || "Internal server error",
+  });
 });
 
 // -------------------------------------------------------------
