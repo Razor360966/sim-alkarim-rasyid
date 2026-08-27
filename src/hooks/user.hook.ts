@@ -96,17 +96,17 @@ export function useUsers() {
     }
   });
 
-  // Mutation to reset password (requirePasswordChange = true)
+  // Mutation to reset password to system default credential
   const resetPasswordMutation = useMutation({
     mutationFn: (userId: string) =>
       userService.resetUserPassword(userId, operatorId, operatorName),
-    onSuccess: () => {
+    onSuccess: (msg: string) => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
-      toast("Permintaan reset kata sandi berhasil diajukan! Pengguna wajib mengganti kata sandi pada login berikutnya.", "success");
+      toast(msg || "Reset akun berhasil. Password telah dikembalikan ke password awal sistem. Pengguna wajib mengganti password setelah login.", "success");
     },
     onError: (err: any) => {
       console.error(err);
-      toast(err.message || "Gagal menyetel ulang kata sandi", "error");
+      toast(err.message || "Reset akun gagal. Password pengguna tidak diubah.", "error");
     }
   });
 

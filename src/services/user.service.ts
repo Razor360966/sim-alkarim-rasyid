@@ -537,38 +537,34 @@ export const userService = {
     }
   },
 
-  // Reset user password (sets flag requirePasswordChange: true)
+  // Reset user password to default system credentials via server endpoint (Firebase Admin SDK)
   async resetUserPassword(
     targetUserId: string,
     operatorId: string,
     operatorName: string
   ): Promise<string> {
     try {
-      const docRef = doc(db, COLLECTION_NAME, targetUserId);
-      const userSnap = await getDoc(docRef);
-      const userName = userSnap.exists() ? userSnap.data().name : targetUserId;
-
-      // Because we cannot programmatically update auth password on client without Admin SDK,
-      // we generate a unique code and flag requirePasswordChange so that we can let them log in
-      // and force change password, OR they can use Email Reset link.
-      // Let's create a temporary flag in the doc
-      await updateDoc(docRef, {
-        requirePasswordChange: true,
-        updatedAt: serverTimestamp(),
-        updatedBy: operatorId
+      const response = await fetch("/api/users/reset-password", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          uid: targetUserId,
+          operatorId,
+          operatorName,
+        }),
       });
 
-      await logActivity(
-        operatorId,
-        operatorName,
-        "RESET_PASSWORD",
-        targetUserId,
-        `Mengatur ulang kata sandi pengguna ${userName}. Pengguna diwajibkan mengganti kata sandi.`
-      );
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || "Gagal mereset kata sandi akun di Firebase Authentication.");
+      }
 
-      return "Sukses";
-    } catch (error) {
-      return handleFirestoreError(error, OperationType.WRITE, `${COLLECTION_NAME}/${targetUserId}`);
+      return data.message || "Reset akun berhasil. Password telah dikembalikan ke password awal sistem.";
+    } catch (error: any) {
+      console.error("Error in resetUserPassword:", error);
+      throw new Error(error.message || "Terjadi kesalahan saat memproses reset akun.");
     }
   },
 

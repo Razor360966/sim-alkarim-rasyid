@@ -36,6 +36,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { UserSystem, UserSystemRole } from "../types";
 import { useToast } from "../contexts/ToastContext";
+import { DEFAULT_SYSTEM_PASSWORD } from "../config/auth.constants";
 
 const AVAILABLE_ROLES = [
   { id: "admin", name: "Admin" },
@@ -210,13 +211,13 @@ export default function Users() {
   const [importPreview, setImportPreview] = useState<any[]>([]);
   const [importProgress, setImportProgress] = useState(0);
   const [importLogs, setImportLogs] = useState<{ name: string; email: string; username: string; status: "success" | "error"; password?: string; reason?: string }[]>([]);
-  const [defaultPassword, setDefaultPassword] = useState("Alkarim123");
-  const [generateRandomPasswords, setGenerateRandomPasswords] = useState(true);
+  const [defaultPassword, setDefaultPassword] = useState(DEFAULT_SYSTEM_PASSWORD);
+  const [generateRandomPasswords, setGenerateRandomPasswords] = useState(false);
   const [importErrorMsg, setImportErrorMsg] = useState("");
 
   // Form input states (Create)
   const [createEmail, setCreateEmail] = useState("");
-  const [createPassword, setCreatePassword] = useState("");
+  const [createPassword, setCreatePassword] = useState(DEFAULT_SYSTEM_PASSWORD);
   const [createName, setCreateName] = useState("");
   const [createSelectedRoles, setCreateSelectedRoles] = useState<string[]>(["guru"]);
   const [createTeacherId, setCreateTeacherId] = useState("");
@@ -261,10 +262,10 @@ export default function Users() {
     return password;
   };
 
-  // Pre-generate password when modal opens
+  // Pre-generate default password when modal opens
   useEffect(() => {
     if (isCreateOpen) {
-      setCreatePassword(generateTempPassword());
+      setCreatePassword(DEFAULT_SYSTEM_PASSWORD);
       setCreateName("");
       setCreateEmail("");
       setGeneratedUsername("");
@@ -427,7 +428,9 @@ export default function Users() {
       toast("Akses ditolak: Peran Ketua Yayasan hanya memiliki hak akses Baca-Saja (Read-Only) untuk monitoring.", "error");
       return;
     }
-    const confirmReset = window.confirm(`Apakah Anda yakin ingin menyetel ulang sandi ${user.name}? Pengguna ini akan dipaksa mengganti kata sandi pada login berikutnya.`);
+    const confirmReset = window.confirm(
+      `Apakah Anda yakin ingin menyetel ulang sandi ${user.name} ke Kata Sandi Default Sistem? Kredensial akun di Firebase Authentication akan dikembalikan ke sandi awal dan pengguna wajib mengganti kata sandi pada login berikutnya.`
+    );
     if (!confirmReset) return;
 
     try {
@@ -477,7 +480,7 @@ const confirmDeleteAccount = async () => {
 
     const username = generatedUsername || generateUniqueUsername(createName, users);
     const finalEmail = createEmail.trim() || `${username}@smpalkarim.sch.id`;
-    const finalPassword = createPassword || generateTempPassword();
+    const finalPassword = createPassword.trim() || DEFAULT_SYSTEM_PASSWORD;
 
     try {
       if (createTeacherId) {
@@ -620,7 +623,7 @@ const confirmDeleteAccount = async () => {
           teacherName: null,
           permissions: [],
           requirePasswordChange: true,
-          password: "SandiSementara123"
+          password: DEFAULT_SYSTEM_PASSWORD
         }
       ];
 
@@ -827,7 +830,7 @@ const confirmDeleteAccount = async () => {
         if (generateRandomPasswords) {
           finalPassword = generateTempPassword();
         } else {
-          finalPassword = defaultPassword;
+          finalPassword = defaultPassword || DEFAULT_SYSTEM_PASSWORD;
         }
       }
 
@@ -1275,7 +1278,7 @@ const confirmDeleteAccount = async () => {
                                 <button
                                   onClick={() => handleResetPassword(item)}
                                   className="p-1.5 rounded-lg border border-slate-200 dark:border-zinc-800 hover:bg-slate-50 dark:hover:bg-zinc-800 text-slate-500 dark:text-slate-400 hover:text-amber-600 cursor-pointer"
-                                  title="Ubah Wajib Password Baru"
+                                  title="Reset Akun ke Sandi Default Sistem"
                                 >
                                   <KeyRound className="h-3.5 w-3.5" />
                                 </button>
@@ -1782,17 +1785,17 @@ const confirmDeleteAccount = async () => {
                 </div>
 
                 <div>
-                  <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block mb-1">Sandi Sementara (Otomatis & Wajib Diganti)</label>
+                  <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block mb-1">Kata Sandi Awal (Default Sistem / Wajib Diganti)</label>
                   <input
                     type="text"
                     required
                     value={createPassword}
                     onChange={(e) => setCreatePassword(e.target.value)}
-                    placeholder="Sandi sementara"
+                    placeholder="Sandi awal default"
                     className="w-full text-xs font-semibold px-3.5 py-2.5 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-xl text-slate-900 dark:text-white"
                   />
                   <p className="text-[10px] text-slate-400 mt-1">
-                    * Sandi di atas telah dibuat secara acak. Pengguna wajib memperbarui sandi ini saat masuk pertama kali.
+                    * Kata sandi default sistem ({DEFAULT_SYSTEM_PASSWORD}). Pengguna wajib memperbarui kata sandi ini saat masuk pertama kali.
                   </p>
                 </div>
 
