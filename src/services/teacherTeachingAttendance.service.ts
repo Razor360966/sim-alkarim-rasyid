@@ -389,14 +389,22 @@ function createEmptySummary(teacherId: string, teacherName: string): TeacherAtte
   return {
     teacherId,
     teacherName,
-    totalEncounters: 0,
+    jmlJp: 0,
+    hadirJP: 0,
+    menggantikanJP: 0,
+    digantikanJP: 0,
+    tidakHadirJP: 0,
+    terlambatJP: 0,
     totalJP: 0,
+    kehadiranPercentage: 0,
+    isBalanced: true,
+    isTotalConsistent: true,
+    isLateValid: true,
+    totalEncounters: 0,
     executedEncounters: 0,
     executedJP: 0,
     hadir: 0,
-    hadirJP: 0,
     terlambat: 0,
-    terlambatJP: 0,
     izin: 0,
     izinJP: 0,
     sakit: 0,
@@ -404,7 +412,6 @@ function createEmptySummary(teacherId: string, teacherName: string): TeacherAtte
     tugas: 0,
     tugasJP: 0,
     tidakHadir: 0,
-    tidakHadirJP: 0,
     diganti: 0,
     digantiJP: 0,
     tukarJadwal: 0,
@@ -1753,7 +1760,7 @@ export const teacherTeachingAttendanceService = {
         }
       });
 
-      // Group by teacher with JP & Pertemuan calculations
+      // Group by teacher with definitive JP & Pertemuan calculations (Anti-Double Counting & Zero Contamination)
       const map = new Map<string, TeacherAttendanceSummary>();
 
       rawRecords.forEach(rec => {
@@ -1767,47 +1774,66 @@ export const teacherTeachingAttendanceService = {
 
         const sum = map.get(tId)!;
         sum.totalEncounters++;
-        sum.totalJP += recJP;
 
         switch (rec.status) {
           case "Hadir Mengajar":
-            sum.hadir++;
+            sum.jmlJp += recJP;
             sum.hadirJP += recJP;
+            sum.hadir++;
             sum.executedEncounters++;
             sum.executedJP += recJP;
             break;
 
           case "Terlambat":
+            sum.jmlJp += recJP;
+            sum.hadirJP += recJP; // Kehadiran murni tetap terhitung penuh
+            sum.terlambatJP += recJP; // Informasi murni (tidak mengurangi kehadiran/total JP)
+            sum.hadir++;
             sum.terlambat++;
-            sum.terlambatJP += recJP;
             sum.executedEncounters++;
             sum.executedJP += recJP;
             break;
 
           case "Izin":
+            sum.jmlJp += recJP;
+            sum.tidakHadirJP += recJP;
+            sum.tidakHadir++;
             sum.izin++;
             sum.izinJP += recJP;
             break;
 
           case "Sakit":
+            sum.jmlJp += recJP;
+            sum.tidakHadirJP += recJP;
+            sum.tidakHadir++;
             sum.sakit++;
             sum.sakitJP += recJP;
             break;
 
           case "Tugas Dinas":
+            sum.jmlJp += recJP;
+            sum.tidakHadirJP += recJP;
+            sum.tidakHadir++;
             sum.tugas++;
             sum.tugasJP += recJP;
             break;
 
           case "Tidak Hadir":
-            sum.tidakHadir++;
+          case "Belum Terkonfirmasi":
+          case "Belum Diverifikasi":
+            sum.jmlJp += recJP;
             sum.tidakHadirJP += recJP;
+            sum.tidakHadir++;
             break;
 
           case "Digantikan Guru Lain":
+            sum.jmlJp += recJP; // Tetap menjadi bagian dari JML JP jadwal asli guru
+            sum.digantikanJP += recJP; // Masuk ke Digantikan (JP) guru asli
             sum.diganti++;
             sum.digantiJP += recJP;
-            // Substitute teacher actually executed this session
+            // PENTING: JP yang digantikan TIDAK masuk ke Kehadiran guru asal (zero contamination)
+
+            // Guru Pengganti (Sisi Penerima Penggantian):
             if (rec.substituteTeacherId) {
               const subId = rec.substituteTeacherId;
               const subName = rec.substituteTeacherName || "Guru Pengganti";
@@ -1815,18 +1841,20 @@ export const teacherTeachingAttendanceService = {
                 map.set(subId, createEmptySummary(subId, subName));
               }
               const subSum = map.get(subId)!;
+              subSum.menggantikanJP += recJP; // Masuk ke Menggantikan (JP) guru pengganti
               subSum.executedEncounters++;
               subSum.executedJP += recJP;
-              subSum.hadir++;
-              subSum.hadirJP += recJP;
+              // PENTING: JP pengganti TIDAK masuk ke JML JP atau Kehadiran guru pengganti!
             }
             break;
 
           case "Tukar Jadwal":
+            sum.jmlJp += recJP;
+            sum.digantikanJP += recJP;
             sum.tukarJadwal++;
             sum.tukarJadwalJP += recJP;
-            // Original teacher exchanged this slot out -> 0 executed JP for original teacher.
-            // Credit teacher who took over (exchangedWithTeacherId)!
+
+            // Guru Penukar yang mengambil alih sesi ini:
             if (rec.exchangedWithTeacherId) {
               const exId = rec.exchangedWithTeacherId;
               const exName = rec.exchangedWithTeacherName || "Guru Penukar";
@@ -1834,10 +1862,11 @@ export const teacherTeachingAttendanceService = {
                 map.set(exId, createEmptySummary(exId, exName));
               }
               const exSum = map.get(exId)!;
-              exSum.executedEncounters++;
-              exSum.executedJP += recJP;
+              exSum.menggantikanJP += recJP;
               exSum.tukarJadwalMasuk++;
               exSum.tukarJadwalMasukJP += recJP;
+              exSum.executedEncounters++;
+              exSum.executedJP += recJP;
             }
             break;
 
@@ -1848,16 +1877,34 @@ export const teacherTeachingAttendanceService = {
         }
       });
 
-      // Calculate percentage for each teacher based on executed JP vs total effective JP
+      // Calculate final balanced metrics & audit validations
       const summaries: TeacherAttendanceSummary[] = Array.from(map.values()).map(sum => {
-        const effectiveJP = sum.totalJP - sum.kbmDitiadakanJP;
-        const percentage = effectiveJP > 0
-          ? Math.min(100, Math.round((sum.executedJP / effectiveJP) * 100))
-          : (sum.totalJP > 0 && sum.executedJP > 0 ? 100 : 0);
-        return { ...sum, percentage };
+        // Formula Total JP: Kehadiran (JP) + Menggantikan (JP)
+        const totalJP = sum.hadirJP + sum.menggantikanJP;
+
+        // Persentase Kehadiran: (Kehadiran / JML JP) * 100
+        const kehadiranPercentage = sum.jmlJp > 0
+          ? Math.min(100, Math.round((sum.hadirJP / sum.jmlJp) * 100))
+          : (totalJP > 0 ? 100 : 0);
+
+        // Audit Validations
+        const isBalanced = sum.jmlJp === (sum.hadirJP + sum.digantikanJP + sum.tidakHadirJP);
+        const isTotalConsistent = totalJP === (sum.hadirJP + sum.menggantikanJP);
+        const isLateValid = sum.terlambatJP <= sum.hadirJP;
+
+        return {
+          ...sum,
+          totalJP,
+          kehadiranPercentage,
+          percentage: kehadiranPercentage,
+          isBalanced,
+          isTotalConsistent,
+          isLateValid
+        };
       });
 
-      summaries.sort((a, b) => b.percentage - a.percentage || a.teacherName.localeCompare(b.teacherName));
+      // Sort by total JP and attendance percentage
+      summaries.sort((a, b) => b.totalJP - a.totalJP || b.kehadiranPercentage - a.kehadiranPercentage || a.teacherName.localeCompare(b.teacherName));
 
       return { summaries, rawRecords };
     } catch (error) {
@@ -3111,7 +3158,7 @@ export const teacherTeachingAttendanceService = {
     };
   },
 
-  // Get full timeline history for a specific teacher
+  // Get full timeline history for a specific teacher (Bidirectional: Original Schedule & Substitutions)
   async getTeacherHistory(
     teacherId: string,
     filters?: { academicYearId?: string; semesterId?: string; startDate?: string; endDate?: string }
@@ -3121,13 +3168,29 @@ export const teacherTeachingAttendanceService = {
       teacherId
     });
 
-    rawRecords.sort((a, b) => {
+    const mapped = rawRecords.map(rec => {
+      const isSub = (rec.substituteTeacherId === teacherId && rec.teacherId !== teacherId);
+      const isExchangedIn = (rec.exchangedWithTeacherId === teacherId && rec.teacherId !== teacherId);
+      const isReplaced = (rec.teacherId === teacherId && rec.status === "Digantikan Guru Lain");
+      const isExchangedOut = (rec.teacherId === teacherId && rec.status === "Tukar Jadwal");
+
+      return {
+        ...rec,
+        isSubstitution: isSub || isExchangedIn,
+        isReplaced: isReplaced || isExchangedOut,
+        originalTeacherId: rec.teacherId,
+        originalTeacherName: rec.teacherName,
+        replacementId: rec.replacementId || (rec.id ? `REP-${rec.id}` : undefined)
+      };
+    });
+
+    mapped.sort((a, b) => {
       const dateComp = b.date.localeCompare(a.date);
       if (dateComp !== 0) return dateComp;
       return a.sequence - b.sequence;
     });
 
-    return rawRecords;
+    return mapped;
   },
 
   // Calculate Executive Indicators and JP Summaries from Attendance Records

@@ -84,40 +84,65 @@ export const TeacherAttendanceTimeline: React.FC<TeacherAttendanceTimelineProps>
                   const isHadir = item.status === "Hadir Mengajar";
                   const isTerlambat = item.status === "Terlambat";
                   const isAlpa = item.status === "Tidak Hadir";
+                  const isSubstitution = item.isSubstitution;
+                  const isReplaced = item.isReplaced;
+                  const isTukar = item.status === "Tukar Jadwal";
                   const isLocked = (item.status as string) === "DIKUNCI" || (item as any).isLocked || (item.notes && item.notes.toLowerCase().includes("dikunci"));
 
                   return (
                     <div key={item.id || idx} className="relative space-y-2">
                       {/* Timeline Dot */}
                       <span className={`absolute -left-[21px] top-1 flex h-2.5 w-2.5 rounded-full border-2 border-white dark:border-zinc-900 ${
+                        isSubstitution ? "bg-purple-600" :
+                        isReplaced ? "bg-orange-500" :
                         isHadir ? "bg-emerald-500" :
-                        isBelumTerkonfirmasi ? "bg-orange-500 animate-ping" :
+                        isBelumTerkonfirmasi ? "bg-amber-500 animate-ping" :
                         isTerlambat ? "bg-amber-500" :
                         isAlpa ? "bg-rose-500" :
                         isLocked ? "bg-slate-900" :
                         "bg-blue-500"
                       }`} />
 
-                      <div className="bg-slate-50 dark:bg-zinc-850 p-3.5 rounded-2xl border border-slate-200 dark:border-zinc-750 space-y-3">
+                      <div className={`p-3.5 rounded-2xl border space-y-3 ${
+                        isSubstitution ? "bg-purple-50/40 dark:bg-purple-950/20 border-purple-200 dark:border-purple-900/40" :
+                        isReplaced ? "bg-orange-50/40 dark:bg-orange-950/20 border-orange-200 dark:border-orange-900/40" :
+                        "bg-slate-50 dark:bg-zinc-850 border-slate-200 dark:border-zinc-750"
+                      }`}>
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/60 dark:border-zinc-700/60 pb-2">
                           <div>
-                            <span className="text-[10px] font-black uppercase text-blue-600 bg-blue-100 dark:bg-blue-950 px-2 py-0.5 rounded-md">
-                              {jpLabel} ({timeSlot})
-                            </span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-[10px] font-black uppercase text-blue-600 bg-blue-100 dark:bg-blue-950 px-2 py-0.5 rounded-md">
+                                {jpLabel} ({timeSlot})
+                              </span>
+                              {isSubstitution && (
+                                <span className="text-[10px] font-black uppercase text-purple-700 bg-purple-100 dark:bg-purple-950 px-2 py-0.5 rounded-md border border-purple-300 dark:border-purple-800">
+                                  Menggantikan Guru Lain
+                                </span>
+                              )}
+                              {isReplaced && (
+                                <span className="text-[10px] font-black uppercase text-orange-700 bg-orange-100 dark:bg-orange-950 px-2 py-0.5 rounded-md border border-orange-300 dark:border-orange-800">
+                                  Digantikan Guru Pengganti
+                                </span>
+                              )}
+                            </div>
                             <h4 className="text-xs font-bold text-slate-800 dark:text-zinc-100 mt-1">
                               {item.subjectName} &bull; Kelas {item.className}
                             </h4>
                           </div>
 
                           <span className={`px-2.5 py-1 rounded-xl text-[10px] font-black border w-fit ${
+                            isSubstitution ? "bg-purple-100 text-purple-800 border-purple-300 dark:bg-purple-950 dark:text-purple-300" :
+                            isReplaced ? "bg-orange-100 text-orange-800 border-orange-300 dark:bg-orange-950 dark:text-orange-300" :
                             isHadir ? "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300" :
-                            isBelumTerkonfirmasi ? "bg-orange-100 text-orange-800 border-orange-300 dark:bg-orange-950 dark:text-orange-300" :
+                            isBelumTerkonfirmasi ? "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-300" :
                             isTerlambat ? "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-300" :
                             isAlpa ? "bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950 dark:text-rose-300" :
                             isLocked ? "bg-slate-900 text-white border-slate-700" :
                             "bg-slate-100 text-slate-800 border-slate-300 dark:bg-zinc-800 dark:text-zinc-200"
                           }`}>
-                            {isHadir ? "🟢 HADIR" :
+                            {isSubstitution ? "🟣 MENGGANTIKAN" :
+                             isReplaced ? "🟠 DIGANTIKAN" :
+                             isHadir ? "🟢 HADIR" :
                              isBelumTerkonfirmasi ? "🟡 BELUM TERKONFIRMASI" :
                              isTerlambat ? "🟠 TERLAMBAT" :
                              isAlpa ? "🔴 ALPA" :
@@ -125,6 +150,31 @@ export const TeacherAttendanceTimeline: React.FC<TeacherAttendanceTimelineProps>
                              item.status}
                           </span>
                         </div>
+
+                        {/* Substitution Relationship Callout */}
+                        {isSubstitution && (
+                          <div className="p-2.5 bg-purple-50 dark:bg-purple-950/40 rounded-xl border border-purple-200 dark:border-purple-800/60 text-xs text-purple-950 dark:text-purple-200 space-y-1">
+                            <div className="font-bold flex items-center gap-1.5 text-purple-900 dark:text-purple-100">
+                              <UserCheck className="w-3.5 h-3.5 text-purple-600" />
+                              <span>Sesi Menggantikan Guru Asal: <strong>{item.originalTeacherName || "Guru"}</strong></span>
+                            </div>
+                            <p className="text-[10px] text-purple-700 dark:text-purple-300">
+                              JP ini masuk ke <strong>Menggantikan (JP)</strong> dan <strong>Total JP</strong>, tidak mengubah JML JP jadwal asli guru pengganti.
+                            </p>
+                          </div>
+                        )}
+
+                        {isReplaced && (
+                          <div className="p-2.5 bg-orange-50 dark:bg-orange-950/40 rounded-xl border border-orange-200 dark:border-orange-800/60 text-xs text-orange-950 dark:text-orange-200 space-y-1">
+                            <div className="font-bold flex items-center gap-1.5 text-orange-900 dark:text-orange-100">
+                              <AlertTriangle className="w-3.5 h-3.5 text-orange-600" />
+                              <span>Sesi Digantikan Oleh: <strong>{item.substituteTeacherName || "Guru Pengganti"}</strong></span>
+                            </div>
+                            <p className="text-[10px] text-orange-700 dark:text-orange-300">
+                              JP ini tetap dihitung dalam <strong>JML JP</strong> guru asal, namun tidak dihitung dalam <strong>Kehadiran (JP)</strong> atau <strong>Total JP</strong>.
+                            </p>
+                          </div>
+                        )}
 
                         {/* Progression steps (Check-in & Check-out events) */}
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">

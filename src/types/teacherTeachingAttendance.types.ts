@@ -46,6 +46,14 @@ export interface TeacherTeachingAttendance {
   exchangedScheduleId?: string;
   notes?: string;
 
+  // Replacement & Substitution Synchronization
+  replacementId?: string; // Unique transaction identifier (e.g. REP-YYYYMMDD-XXXX)
+  originalTeacherId?: string;
+  originalTeacherName?: string;
+  isSubstitution?: boolean; // true when this item represents a substitute teacher teaching
+  isReplaced?: boolean; // true when original teacher was replaced
+  replacementNote?: string;
+
   // Validation & Approval fields
   attendanceStatus?: AttendanceApprovalStatus; // "Pending" | "Approved" | "Rejected"
   pendingReason?: string;
@@ -143,14 +151,28 @@ export interface AttendanceDailyStats {
 export interface TeacherAttendanceSummary {
   teacherId: string;
   teacherName: string;
+
+  // --- DEFINITIVE JP METRICS (SESUAI ATURAN MUTLAK) ---
+  jmlJp: number; // JML JP: Total JP dari JADWAL ASLI guru pada rentang tanggal yang dipilih
+  hadirJP: number; // Kehadiran (JP): Jadwal asli guru yang benar-benar diajar sendiri (Hadir / Terlambat)
+  menggantikanJP: number; // Menggantikan (JP): Mengajar jadwal guru lain sebagai pengganti resmi
+  digantikanJP: number; // Digantikan (JP): Jadwal asli guru yang diajar guru pengganti resmi
+  tidakHadirJP: number; // Tidak Hadir (JP): Jadwal asli guru yang tidak hadir & tanpa pengganti
+  terlambatJP: number; // Terlambat (JP): Metrik informasi murni (tidak mengubah Kehadiran/Total JP)
+  totalJP: number; // Total JP: Kehadiran (JP) + Menggantikan (JP)
+  kehadiranPercentage: number; // Persentase Kehadiran: (hadirJP / jmlJp) * 100
+
+  // --- VALIDASI NERACA & INTEGRITAS MATEMATIS ---
+  isBalanced: boolean; // CHECK A: jmlJp === hadirJP + digantikanJP + tidakHadirJP
+  isTotalConsistent: boolean; // CHECK B: totalJP === hadirJP + menggantikanJP
+  isLateValid: boolean; // CHECK C: terlambatJP <= hadirJP
+
+  // Compatibility fields for existing SIMAK modules (RTH, Dashboard, Rekap JP, etc.)
   totalEncounters: number; // Scheduled Meetings
-  totalJP: number; // Scheduled JP
   executedEncounters: number; // Taught / Executed Meetings (taking exchanges into account)
   executedJP: number; // Taught / Executed JP (taking exchanges into account)
   hadir: number;
-  hadirJP: number;
   terlambat: number;
-  terlambatJP: number;
   izin: number;
   izinJP: number;
   sakit: number;
@@ -158,7 +180,6 @@ export interface TeacherAttendanceSummary {
   tugas: number;
   tugasJP: number;
   tidakHadir: number;
-  tidakHadirJP: number;
   diganti: number;
   digantiJP: number;
   tukarJadwal: number;
