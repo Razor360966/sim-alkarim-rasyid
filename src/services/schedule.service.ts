@@ -19,9 +19,123 @@ import { academicYearService } from "./academicYear.service";
 import { semesterService } from "./semester.service";
 import { teacherService } from "./teacherService";
 import { subjectService } from "./subjectService";
-import { Schedule, LessonPeriod, LessonPeriodType, CurriculumMatrix, Class } from "../types";
+import { Schedule, TeacherAssignment, LessonPeriod, LessonPeriodType, CurriculumMatrix, Class } from "../types";
 
 const COLLECTION_NAME = "schedules";
+
+/**
+ * Calculates the day before a given date string YYYY-MM-DD
+ */
+export function getPreviousDay(dateStr: string): string {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setDate(d.getDate() - 1);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Resolves the active teacher for a schedule slot on a specific date YYYY-MM-DD
+ * based on effective dates (effectiveFrom and effectiveUntil).
+ * Fallback to schedule.teacherId / schedule.teacherName for backward compatibility.
+ */
+export function resolveTeacherForScheduleDate(
+  schedule: Schedule,
+  dateStr: string
+): { teacherId: string; teacherName: string; assignment?: TeacherAssignment } {
+  if (!schedule) {
+    return { teacherId: "", teacherName: "" };
+  }
+
+  const assignments = schedule.teacherAssignments;
+  if (Array.isArray(assignments) && assignments.length > 0) {
+    // Sort assignments: newest effectiveFrom first
+    const sorted = [...assignments].sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom));
+
+    // Find assignment matching target date
+    const matched = sorted.find(a => {
+      const isAfterStart = a.effectiveFrom <= dateStr;
+      const isBeforeEnd = !a.effectiveUntil || a.effectiveUntil >= dateStr;
+      return isAfterStart && isBeforeEnd;
+    });
+
+    if (matched) {
+      return {
+        teacherId: matched.teacherId,
+        teacherName: matched.teacherName,
+        assignment: matched
+      };
+    }
+
+    // If dateStr is before the earliest assignment, use the earliest assignment or fallback to base
+    const earliest = [...assignments].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))[0];
+    if (earliest && dateStr < earliest.effectiveFrom) {
+      return {
+        teacherId: earliest.teacherId,
+        teacherName: earliest.teacherName,
+        assignment: earliest
+      };
+    }
+  }
+
+  return {
+    teacherId: schedule.teacherId || "",
+    teacherName: schedule.teacherName || ""
+  };
+}
+
+/**
+ * Checks if a specific teacher is active for a schedule on a given date
+ */
+export function isTeacherActiveForScheduleOnDate(
+  schedule: Schedule,
+  teacherId: string,
+  dateStr: string
+): boolean {
+  if (!schedule || !teacherId) return false;
+  const resolved = resolveTeacherForScheduleDate(schedule, dateStr);
+  return resolved.teacherId === teacherId;
+}
+
+/**
+ * Validates that a new assignment does not overlap with existing assignments
+ */
+export function validateNoAssignmentOverlap(
+  existingAssignments: TeacherAssignment[] = [],
+  newAssignment: { teacherId: string; effectiveFrom: string; effectiveUntil?: string | null },
+  excludeIndex?: number
+): { isValid: boolean; error?: string } {
+  const newStart = newAssignment.effectiveFrom;
+  const newEnd = newAssignment.effectiveUntil || "9999-12-31";
+
+  if (newAssignment.effectiveUntil && newAssignment.effectiveUntil < newStart) {
+    return {
+      isValid: false,
+      error: `Tanggal selesai (${newAssignment.effectiveUntil}) tidak boleh lebih awal dari tanggal mulai (${newStart}).`
+    };
+  }
+
+  for (let i = 0; i < existingAssignments.length; i++) {
+    if (excludeIndex !== undefined && i === excludeIndex) continue;
+    const existing = existingAssignments[i];
+    const exStart = existing.effectiveFrom;
+    const exEnd = existing.effectiveUntil || "9999-12-31";
+
+    // Overlap condition: max(start1, start2) <= min(end1, end2)
+    const maxStart = newStart > exStart ? newStart : exStart;
+    const minEnd = newEnd < exEnd ? newEnd : exEnd;
+
+    if (maxStart <= minEnd) {
+      return {
+        isValid: false,
+        error: `Penugasan baru (${newStart} s/d ${newAssignment.effectiveUntil || "seterusnya"}) bentrok dengan penugasan yang sudah ada (${existing.teacherName}: ${exStart} s/d ${existing.effectiveUntil || "seterusnya"}).`
+      };
+    }
+  }
+
+  return { isValid: true };
+}
 
 // Log schedule activities to "activity_logs" collection
 export async function logScheduleActivity(
@@ -234,6 +348,9 @@ export const scheduleService = {
           subjectName: sched.subjectName || "",
           teacherId: sched.teacherId || "",
           teacherName: sched.teacherName || "",
+          teacherAssignments: (sched.teacherAssignments && sched.teacherAssignments.length > 0)
+            ? sched.teacherAssignments
+            : (existingDocsMap.get(sched.id || "")?.data.teacherAssignments || []),
           isLocked: sched.isLocked || false,
           lessonPeriodId: sched.lessonPeriodId || "LPERIOD_FALLBACK",
           createdBy: sched.createdBy || operatorId,
@@ -291,6 +408,175 @@ export const scheduleService = {
       );
     } catch (error) {
       return handleFirestoreError(error, OperationType.WRITE, COLLECTION_NAME);
+    }
+  },
+
+  // 4b. Change teacher assignment with effective date for single or multiple slots
+  async changeTeacherAssignment(params: {
+    scheduleIds?: string[];
+    classIds?: string[];
+    subjectId?: string;
+    academicYearId?: string;
+    semesterId?: string;
+    newTeacherId: string;
+    newTeacherName: string;
+    effectiveFrom: string; // YYYY-MM-DD
+    effectiveUntil?: string | null;
+    notes?: string;
+    operatorId: string;
+    operatorName: string;
+  }): Promise<{ updatedCount: number }> {
+    try {
+      const {
+        scheduleIds,
+        classIds,
+        subjectId,
+        academicYearId,
+        semesterId,
+        newTeacherId,
+        newTeacherName,
+        effectiveFrom,
+        effectiveUntil,
+        notes,
+        operatorId,
+        operatorName
+      } = params;
+
+      // 1. Fetch relevant schedules
+      const allSchedules = await this.getSchedules(academicYearId, semesterId);
+      const targetSchedules = allSchedules.filter(s => {
+        if (scheduleIds && scheduleIds.length > 0) {
+          return scheduleIds.includes(s.id!);
+        }
+        const matchSubject = !subjectId || s.subjectId === subjectId;
+        const matchClass = !classIds || classIds.length === 0 || classIds.includes(s.classId);
+        return matchSubject && matchClass;
+      });
+
+      if (targetSchedules.length === 0) {
+        throw new Error("Tidak ditemukan jadwal yang sesuai untuk pergantian guru pengampu.");
+      }
+
+      const todayStr = new Date().toISOString().split("T")[0];
+      const previousDay = getPreviousDay(effectiveFrom);
+      const timestamp = new Date().toISOString();
+      const batch = writeBatch(db);
+      let updatedCount = 0;
+
+      for (const sched of targetSchedules) {
+        if (!sched.id) continue;
+        const currentAssignments: TeacherAssignment[] = Array.isArray(sched.teacherAssignments) 
+          ? [...sched.teacherAssignments] 
+          : [];
+
+        // If there were no prior assignments in history, create baseline assignment from the schedule's original teacher
+        if (currentAssignments.length === 0 && sched.teacherId) {
+          currentAssignments.push({
+            id: `assign_base_${sched.id}`,
+            teacherId: sched.teacherId,
+            teacherName: sched.teacherName,
+            effectiveFrom: "2000-01-01", // Baseline
+            effectiveUntil: previousDay,
+            createdAt: sched.createdAt || timestamp,
+            createdBy: sched.createdBy || operatorId,
+            notes: "Penugasan awal semester"
+          });
+        } else {
+          // Close out any currently active open assignment
+          currentAssignments.forEach(a => {
+            if (!a.effectiveUntil || a.effectiveUntil >= effectiveFrom) {
+              if (a.effectiveFrom < effectiveFrom) {
+                a.effectiveUntil = previousDay;
+              }
+            }
+          });
+        }
+
+        // Add the new assignment
+        const newAssignment: TeacherAssignment = {
+          id: `assign_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          teacherId: newTeacherId,
+          teacherName: newTeacherName,
+          effectiveFrom,
+          effectiveUntil: effectiveUntil || null,
+          createdAt: timestamp,
+          createdBy: operatorId,
+          createdByName: operatorName,
+          notes: notes || "Pergantian guru pengampu di tengah periode"
+        };
+
+        currentAssignments.push(newAssignment);
+
+        // Sort assignments by effectiveFrom
+        currentAssignments.sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+
+        // Determine active teacher for today to update base teacherId/teacherName for instant display
+        const activeNow = resolveTeacherForScheduleDate({
+          ...sched,
+          teacherAssignments: currentAssignments
+        }, todayStr);
+
+        const docRef = doc(db, COLLECTION_NAME, sched.id);
+        batch.update(docRef, {
+          teacherAssignments: currentAssignments,
+          teacherId: activeNow.teacherId || newTeacherId,
+          teacherName: activeNow.teacherName || newTeacherName,
+          updatedAt: timestamp
+        });
+
+        updatedCount++;
+      }
+
+      await batch.commit();
+
+      await logScheduleActivity(
+        operatorId,
+        operatorName,
+        "CHANGE_TEACHER_ASSIGNMENT",
+        `Mengganti guru pengampu menjadi ${newTeacherName} berlaku mulai ${effectiveFrom} untuk ${updatedCount} slot jadwal.`
+      );
+
+      return { updatedCount };
+    } catch (error) {
+      return handleFirestoreError(error, OperationType.WRITE, COLLECTION_NAME);
+    }
+  },
+
+  // 4c. Delete assignment record from a schedule's history
+  async deleteTeacherAssignment(
+    scheduleId: string,
+    assignmentId: string,
+    operatorId: string,
+    operatorName: string
+  ): Promise<void> {
+    try {
+      const docRef = doc(db, COLLECTION_NAME, scheduleId);
+      const snap = await getDocs(query(collection(db, COLLECTION_NAME), where("__name__", "==", scheduleId)));
+      if (snap.empty) throw new Error("Jadwal tidak ditemukan.");
+      const sched = { id: snap.docs[0].id, ...snap.docs[0].data() } as Schedule;
+      
+      const currentAssignments = (sched.teacherAssignments || []).filter(a => (a.id || a.effectiveFrom) !== assignmentId);
+      const todayStr = new Date().toISOString().split("T")[0];
+      const activeNow = resolveTeacherForScheduleDate({
+        ...sched,
+        teacherAssignments: currentAssignments
+      }, todayStr);
+
+      await updateDoc(docRef, {
+        teacherAssignments: currentAssignments,
+        teacherId: activeNow.teacherId || sched.teacherId,
+        teacherName: activeNow.teacherName || sched.teacherName,
+        updatedAt: new Date().toISOString()
+      });
+
+      await logScheduleActivity(
+        operatorId,
+        operatorName,
+        "DELETE_TEACHER_ASSIGNMENT",
+        `Menghapus riwayat penugasan guru pada jadwal ${scheduleId}.`
+      );
+    } catch (error) {
+      return handleFirestoreError(error, OperationType.WRITE, `${COLLECTION_NAME}/${scheduleId}`);
     }
   },
 

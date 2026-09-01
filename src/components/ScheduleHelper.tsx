@@ -16,9 +16,15 @@ import {
   Lock,
   Unlock,
   Sparkles,
-  ArrowRight
+  ArrowRight,
+  Calendar,
+  History,
+  UserCheck,
+  RefreshCw,
+  Check
 } from "lucide-react";
-import { Schedule, Class, Teacher, LessonPeriod, CurriculumMatrix } from "../types";
+import { Schedule, Class, Teacher, LessonPeriod, CurriculumMatrix, TeacherAssignment } from "../types";
+import { scheduleService, resolveTeacherForScheduleDate } from "../services/schedule.service";
 
 // --- TYPES FOR ANALYSES ---
 export interface PreAnalysisResult {
@@ -655,7 +661,8 @@ export function ScheduleEditorDialog({
   teachers,
   activeSchedules,
   onSave,
-  onDelete
+  onDelete,
+  onAssignmentUpdated
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -672,8 +679,22 @@ export function ScheduleEditorDialog({
   activeSchedules: Schedule[];
   onSave: (subjectId: string, teacherId: string) => void;
   onDelete: () => void;
+  onAssignmentUpdated?: () => void;
 }) {
+  const [activeTab, setActiveTab] = useState<"edit" | "assignment">("edit");
   const [selectedSubjectId, setSelectedSubjectId] = useState<string>("");
+
+  // Assignment tab state
+  const todayStr = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }, []);
+  const [newTeacherId, setNewTeacherId] = useState<string>("");
+  const [effectiveFrom, setEffectiveFrom] = useState<string>(todayStr);
+  const [assignmentNotes, setAssignmentNotes] = useState<string>("");
+  const [applyToMatchingSlots, setApplyToMatchingSlots] = useState<boolean>(true);
+  const [isSubmittingAssignment, setIsSubmittingAssignment] = useState<boolean>(false);
+  const [assignmentSuccessMsg, setAssignmentSuccessMsg] = useState<string | null>(null);
 
   if (!isOpen || !slot) return null;
 
@@ -731,13 +752,59 @@ export function ScheduleEditorDialog({
     };
   });
 
-  // Auto recommendation engine (Bagian 12):
-  // Filter options with remaining JP > 0 and teacher available, sorted by largest remaining JP first
+  // Auto recommendation engine (Bagian 12)
   const recommendations = options
     .filter(opt => opt.remaining > 0 && opt.isAvailable)
     .sort((a, b) => b.remaining - a.remaining);
 
   const currentSelectionDetails = options.find(o => o.matrixItem.subjectId === selectedSubjectId);
+
+  // Resolved teacher right now for this slot
+  const currentResolved = slot.matchedSchedule 
+    ? resolveTeacherForScheduleDate(slot.matchedSchedule, todayStr)
+    : null;
+
+  const currentTeacherName = currentResolved 
+    ? (teachers.find(t => t.id === currentResolved.teacherId)?.name || slot.matchedSchedule?.teacherName || "Guru")
+    : (slot.matchedSchedule?.teacherName || "Guru");
+
+  const handleSaveTeacherTransfer = async () => {
+    if (!slot.matchedSchedule?.id || !newTeacherId || !effectiveFrom) return;
+    const newTeacherObj = teachers.find(t => t.id === newTeacherId);
+    if (!newTeacherObj) return;
+
+    setIsSubmittingAssignment(true);
+    try {
+      const targetIds = applyToMatchingSlots
+        ? activeSchedules
+            .filter(s => s.classId === slot.classId && s.subjectId === slot.matchedSchedule?.subjectId && s.id)
+            .map(s => s.id!)
+        : [slot.matchedSchedule.id];
+
+      await scheduleService.changeTeacherAssignment({
+        scheduleIds: targetIds,
+        newTeacherId,
+        newTeacherName: newTeacherObj.name,
+        effectiveFrom,
+        notes: assignmentNotes,
+        operatorId: "admin",
+        operatorName: "Admin"
+      });
+
+      setAssignmentSuccessMsg(`Berhasil mengalihkan pengampu ke ${newTeacherObj.name} mulai tanggal ${effectiveFrom}!`);
+      if (onAssignmentUpdated) {
+        onAssignmentUpdated();
+      }
+      setTimeout(() => {
+        onClose();
+      }, 1200);
+    } catch (err: any) {
+      console.error(err);
+      alert(err.message || "Gagal memperbarui guru pengampu");
+    } finally {
+      setIsSubmittingAssignment(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4">
@@ -757,162 +824,655 @@ export function ScheduleEditorDialog({
               <span>{slot.day}, {slot.jp}</span>
             </p>
           </div>
-          <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-zinc-200 rounded-lg">
+          <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-zinc-200 rounded-lg cursor-pointer">
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        {/* DETAIL CURRENT SLOT (Bagian 11) */}
+        {/* TAB SWITCHER (Only if slot already exists) */}
         {slot.matchedSchedule && (
-          <div className="bg-slate-50 dark:bg-zinc-950/30 border border-slate-100 dark:border-zinc-850 rounded-xl p-3 space-y-1.5">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Informasi Detail Slot Saat Ini:</span>
-            <div className="flex flex-col gap-1 text-xs">
-              <div className="flex justify-between">
-                <span className="text-slate-500">Mata Pelajaran:</span>
-                <span className="font-bold text-slate-800 dark:text-zinc-200">{slot.matchedSchedule.subjectName}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Guru Pengampu:</span>
-                <span className="font-bold text-slate-800 dark:text-zinc-200">{slot.matchedSchedule.teacherName}</span>
-              </div>
-              <div className="flex justify-between border-t border-dashed border-slate-200/50 dark:border-zinc-800/60 pt-1.5 mt-1">
-                <span className="text-slate-500">JP yang Dibutuhkan di Kurikulum:</span>
-                <span className="font-bold text-slate-800 dark:text-zinc-200">
-                  {options.find(o => o.matrixItem.subjectId === slot.matchedSchedule?.subjectId)?.required || 0} JP
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">JP Sudah Terjadwal (Kelas Ini):</span>
-                <span className="font-bold text-slate-800 dark:text-zinc-200">
-                  {options.find(o => o.matrixItem.subjectId === slot.matchedSchedule?.subjectId)?.scheduled || 0} JP
-                </span>
-              </div>
-            </div>
+          <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-zinc-800/80 rounded-xl">
+            <button
+              onClick={() => setActiveTab("edit")}
+              className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                activeTab === "edit"
+                  ? "bg-white dark:bg-zinc-900 text-blue-600 dark:text-blue-400 shadow-xs"
+                  : "text-slate-500 dark:text-zinc-400 hover:text-slate-700"
+              }`}
+            >
+              <BookOpen className="h-3.5 w-3.5" /> Atur Mapel
+            </button>
+            <button
+              onClick={() => setActiveTab("assignment")}
+              className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                activeTab === "assignment"
+                  ? "bg-white dark:bg-zinc-900 text-blue-600 dark:text-blue-400 shadow-xs"
+                  : "text-slate-500 dark:text-zinc-400 hover:text-slate-700"
+              }`}
+            >
+              <History className="h-3.5 w-3.5" /> Ganti Pengampu (Tanggal Efektif)
+            </button>
           </div>
         )}
 
-        {/* AUTOMATIC RECOMMENDATION CARDS (Bagian 12) */}
-        {!slot.matchedSchedule && recommendations.length > 0 && (
-          <div className="space-y-2">
-            <span className="text-[10px] font-bold text-blue-500 dark:text-blue-400 uppercase tracking-wider flex items-center gap-1">
-              <Sparkles className="h-3.5 w-3.5" /> Rekomendasi Pintar Penjadwalan
-            </span>
-            
-            <div className="grid grid-cols-1 gap-2 max-h-[140px] overflow-y-auto">
-              {recommendations.slice(0, 2).map((rec, idx) => (
-                <div 
-                  key={rec.matrixItem.subjectId} 
-                  className="bg-blue-50/40 dark:bg-blue-950/10 border border-blue-100 dark:border-blue-900/40 rounded-xl p-2.5 flex items-center justify-between hover:border-blue-300 dark:hover:border-blue-800/80 transition-all"
-                >
-                  <div className="space-y-0.5">
-                    <span className="text-xs font-bold text-slate-800 dark:text-zinc-100 block">
-                      {rec.matrixItem.subjectName}
-                    </span>
-                    <span className="text-[10px] text-slate-500 block">
-                      {rec.matrixItem.teacherName} • <span className="font-bold text-blue-600 dark:text-blue-400">Kurang {rec.remaining} JP</span>
+        {/* TAB 1: EDIT MAPEL */}
+        {activeTab === "edit" && (
+          <>
+            {/* DETAIL CURRENT SLOT (Bagian 11) */}
+            {slot.matchedSchedule && (
+              <div className="bg-slate-50 dark:bg-zinc-950/30 border border-slate-100 dark:border-zinc-850 rounded-xl p-3 space-y-1.5">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Informasi Detail Slot Saat Ini:</span>
+                <div className="flex flex-col gap-1 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Mata Pelajaran:</span>
+                    <span className="font-bold text-slate-800 dark:text-zinc-200">{slot.matchedSchedule.subjectName}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Guru Pengampu Aktif:</span>
+                    <span className="font-bold text-slate-800 dark:text-zinc-200">{currentTeacherName}</span>
+                  </div>
+                  <div className="flex justify-between border-t border-dashed border-slate-200/50 dark:border-zinc-800/60 pt-1.5 mt-1">
+                    <span className="text-slate-500">JP yang Dibutuhkan di Kurikulum:</span>
+                    <span className="font-bold text-slate-800 dark:text-zinc-200">
+                      {options.find(o => o.matrixItem.subjectId === slot.matchedSchedule?.subjectId)?.required || 0} JP
                     </span>
                   </div>
-                  <button 
-                    onClick={() => {
-                      onSave(rec.matrixItem.subjectId, rec.matrixItem.teacherId);
-                      onClose();
-                    }}
-                    className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer"
-                  >
-                    Gunakan Rekomendasi
-                  </button>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">JP Sudah Terjadwal (Kelas Ini):</span>
+                    <span className="font-bold text-slate-800 dark:text-zinc-200">
+                      {options.find(o => o.matrixItem.subjectId === slot.matchedSchedule?.subjectId)?.scheduled || 0} JP
+                    </span>
+                  </div>
                 </div>
-              ))}
+              </div>
+            )}
+
+            {/* AUTOMATIC RECOMMENDATION CARDS (Bagian 12) */}
+            {!slot.matchedSchedule && recommendations.length > 0 && (
+              <div className="space-y-2">
+                <span className="text-[10px] font-bold text-blue-500 dark:text-blue-400 uppercase tracking-wider flex items-center gap-1">
+                  <Sparkles className="h-3.5 w-3.5" /> Rekomendasi Pintar Penjadwalan
+                </span>
+                
+                <div className="grid grid-cols-1 gap-2 max-h-[140px] overflow-y-auto">
+                  {recommendations.slice(0, 2).map((rec) => (
+                    <div 
+                      key={rec.matrixItem.subjectId} 
+                      className="bg-blue-50/40 dark:bg-blue-950/10 border border-blue-100 dark:border-blue-900/40 rounded-xl p-2.5 flex items-center justify-between hover:border-blue-300 dark:hover:border-blue-800/80 transition-all"
+                    >
+                      <div className="space-y-0.5">
+                        <span className="text-xs font-bold text-slate-800 dark:text-zinc-100 block">
+                          {rec.matrixItem.subjectName}
+                        </span>
+                        <span className="text-[10px] text-slate-500 block">
+                          {rec.matrixItem.teacherName} • <span className="font-bold text-blue-600 dark:text-blue-400">Kurang {rec.remaining} JP</span>
+                        </span>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          onSave(rec.matrixItem.subjectId, rec.matrixItem.teacherId);
+                          onClose();
+                        }}
+                        className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer"
+                      >
+                        Gunakan Rekomendasi
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* MANUAL FORM EDITOR */}
+            <div className="space-y-2">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                {slot.matchedSchedule ? "Pilih Mapel Pengganti:" : "Atur Manual Slot:"}
+              </span>
+              
+              <select
+                value={selectedSubjectId}
+                onChange={(e) => setSelectedSubjectId(e.target.value)}
+                className="w-full bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl p-2.5 text-xs text-slate-700 dark:text-zinc-300 focus:ring-1 focus:ring-blue-500 cursor-pointer"
+              >
+                <option value="">Pilih Mata Pelajaran...</option>
+                {options.map((opt) => (
+                  <option 
+                    key={opt.matrixItem.subjectId} 
+                    value={opt.matrixItem.subjectId}
+                    disabled={opt.remaining === 0 && opt.matrixItem.subjectId !== slot.matchedSchedule?.subjectId}
+                  >
+                    {opt.matrixItem.subjectName} ({opt.resolvedTeacherName}) 
+                    {opt.remaining === 0 ? " - [JP Terpenuhi]" : ` - [Kurang ${opt.remaining} JP]`}
+                    {opt.teacherConflictClass ? ` - [Bentrok di Kelas ${opt.teacherConflictClass}]` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* LIVE FORM VALIDATION WARNINGS */}
+            {currentSelectionDetails && (
+              <div className="bg-slate-50 dark:bg-zinc-950/20 p-3 rounded-xl text-xs space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Kebutuhan JP:</span>
+                  <span className="font-bold text-slate-700 dark:text-zinc-300">{currentSelectionDetails.required} JP</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Telah Terjadwal:</span>
+                  <span className="font-bold text-slate-700 dark:text-zinc-300">{currentSelectionDetails.scheduled} JP</span>
+                </div>
+                
+                {currentSelectionDetails.teacherConflictClass && (
+                  <div className="text-rose-500 font-bold text-[10px] mt-1.5 border-t border-dashed border-rose-200/50 pt-1.5 flex items-center gap-1">
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                    <span>Peringatan: Guru Bentrok mengajar di Kelas {currentSelectionDetails.teacherConflictClass}!</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ACTION BUTTONS */}
+            <div className="flex items-center justify-between border-t border-slate-100 dark:border-zinc-800/80 pt-4 mt-2 gap-2">
+              {slot.matchedSchedule ? (
+                <button
+                  onClick={() => {
+                    onDelete();
+                    onClose();
+                  }}
+                  className="px-3.5 py-2 border border-rose-200 text-rose-600 hover:bg-rose-50 dark:border-rose-950/60 dark:text-rose-400 dark:hover:bg-rose-950/20 text-xs font-bold rounded-xl transition-all flex items-center gap-1 cursor-pointer"
+                >
+                  <Trash2 className="h-3.5 w-3.5" /> Hapus Jadwal
+                </button>
+              ) : (
+                <div />
+              )}
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={onClose}
+                  className="px-3.5 py-2 border border-slate-200 dark:border-zinc-800 text-slate-600 dark:text-zinc-400 hover:bg-slate-50 dark:hover:bg-zinc-800 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                >
+                  Tutup
+                </button>
+                <button
+                  onClick={() => {
+                    if (selectedSubjectId) {
+                      const targetOpt = options.find(o => o.matrixItem.subjectId === selectedSubjectId);
+                      if (targetOpt) {
+                        onSave(selectedSubjectId, targetOpt.resolvedTeacherId);
+                        onClose();
+                      }
+                    }
+                  }}
+                  disabled={!selectedSubjectId}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-blue-900/10 hover:shadow-blue-900/20 flex items-center gap-1 cursor-pointer"
+                >
+                  Simpan Perubahan
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* TAB 2: EFFECTIVE-DATE TEACHER REASSIGNMENT */}
+        {activeTab === "assignment" && slot.matchedSchedule && (
+          <div className="space-y-4">
+            {/* Timeline of teacher assignments */}
+            <div className="bg-slate-50 dark:bg-zinc-950/30 border border-slate-100 dark:border-zinc-850 rounded-xl p-3.5 space-y-2">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block flex items-center gap-1.5">
+                <History className="h-3 w-3 text-blue-500" /> Riwayat Pengampu Slot Ini:
+              </span>
+              
+              <div className="space-y-1.5 text-xs">
+                {/* Default initial teacher */}
+                <div className="flex items-center justify-between p-2 rounded-lg bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800">
+                  <div className="flex items-center gap-2">
+                    <span className="h-2 w-2 rounded-full bg-slate-300 dark:bg-zinc-700" />
+                    <div>
+                      <span className="font-bold text-slate-800 dark:text-zinc-200">
+                        {teachers.find(t => t.id === slot.matchedSchedule?.teacherId)?.name || slot.matchedSchedule.teacherName || "Guru Awal"}
+                      </span>
+                      <span className="text-[10px] text-slate-400 block">Guru Awal Semester</span>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-mono text-slate-500">
+                    {slot.matchedSchedule.teacherAssignments && slot.matchedSchedule.teacherAssignments.length > 0
+                      ? `s.d. ${slot.matchedSchedule.teacherAssignments[0].effectiveFrom}`
+                      : "Aktif"}
+                  </span>
+                </div>
+
+                {/* Additional assignments */}
+                {slot.matchedSchedule.teacherAssignments?.map((asg, idx) => (
+                  <div key={idx} className="flex items-center justify-between p-2 rounded-lg bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/40">
+                    <div className="flex items-center gap-2">
+                      <span className="h-2 w-2 rounded-full bg-blue-500" />
+                      <div>
+                        <span className="font-bold text-blue-900 dark:text-blue-300">
+                          {asg.teacherName || teachers.find(t => t.id === asg.teacherId)?.name || asg.teacherId}
+                        </span>
+                        {asg.notes && <span className="text-[10px] text-blue-600/80 dark:text-blue-400/80 block">{asg.notes}</span>}
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-mono font-bold text-blue-700 dark:text-blue-300">
+                      Mulai {asg.effectiveFrom}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Form to switch teacher */}
+            <div className="space-y-3 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl p-3.5">
+              <span className="text-xs font-bold text-slate-800 dark:text-zinc-200 block">
+                Formulir Pergantian Pengampu:
+              </span>
+
+              <div>
+                <label className="text-[11px] font-semibold text-slate-600 dark:text-zinc-400 block mb-1">
+                  Guru Pengampu Baru:
+                </label>
+                <select
+                  value={newTeacherId}
+                  onChange={(e) => setNewTeacherId(e.target.value)}
+                  className="w-full bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-xl p-2 text-xs text-slate-700 dark:text-zinc-300 focus:ring-1 focus:ring-blue-500 cursor-pointer"
+                >
+                  <option value="">Pilih Guru Baru...</option>
+                  {teachers.map(t => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} {t.nip ? `(${t.nip})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-semibold text-slate-600 dark:text-zinc-400 block mb-1">
+                  Mulai Berlaku Tanggal:
+                </label>
+                <input
+                  type="date"
+                  value={effectiveFrom}
+                  onChange={(e) => setEffectiveFrom(e.target.value)}
+                  className="w-full bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-xl p-2 text-xs text-slate-700 dark:text-zinc-300 focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-semibold text-slate-600 dark:text-zinc-400 block mb-1">
+                  Catatan Alasan (Opsional):
+                </label>
+                <input
+                  type="text"
+                  placeholder="Contoh: Pergantian penugasan tengah semester"
+                  value={assignmentNotes}
+                  onChange={(e) => setAssignmentNotes(e.target.value)}
+                  className="w-full bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-xl p-2 text-xs text-slate-700 dark:text-zinc-300 focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+
+              <label className="flex items-start gap-2 cursor-pointer pt-1">
+                <input
+                  type="checkbox"
+                  checked={applyToMatchingSlots}
+                  onChange={(e) => setApplyToMatchingSlots(e.target.checked)}
+                  className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4 cursor-pointer"
+                />
+                <span className="text-[11px] text-slate-600 dark:text-zinc-400 leading-tight">
+                  Terapkan juga ke seluruh slot <b>{slot.matchedSchedule.subjectName}</b> pada <b>{slot.className}</b>.
+                </span>
+              </label>
+            </div>
+
+            {/* Immutability guarantee banner */}
+            <div className="p-3 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/40 rounded-xl flex items-start gap-2 text-emerald-800 dark:text-emerald-300 text-[11px]">
+              <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5 text-emerald-600" />
+              <div>
+                <span className="font-bold block">Prinsip Immutability Riwayat</span>
+                <span>Seluruh presensi & jurnal mengajar sebelum tanggal {effectiveFrom || "terpilih"} tetap tercatat atas nama guru sebelumnya secara aman.</span>
+              </div>
+            </div>
+
+            {assignmentSuccessMsg && (
+              <div className="p-3 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-200 rounded-xl text-xs font-bold text-center">
+                {assignmentSuccessMsg}
+              </div>
+            )}
+
+            {/* Action buttons */}
+            <div className="flex items-center justify-end gap-2 border-t border-slate-100 dark:border-zinc-800/80 pt-3">
+              <button
+                onClick={onClose}
+                className="px-3.5 py-2 border border-slate-200 dark:border-zinc-800 text-slate-600 dark:text-zinc-400 hover:bg-slate-50 dark:hover:bg-zinc-800 text-xs font-bold rounded-xl transition-all cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleSaveTeacherTransfer}
+                disabled={!newTeacherId || !effectiveFrom || isSubmittingAssignment}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-blue-900/10 hover:shadow-blue-900/20 flex items-center gap-1.5 cursor-pointer"
+              >
+                {isSubmittingAssignment ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <UserCheck className="h-3.5 w-3.5" />}
+                Simpan Pergantian Pengampu
+              </button>
             </div>
           </div>
         )}
 
-        {/* MANUAL FORM EDITOR */}
-        <div className="space-y-2">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-            {slot.matchedSchedule ? "Pilih Mapel Pengganti:" : "Atur Manual Slot:"}
-          </span>
-          
+      </div>
+    </div>
+  );
+}
+
+// --- COMPONENT 5: BATCH TEACHER TRANSFER MODAL (PERGANTIAN PENGAMPU TENGAH PERIODE) ---
+export function BatchTeacherTransferModal({
+  isOpen,
+  onClose,
+  activeSchedules,
+  teachers,
+  classes,
+  onSuccess
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  activeSchedules: Schedule[];
+  teachers: Teacher[];
+  classes: Class[];
+  onSuccess: () => void;
+}) {
+  const todayStr = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }, []);
+
+  const [selectedSubjectId, setSelectedSubjectId] = useState<string>("");
+  const [selectedClassIds, setSelectedClassIds] = useState<string[]>([]);
+  const [newTeacherId, setNewTeacherId] = useState<string>("");
+  const [effectiveFrom, setEffectiveFrom] = useState<string>(todayStr);
+  const [notes, setNotes] = useState<string>("Pergantian guru pengampu tengah periode");
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  // Distinct subjects present in active schedules
+  const availableSubjects = useMemo(() => {
+    const map = new Map<string, string>();
+    activeSchedules.forEach(s => {
+      if (s.subjectId && s.subjectName) {
+        map.set(s.subjectId, s.subjectName);
+      }
+    });
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
+  }, [activeSchedules]);
+
+  // Classes that currently have schedules for selectedSubjectId
+  const subjectClasses = useMemo(() => {
+    if (!selectedSubjectId) return [];
+    const classMap = new Map<string, { classId: string; className: string; currentTeacherName: string; slotCount: number }>();
+    activeSchedules
+      .filter(s => s.subjectId === selectedSubjectId)
+      .forEach(s => {
+        if (!classMap.has(s.classId)) {
+          const resolved = resolveTeacherForScheduleDate(s, todayStr);
+          const teacherObj = teachers.find(t => t.id === resolved.teacherId);
+          classMap.set(s.classId, {
+            classId: s.classId,
+            className: s.className,
+            currentTeacherName: teacherObj?.name || s.teacherName || "Guru",
+            slotCount: 0
+          });
+        }
+        const item = classMap.get(s.classId)!;
+        item.slotCount += 1;
+      });
+    return Array.from(classMap.values());
+  }, [activeSchedules, selectedSubjectId, teachers, todayStr]);
+
+  // Auto-select all classes when subject changes
+  React.useEffect(() => {
+    if (subjectClasses.length > 0) {
+      setSelectedClassIds(subjectClasses.map(c => c.classId));
+    } else {
+      setSelectedClassIds([]);
+    }
+  }, [selectedSubjectId, subjectClasses.length]);
+
+  // Matching schedules to update
+  const affectedSchedules = useMemo(() => {
+    if (!selectedSubjectId || selectedClassIds.length === 0) return [];
+    return activeSchedules.filter(s => 
+      s.subjectId === selectedSubjectId && 
+      selectedClassIds.includes(s.classId) &&
+      s.id
+    );
+  }, [activeSchedules, selectedSubjectId, selectedClassIds]);
+
+  const handleToggleClass = (classId: string) => {
+    setSelectedClassIds(prev => 
+      prev.includes(classId) ? prev.filter(id => id !== classId) : [...prev, classId]
+    );
+  };
+
+  const handleSelectAllClasses = () => {
+    if (selectedClassIds.length === subjectClasses.length) {
+      setSelectedClassIds([]);
+    } else {
+      setSelectedClassIds(subjectClasses.map(c => c.classId));
+    }
+  };
+
+  const handleSubmitBatch = async () => {
+    if (affectedSchedules.length === 0 || !newTeacherId || !effectiveFrom) return;
+    const newTeacherObj = teachers.find(t => t.id === newTeacherId);
+    if (!newTeacherObj) return;
+
+    setIsSubmitting(true);
+    try {
+      await scheduleService.changeTeacherAssignment({
+        scheduleIds: affectedSchedules.map(s => s.id!),
+        newTeacherId,
+        newTeacherName: newTeacherObj.name,
+        effectiveFrom,
+        notes,
+        operatorId: "admin",
+        operatorName: "Admin"
+      });
+
+      setSuccessMsg(`Berhasil mengalihkan ${affectedSchedules.length} slot jadwal pada ${selectedClassIds.length} kelas kepada ${newTeacherObj.name} mulai tanggal ${effectiveFrom}!`);
+      onSuccess();
+      setTimeout(() => {
+        onClose();
+      }, 1500);
+    } catch (err: any) {
+      console.error(err);
+      alert(err.message || "Gagal melakukan pergantian guru massal");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4">
+      <div className="fixed inset-0 bg-slate-900/60 dark:bg-zinc-950/80 backdrop-blur-xs transition-opacity" onClick={onClose} />
+      
+      <div className="relative bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl w-full max-w-xl shadow-2xl p-5 sm:p-6 text-left overflow-hidden space-y-4">
+        
+        {/* HEADER */}
+        <div className="flex items-center justify-between border-b border-slate-100 dark:border-zinc-800/80 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400">
+              <UserCheck className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-slate-800 dark:text-zinc-50">
+                Pergantian Guru Pengampu di Tengah Periode
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-zinc-400">
+                Alihkan jadwal guru ke pengampu baru mulai tanggal efektif dengan riwayat presensi lama tetap aman.
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-zinc-200 rounded-lg cursor-pointer">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* STEP 1: PILIH MATA PELAJARAN */}
+        <div className="space-y-1.5">
+          <label className="text-xs font-bold text-slate-700 dark:text-zinc-300 block">
+            1. Pilih Mata Pelajaran yang Mengalami Pergantian Guru:
+          </label>
           <select
             value={selectedSubjectId}
             onChange={(e) => setSelectedSubjectId(e.target.value)}
-            className="w-full bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl p-2.5 text-xs text-slate-700 dark:text-zinc-300 focus:ring-1 focus:ring-blue-500 cursor-pointer"
+            className="w-full bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-xl p-2.5 text-xs text-slate-700 dark:text-zinc-300 focus:ring-1 focus:ring-blue-500 cursor-pointer"
           >
             <option value="">Pilih Mata Pelajaran...</option>
-            {options.map((opt) => (
-              <option 
-                key={opt.matrixItem.subjectId} 
-                value={opt.matrixItem.subjectId}
-                disabled={opt.remaining === 0 && opt.matrixItem.subjectId !== slot.matchedSchedule?.subjectId}
-              >
-                {opt.matrixItem.subjectName} ({opt.resolvedTeacherName}) 
-                {opt.remaining === 0 ? " - [JP Terpenuhi]" : ` - [Kurang ${opt.remaining} JP]`}
-                {opt.teacherConflictClass ? ` - [Bentrok di Kelas ${opt.teacherConflictClass}]` : ""}
-              </option>
+            {availableSubjects.map(sub => (
+              <option key={sub.id} value={sub.id}>{sub.name}</option>
             ))}
           </select>
         </div>
 
-        {/* LIVE FORM VALIDATION WARNINGS */}
-        {currentSelectionDetails && (
-          <div className="bg-slate-50 dark:bg-zinc-950/20 p-3 rounded-xl text-xs space-y-1">
-            <div className="flex justify-between">
-              <span className="text-slate-400">Kebutuhan JP:</span>
-              <span className="font-bold text-slate-700 dark:text-zinc-300">{currentSelectionDetails.required} JP</span>
+        {/* STEP 2: PILIH KELAS YANG TERDAMPAK */}
+        {selectedSubjectId && subjectClasses.length > 0 && (
+          <div className="space-y-2 bg-slate-50 dark:bg-zinc-950/40 p-3 rounded-xl border border-slate-100 dark:border-zinc-850">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-700 dark:text-zinc-300 block">
+                2. Pilih Kelas yang Dialihkan ({selectedClassIds.length}/{subjectClasses.length} Kelas Terpilih):
+              </label>
+              <button
+                type="button"
+                onClick={handleSelectAllClasses}
+                className="text-[10px] font-bold text-blue-600 hover:underline cursor-pointer"
+              >
+                {selectedClassIds.length === subjectClasses.length ? "Batal Pilih Semua" : "Pilih Semua"}
+              </button>
             </div>
-            <div className="flex justify-between">
-              <span className="text-slate-400">Telah Terjadwal:</span>
-              <span className="font-bold text-slate-700 dark:text-zinc-300">{currentSelectionDetails.scheduled} JP</span>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-36 overflow-y-auto pr-1">
+              {subjectClasses.map(c => {
+                const isSelected = selectedClassIds.includes(c.classId);
+                return (
+                  <div
+                    key={c.classId}
+                    onClick={() => handleToggleClass(c.classId)}
+                    className={`p-2.5 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
+                      isSelected
+                        ? "bg-blue-50/80 border-blue-300 text-blue-900 dark:bg-blue-950/30 dark:border-blue-800 dark:text-blue-200"
+                        : "bg-white dark:bg-zinc-900 border-slate-200 dark:border-zinc-800 text-slate-600 dark:text-zinc-400"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className={`h-4 w-4 rounded flex items-center justify-center border ${
+                        isSelected ? "bg-blue-600 border-blue-600 text-white" : "border-slate-300 dark:border-zinc-700"
+                      }`}>
+                        {isSelected && <Check className="h-3 w-3" />}
+                      </div>
+                      <div>
+                        <span className="text-xs font-bold block">{c.className}</span>
+                        <span className="text-[10px] opacity-75 block">Pengampu saat ini: {c.currentTeacherName}</span>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300">
+                      {c.slotCount} Slot
+                    </span>
+                  </div>
+                );
+              })}
             </div>
-            
-            {currentSelectionDetails.teacherConflictClass && (
-              <div className="text-rose-500 font-bold text-[10px] mt-1.5 border-t border-dashed border-rose-200/50 pt-1.5 flex items-center gap-1">
-                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                <span>Peringatan: Guru Bentrok mengajar di Kelas {currentSelectionDetails.teacherConflictClass}!</span>
-              </div>
-            )}
           </div>
         )}
 
-        {/* ACTION BUTTONS */}
-        <div className="flex items-center justify-between border-t border-slate-100 dark:border-zinc-800/80 pt-4 mt-2 gap-2">
-          {slot.matchedSchedule ? (
-            <button
-              onClick={() => {
-                onDelete();
-                onClose();
-              }}
-              className="px-3.5 py-2 border border-rose-200 text-rose-600 hover:bg-rose-50 dark:border-rose-950/60 dark:text-rose-400 dark:hover:bg-rose-950/20 text-xs font-bold rounded-xl transition-all flex items-center gap-1 cursor-pointer"
-            >
-              <Trash2 className="h-3.5 w-3.5" /> Hapus Jadwal
-            </button>
-          ) : (
-            <div />
-          )}
+        {/* STEP 3 & 4: GURU BARU & TANGGAL EFEKTIF */}
+        {selectedSubjectId && selectedClassIds.length > 0 && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-bold text-slate-700 dark:text-zinc-300 block mb-1">
+                3. Guru Pengampu Baru:
+              </label>
+              <select
+                value={newTeacherId}
+                onChange={(e) => setNewTeacherId(e.target.value)}
+                className="w-full bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-xl p-2.5 text-xs text-slate-700 dark:text-zinc-300 focus:ring-1 focus:ring-blue-500 cursor-pointer"
+              >
+                <option value="">Pilih Guru Baru...</option>
+                {teachers.map(t => (
+                  <option key={t.id} value={t.id}>
+                    {t.name} {t.nip ? `(${t.nip})` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onClose}
-              className="px-3.5 py-2 border border-slate-200 dark:border-zinc-800 text-slate-600 dark:text-zinc-400 hover:bg-slate-50 dark:hover:bg-zinc-800 text-xs font-bold rounded-xl transition-all cursor-pointer"
-            >
-              Tutup
-            </button>
-            <button
-              onClick={() => {
-                if (selectedSubjectId) {
-                  const targetOpt = options.find(o => o.matrixItem.subjectId === selectedSubjectId);
-                  if (targetOpt) {
-                    onSave(selectedSubjectId, targetOpt.resolvedTeacherId);
-                    onClose();
-                  }
-                }
-              }}
-              disabled={!selectedSubjectId}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-blue-900/10 hover:shadow-blue-900/20 flex items-center gap-1 cursor-pointer"
-            >
-              Simpan Perubahan
-            </button>
+            <div>
+              <label className="text-xs font-bold text-slate-700 dark:text-zinc-300 block mb-1">
+                4. Mulai Berlaku Tanggal (Effective Date):
+              </label>
+              <input
+                type="date"
+                value={effectiveFrom}
+                onChange={(e) => setEffectiveFrom(e.target.value)}
+                className="w-full bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-xl p-2 text-xs text-slate-700 dark:text-zinc-300 focus:ring-1 focus:ring-blue-500"
+              />
+            </div>
           </div>
+        )}
+
+        {/* CATATAN */}
+        {selectedSubjectId && selectedClassIds.length > 0 && (
+          <div>
+            <label className="text-xs font-bold text-slate-700 dark:text-zinc-300 block mb-1">
+              5. Catatan Penugasan (Opsional):
+            </label>
+            <input
+              type="text"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Contoh: Menggantikan Guru A mulai pertengahan semester"
+              className="w-full bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-xl p-2 text-xs text-slate-700 dark:text-zinc-300 focus:ring-1 focus:ring-blue-500"
+            />
+          </div>
+        )}
+
+        {/* SUMMARY & IMMUTABILITY GUARANTEE */}
+        {selectedSubjectId && selectedClassIds.length > 0 && newTeacherId && (
+          <div className="p-3 bg-blue-50/80 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/50 rounded-xl space-y-1.5 text-xs text-blue-950 dark:text-blue-200">
+            <div className="flex items-center gap-1.5 font-bold text-blue-800 dark:text-blue-300">
+              <Info className="h-4 w-4 shrink-0" />
+              <span>Ringkasan Pengalihan Tugas</span>
+            </div>
+            <p className="text-[11px] leading-relaxed">
+              Sebanyak <b>{affectedSchedules.length} slot jadwal</b> pada <b>{selectedClassIds.length} kelas</b> akan dialihkan kepada <b>{teachers.find(t => t.id === newTeacherId)?.name}</b> mulai tanggal <b>{effectiveFrom}</b>.
+            </p>
+            <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold border-t border-blue-100 dark:border-blue-900/40 pt-1">
+              ✓ Riwayat presensi, jurnal, dan laporan disiplin sebelum tanggal {effectiveFrom} tetap utuh atas nama guru lama.
+            </p>
+          </div>
+        )}
+
+        {successMsg && (
+          <div className="p-3 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-200 rounded-xl text-xs font-bold text-center">
+            {successMsg}
+          </div>
+        )}
+
+        {/* FOOTER ACTIONS */}
+        <div className="flex items-center justify-end gap-2 border-t border-slate-100 dark:border-zinc-800/80 pt-3">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 border border-slate-200 dark:border-zinc-800 text-slate-600 dark:text-zinc-400 hover:bg-slate-50 dark:hover:bg-zinc-800 text-xs font-bold rounded-xl transition-all cursor-pointer"
+          >
+            Batal
+          </button>
+          <button
+            onClick={handleSubmitBatch}
+            disabled={affectedSchedules.length === 0 || !newTeacherId || !effectiveFrom || isSubmitting}
+            className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-blue-900/10 hover:shadow-blue-900/20 flex items-center gap-1.5 cursor-pointer"
+          >
+            {isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <UserCheck className="h-3.5 w-3.5" />}
+            Terapkan Pergantian Pengampu
+          </button>
         </div>
 
       </div>

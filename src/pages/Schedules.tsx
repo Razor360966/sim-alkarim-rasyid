@@ -22,7 +22,8 @@ import {
   School,
   Clock,
   BookOpen,
-  Settings
+  Settings,
+  UserCheck
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useSchedules } from "../hooks/schedule.hook";
@@ -41,6 +42,7 @@ import {
   PreAnalysisPanel, 
   PostAnalysisPanel, 
   ScheduleEditorDialog, 
+  BatchTeacherTransferModal,
   getSlotStyling 
 } from "../components/ScheduleHelper";
 
@@ -144,6 +146,7 @@ export default function Schedules() {
   // --- VIEW STATE ---
   // "class" (Jadwal per Kelas), "teacher" (Jadwal per Guru), "weekly" (Jadwal Mingguan / Master Schedule)
   const [activeTab, setActiveTab] = useState<"class" | "teacher" | "weekly">("weekly");
+  const [isBatchTransferOpen, setIsBatchTransferOpen] = useState(false);
 
   // Spreadsheet spreadsheet state
   const [selectedCell, setSelectedCell] = useState<{
@@ -247,7 +250,8 @@ export default function Schedules() {
     toggleLock,
     isLocking,
     publishSchedules,
-    isPublishing
+    isPublishing,
+    refetch
   } = useSchedules(selectedYearId, selectedSemesterId);
 
   // Active working set: preview if available, otherwise saved dbSchedules
@@ -1983,6 +1987,16 @@ export default function Schedules() {
           </button>
 
           <button
+            onClick={() => setIsBatchTransferOpen(true)}
+            disabled={activeSchedules.length === 0}
+            className="px-3.5 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-purple-900/10 hover:shadow-purple-900/20 flex items-center gap-1.5 cursor-pointer"
+            title="Ganti guru pengampu mapel di tengah periode (berlaku mulai tanggal efektif tanpa mengubah presensi masa lalu)"
+          >
+            <UserCheck className="h-3.5 w-3.5 text-purple-200" />
+            Ganti Pengampu Tengah Periode
+          </button>
+
+          <button
             onClick={handleReset}
             disabled={isResetting || !selectedSemesterId}
             className="px-3.5 py-2 border border-rose-200 dark:border-rose-950 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/20 disabled:opacity-50 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5"
@@ -3231,8 +3245,24 @@ export default function Schedules() {
           activeSchedules={activeSchedules}
           onSave={handleSaveManualSlot}
           onDelete={handleDeleteManualSlot}
+          onAssignmentUpdated={() => {
+            refetch();
+          }}
         />
       )}
+
+      {/* BATCH TEACHER TRANSFER MODAL */}
+      <BatchTeacherTransferModal
+        isOpen={isBatchTransferOpen}
+        onClose={() => setIsBatchTransferOpen(false)}
+        activeSchedules={activeSchedules}
+        teachers={teachers}
+        classes={classes}
+        onSuccess={() => {
+          refetch();
+          toast("Pergantian guru pengampu berhasil diterapkan!", "success");
+        }}
+      />
 
     </div>
   );

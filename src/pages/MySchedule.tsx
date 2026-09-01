@@ -18,7 +18,7 @@ import {
   LayoutGrid,
   ListFilter
 } from "lucide-react";
-import { scheduleService } from "../services/schedule.service";
+import { scheduleService, resolveTeacherForScheduleDate, isTeacherActiveForScheduleOnDate } from "../services/schedule.service";
 import { lessonPeriodService } from "../services/lessonPeriod.service";
 import { teacherService } from "../services/teacherService";
 import { classService } from "../services/classService";
@@ -103,11 +103,21 @@ export const MySchedule: React.FC = () => {
     return daysIndonesian[new Date().getDay()];
   }, []);
 
+  const todayStr = useMemo(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  }, []);
+
   // Filter schedules for the selected teacher
   const teacherSchedules = useMemo(() => {
     if (!selectedTeacherId) return [];
-    return allSchedules.filter(s => s.teacherId === selectedTeacherId);
-  }, [allSchedules, selectedTeacherId]);
+    return allSchedules.filter(s => {
+      if (isTeacherActiveForScheduleOnDate(s, selectedTeacherId, todayStr)) return true;
+      if (s.teacherId === selectedTeacherId) return true;
+      if (Array.isArray(s.teacherAssignments) && s.teacherAssignments.some(a => a.teacherId === selectedTeacherId)) return true;
+      return false;
+    });
+  }, [allSchedules, selectedTeacherId, todayStr]);
 
   // Helper function to match current time against a lesson period
   const parseTimeToMinutes = (t?: string | null): number | null => {
@@ -121,7 +131,6 @@ export const MySchedule: React.FC = () => {
   // Enhance schedules with periods, journals, status
   const enhancedSchedules = useMemo(() => {
     const now = new Date();
-    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     const currentMin = now.getHours() * 60 + now.getMinutes();
 
     return teacherSchedules.map(s => {

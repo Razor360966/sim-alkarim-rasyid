@@ -22,7 +22,7 @@ import {
   ScheduleExchangeRecord,
   LeadershipMonitoringStats
 } from "../types/teacherTeachingAttendance.types";
-import { scheduleService } from "./schedule.service";
+import { scheduleService, resolveTeacherForScheduleDate } from "./schedule.service";
 import { academicPlanningService } from "./academicPlanning.service";
 import { lessonPeriodService } from "./lessonPeriod.service";
 import { classService } from "./classService";
@@ -621,7 +621,8 @@ export const teacherTeachingAttendanceService = {
       const matchesAy = !academicYearId || s.academicYearId === academicYearId;
       const matchesSem = !semesterId || s.semesterId === semesterId;
       const matchesDay = (s.day || "").trim().toLowerCase() === dayName.toLowerCase();
-      const hasTeacher = !!s.teacherId && s.teacherId !== "none" && s.teacherId !== "";
+      const resolved = resolveTeacherForScheduleDate(s, dateStr);
+      const hasTeacher = !!resolved.teacherId && resolved.teacherId !== "none" && resolved.teacherId !== "";
       return matchesAy && matchesSem && matchesDay && hasTeacher;
     });
 
@@ -649,6 +650,7 @@ export const teacherTeachingAttendanceService = {
     // 4. Merge schedule items with existing attendance records
     const items: TeacherTeachingAttendance[] = activeSchedules.map(sch => {
       const existing = existingRecords.get(sch.id!);
+      const resolvedTeacher = resolveTeacherForScheduleDate(sch, dateStr);
 
       // Find period for dayName
       const dayPeriods = lessonPeriods.filter(p => (p.day || "").trim().toLowerCase() === dayName.toLowerCase());
@@ -691,10 +693,11 @@ export const teacherTeachingAttendanceService = {
         return {
           ...existing,
           scheduleId: sch.id!,
-          teacherId: sch.teacherId,
-          teacherName: sch.teacherName,
-          subjectId: sch.subjectId,
-          subjectName: sch.subjectName,
+          // IMMUTABILITY: Keep saved teacher if already recorded in Firestore, otherwise fallback to date-resolved teacher
+          teacherId: existing.teacherId || resolvedTeacher.teacherId,
+          teacherName: existing.teacherName || resolvedTeacher.teacherName,
+          subjectId: existing.subjectId || sch.subjectId,
+          subjectName: existing.subjectName || sch.subjectName,
           classId: sch.classId,
           className: sch.className,
           gradeLevel: cls?.gradeLevel || "",
@@ -717,8 +720,8 @@ export const teacherTeachingAttendanceService = {
         academicYearId: sch.academicYearId || academicYearId,
         semesterId: sch.semesterId || semesterId,
         scheduleId: sch.id!,
-        teacherId: sch.teacherId,
-        teacherName: sch.teacherName,
+        teacherId: resolvedTeacher.teacherId,
+        teacherName: resolvedTeacher.teacherName,
         subjectId: sch.subjectId,
         subjectName: sch.subjectName,
         classId: sch.classId,
