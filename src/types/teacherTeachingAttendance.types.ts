@@ -75,12 +75,22 @@ export interface TeacherTeachingAttendance {
   manualCheckOutTime?: string;
   manualCheckOutReason?: string;
 
-  // Wakakur Late Unlock fields
+  // Wakakur Late Unlock & >15 Min Validation fields
   isLateUnlocked?: boolean;
   lateUnlockedByUserId?: string;
   lateUnlockedByUserName?: string;
   lateUnlockedAt?: string;
   lateUnlockReason?: string;
+  
+  // Late > 15 minutes validation fields
+  lateMinutes?: number;
+  scheduleStartTime?: string;
+  scheduleEndTime?: string;
+  requiresLateValidation?: boolean;
+  lateValidationStatus?: "PENDING" | "APPROVED" | "REJECTED";
+  validatedByRole?: string;
+  lateStatusLabel?: string;
+  teacherNiy?: string;
 
   recordedByUserId?: string;
   recordedByUserName?: string;

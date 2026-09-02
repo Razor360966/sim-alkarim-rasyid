@@ -307,6 +307,33 @@ export const TeachingQrSimulationPage: React.FC = () => {
     }
   };
 
+  // Handle Validate Late Attendance in Simulation Mode
+  const handleValidateSimulationAttendance = async (attendanceId: string, status: "Approved" | "Rejected") => {
+    try {
+      setProcessing(true);
+      await teacherTeachingAttendanceService.validateAttendance({
+        attendanceId,
+        dateStr: todayStr,
+        status,
+        validationNote: status === "Approved" ? "Persetujuan Keterlambatan Simulasi (Wakakur/Kepsek)" : "Penolakan Keterlambatan Simulasi",
+        validatorUserId: user?.id || "admin",
+        validatorUserName: user?.name || "Waka Kurikulum / Kepala Sekolah",
+        validatorRole: "Waka Kurikulum / Kepala Sekolah",
+        isSimulation: true
+      });
+
+      setScanResult({
+        type: "success",
+        message: `Sesi simulasi berhasil ${status === "Approved" ? "DISETUJUI (JP Hadir dihitung)" : "DITOLAK"}.`
+      });
+      await fetchSimulationData();
+    } catch (err: any) {
+      alert("Gagal memvalidasi sesi simulasi: " + err.message);
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   // Wakakur Unlock Simulation Session
   const handleUnlockSimulationSession = async () => {
     if (!unlockModalItem) return;
@@ -774,12 +801,44 @@ export const TeachingQrSimulationPage: React.FC = () => {
                         )}
                       </td>
                       <td className="p-3.5 text-center">
-                        <span className={`px-2.5 py-1 text-[11px] font-extrabold rounded-full ${badgeClass}`}>
-                          {item.checkInTime && !item.checkOutTime ? "SEDANG MENGAJAR" : item.checkInTime && item.checkOutTime ? "SESI SELESAI" : status}
-                        </span>
+                        {item.requiresLateValidation && item.attendanceStatus === "Pending" ? (
+                          <div className="space-y-1">
+                            <span className="px-2.5 py-1 text-[10px] font-black rounded-full bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-300">
+                              TERLAMBAT &gt;15M (PENDING)
+                            </span>
+                            <div className="text-[10px] text-rose-600 font-bold">
+                              +{(item as any).lateMinutes || 0} mnt (Kehadiran: 0 JP)
+                            </div>
+                          </div>
+                        ) : (
+                          <span className={`px-2.5 py-1 text-[11px] font-extrabold rounded-full ${badgeClass}`}>
+                            {item.checkInTime && !item.checkOutTime ? "SEDANG MENGAJAR" : item.checkInTime && item.checkOutTime ? "SESI SELESAI" : status}
+                          </span>
+                        )}
                       </td>
                       <td className="p-3.5 text-center">
-                        {(status === "DIKUNCI" || (item as any).isLateUnlocked) ? (
+                        {item.requiresLateValidation && item.attendanceStatus === "Pending" && item.id ? (
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              onClick={() => handleValidateSimulationAttendance(item.id!, "Approved")}
+                              disabled={processing}
+                              className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] rounded-lg transition-colors inline-flex items-center gap-1 cursor-pointer"
+                              title="Validasi: Setujui Hadir"
+                            >
+                              <CheckCircle2 className="w-3 h-3" />
+                              <span>Setujui</span>
+                            </button>
+                            <button
+                              onClick={() => handleValidateSimulationAttendance(item.id!, "Rejected")}
+                              disabled={processing}
+                              className="px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white font-bold text-[10px] rounded-lg transition-colors inline-flex items-center gap-1 cursor-pointer"
+                              title="Tolak Absensi"
+                            >
+                              <ShieldAlert className="w-3 h-3" />
+                              <span>Tolak</span>
+                            </button>
+                          </div>
+                        ) : (status === "DIKUNCI" || (item as any).isLateUnlocked) ? (
                           <button
                             onClick={() => setUnlockModalItem(item)}
                             className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white font-bold text-[11px] rounded-lg transition-colors inline-flex items-center gap-1 cursor-pointer"

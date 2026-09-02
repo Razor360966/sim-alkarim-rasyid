@@ -1273,11 +1273,34 @@ export const teacherTeachingAttendanceService = {
     const tas = schoolSettings?.teachingAttendanceSettings || DEFAULT_TEACHING_ATTENDANCE_SETTINGS;
     const conds = tas.pendingValidationConditions || DEFAULT_TEACHING_ATTENDANCE_SETTINGS.pendingValidationConditions;
 
-    // If already manually validated by Waka/Admin, preserve manual decision
+    // If already manually validated by Waka/Admin/Kepsek, preserve manual decision
     if (item.validatedByUserId && (item.attendanceStatus === "Approved" || item.attendanceStatus === "Rejected")) {
       return {
         attendanceStatus: item.attendanceStatus,
         pendingReason: item.pendingReason || "",
+        approvalType: "Manual"
+      };
+    }
+
+    // Specific Rule: Keterlambatan > 15 Menit dari Jadwal Dimulai
+    if (item.requiresLateValidation) {
+      if (item.attendanceStatus === "Approved") {
+        return {
+          attendanceStatus: "Approved",
+          pendingReason: "",
+          approvalType: "Manual"
+        };
+      }
+      if (item.attendanceStatus === "Rejected") {
+        return {
+          attendanceStatus: "Rejected",
+          pendingReason: item.validationNote || "Ditolak Validasi Keterlambatan",
+          approvalType: "Manual"
+        };
+      }
+      return {
+        attendanceStatus: "Pending",
+        pendingReason: "TERLAMBAT >15 MENIT — MENUNGGU VALIDASI",
         approvalType: "Manual"
       };
     }
@@ -1789,12 +1812,30 @@ export const teacherTeachingAttendanceService = {
 
           case "Terlambat":
             sum.jmlJp += recJP;
-            sum.hadirJP += recJP; // Kehadiran murni tetap terhitung penuh
-            sum.terlambatJP += recJP; // Informasi murni (tidak mengurangi kehadiran/total JP)
-            sum.hadir++;
             sum.terlambat++;
-            sum.executedEncounters++;
-            sum.executedJP += recJP;
+            sum.terlambatJP += recJP;
+
+            {
+              // Keterlambatan >15 Menit: Evaluasi status validasi
+              const isLateOver15 = !!rec.requiresLateValidation || (rec.lateMinutes !== undefined && rec.lateMinutes > 15);
+              const isLatePending = isLateOver15 && (rec.attendanceStatus === "Pending" || (!rec.validatedByUserId && rec.lateValidationStatus === "PENDING"));
+              const isLateRejected = isLateOver15 && (rec.attendanceStatus === "Rejected" || rec.lateValidationStatus === "REJECTED");
+
+              if (isLatePending) {
+                // Terkunci untuk perhitungan kehadiran (Kehadiran = 0 sementara sampai divalidasi)
+                // Tidak masuk hadirJP
+              } else if (isLateRejected) {
+                // Validasi ditolak -> masuk ke tidakHadirJP (tidak dihitung hadir)
+                sum.tidakHadirJP += recJP;
+                sum.tidakHadir++;
+              } else {
+                // Validasi diterima (Approved) ATAU keterlambatan normal <= 15 menit:
+                sum.hadirJP += recJP;
+                sum.hadir++;
+                sum.executedEncounters++;
+                sum.executedJP += recJP;
+              }
+            }
             break;
 
           case "Izin":
@@ -2632,26 +2673,32 @@ export const teacherTeachingAttendanceService = {
 
       // Perform Per-JP Attendance Evaluation ONLY for targetGroup.items
       const missedJpList: string[] = [];
-      const activeJpList: { label: string; status: AttendanceTeachingStatus }[] = [];
-
-      const sessionStartM = targetGroup.startM;
+      const activeJpList: { label: string; status: AttendanceTeachingStatus; isPendingLate?: boolean; lateMinutes?: number }[] = [];
 
       for (const item of targetGroup.items) {
         const itemRange = getLessonPeriodTimeRange({ timeSlot: item.timeSlot, sequence: item.sequence });
         const jpLabel = item.jp || `JP ${item.sequence}`;
+        const itemStartM = itemRange.startM;
+        const itemEndM = itemRange.endM;
 
         if (item.checkInTime && item.status !== "Belum Terkonfirmasi" && item.status !== "Belum Diverifikasi") {
           if (item.status === "Tidak Hadir") {
             missedJpList.push(jpLabel);
           } else if (item.status === "Terlambat" || item.status === "Hadir Mengajar") {
-            activeJpList.push({ label: jpLabel, status: item.status as AttendanceTeachingStatus });
+            const isPendingLate = item.requiresLateValidation && (item.attendanceStatus === "Pending" || item.lateValidationStatus === "PENDING");
+            activeJpList.push({ label: jpLabel, status: item.status as AttendanceTeachingStatus, isPendingLate, lateMinutes: item.lateMinutes || 0 });
           }
           continue;
         }
 
-        if (currentM >= itemRange.endM) {
+        if (currentM >= itemEndM) {
           // JP ended before scan -> TIDAK HADIR
           item.status = "Tidak Hadir";
+          item.attendanceStatus = "Approved";
+          item.approvalType = "Automatic";
+          item.requiresLateValidation = false;
+          item.scheduleStartTime = itemRange.startStr;
+          item.scheduleEndTime = itemRange.endStr;
           item.updatedAt = new Date().toISOString();
           if (matchedClass?.id) {
             item.classId = matchedClass.id;
@@ -2667,18 +2714,49 @@ export const teacherTeachingAttendanceService = {
           );
           missedJpList.push(jpLabel);
         } else {
-          // Active or upcoming JP in targetGroup -> Check-In for targetGroup
-          const isPunctual = (currentM <= sessionStartM + 15);
-          const activeStatus: AttendanceTeachingStatus = isPunctual ? "Hadir Mengajar" : "Terlambat";
+          // Scan occurs before JP ends -> Check-In for this JP
+          const lateMinutes = currentM > itemStartM ? (currentM - itemStartM) : 0;
+          const isLateOver15 = currentM > (itemStartM + 15);
+          const isPunctualOrNormalLate = !isLateOver15;
 
           item.checkInTime = currentTimeStr;
           item.checkInType = "Scan QR";
-          item.status = activeStatus;
+          item.scheduleStartTime = itemRange.startStr;
+          item.scheduleEndTime = itemRange.endStr;
+          item.lateMinutes = lateMinutes;
           item.updatedAt = new Date().toISOString();
 
           if (matchedClass?.id) {
             item.classId = matchedClass.id;
             item.className = matchedClass.name;
+          }
+
+          if (isLateOver15) {
+            // KONDISI B: Terlambat > 15 Menit -> Status TERLAMBAT >15 MENIT — MENUNGGU VALIDASI
+            // JP dikunci untuk perhitungan kehadiran (Kehadiran = 0 sementara sampai divalidasi)
+            item.status = "Terlambat";
+            item.attendanceStatus = "Pending";
+            item.approvalType = "Manual";
+            item.requiresLateValidation = true;
+            item.lateValidationStatus = "PENDING";
+            item.pendingReason = "TERLAMBAT >15 MENIT — MENUNGGU VALIDASI";
+            item.notes = `Terlambat scan ${lateMinutes} menit (Jadwal: ${itemRange.startStr} WIB, Scan: ${currentTimeStr} WIB). Menunggu validasi Kepala Sekolah / Waka Kurikulum.`;
+
+            activeJpList.push({ label: jpLabel, status: "Terlambat", isPendingLate: true, lateMinutes });
+          } else {
+            // KONDISI A: Tepat Waktu atau Keterlambatan normal <= 15 Menit
+            const activeStatus: AttendanceTeachingStatus = (currentM > itemStartM) ? "Terlambat" : "Hadir Mengajar";
+            item.status = activeStatus;
+            item.attendanceStatus = "Approved";
+            item.approvalType = "Automatic";
+            item.requiresLateValidation = false;
+            item.lateValidationStatus = "APPROVED";
+            item.pendingReason = "";
+            if (lateMinutes > 0) {
+              item.notes = `Scan terlambat ${lateMinutes} menit (Toleransi <=15 Menit).`;
+            }
+
+            activeJpList.push({ label: jpLabel, status: activeStatus, isPendingLate: false, lateMinutes });
           }
 
           if (!item.checkInLogs) item.checkInLogs = [];
@@ -2692,11 +2770,10 @@ export const teacherTeachingAttendanceService = {
             `QR Code CHECK_IN (${jpLabel}): ${currentTimeStr}`,
             params.isSimulation
           );
-
-          activeJpList.push({ label: jpLabel, status: activeStatus });
         }
       }
 
+      const hasPendingLate = activeJpList.some(a => a.isPendingLate);
       const primaryActive = activeJpList[0];
       const mainStatus = primaryActive ? primaryActive.status : "Terlambat";
 
@@ -2718,9 +2795,11 @@ export const teacherTeachingAttendanceService = {
         previousStatus: "BELUM ABSEN",
         newStatus: mainStatus,
         action: "CHECK_IN",
-        reason: mainStatus === "Terlambat" ? "Check-In Terlambat" : "Check-In Tepat Waktu",
-        validationResult: "Sukses",
-        isLateInput: mainStatus === "Terlambat"
+        reason: hasPendingLate 
+          ? "Check-In Terlambat >15 Menit (Menunggu Validasi Pimpinan/Wakakur)" 
+          : (mainStatus === "Terlambat" ? "Check-In Terlambat Normal (<=15 Menit)" : "Check-In Tepat Waktu"),
+        validationResult: hasPendingLate ? "Menunggu Validasi" : "Sukses",
+        isLateInput: hasPendingLate || mainStatus === "Terlambat"
       }));
 
       const statusLines: string[] = [];
@@ -2728,12 +2807,20 @@ export const teacherTeachingAttendanceService = {
         statusLines.push(`• ${missedJpList.join(", ")}: TIDAK HADIR (Terlewat)`);
       }
       if (activeJpList.length > 0) {
-        const labels = activeJpList.map(a => a.label).join(", ");
-        const badge = activeJpList.some(a => a.status === "Terlambat") ? "TERLAMBAT" : "HADIR (Tepat Waktu)";
-        statusLines.push(`• ${labels}: ${badge}`);
+        activeJpList.forEach(a => {
+          if (a.isPendingLate) {
+            statusLines.push(`• ${a.label}: TERLAMBAT >15 MENIT — MENUNGGU VALIDASI (+${a.lateMinutes} menit, Kehadiran sementara = 0)`);
+          } else if (a.status === "Terlambat") {
+            statusLines.push(`• ${a.label}: TERLAMBAT (Toleransi <=15 Menit, +${a.lateMinutes} menit)`);
+          } else {
+            statusLines.push(`• ${a.label}: HADIR (Tepat Waktu)`);
+          }
+        });
       }
 
-      const checkInSuccessMsg = `CHECK IN Berhasil di Kelas ${targetClassName} (${targetGroup.subjectName} - ${targetGroup.jpLabel}).\n\nDetail Status Sesi:\n${statusLines.join("\n")}`;
+      const checkInSuccessMsg = hasPendingLate
+        ? `⚠️ CHECK IN TERCATAT — TERLAMBAT >15 MENIT\nKelas ${targetClassName} (${targetGroup.subjectName} - ${targetGroup.jpLabel})\n\nDetail Status Sesi:\n${statusLines.join("\n")}\n\nPerhatian: Sesi yang terlambat >15 menit dikunci untuk perhitungan kehadiran sampai divalidasi oleh Kepala Sekolah / Waka Kurikulum. Sesi JP selanjutnya tetap terbuka.`
+        : `CHECK IN Berhasil di Kelas ${targetClassName} (${targetGroup.subjectName} - ${targetGroup.jpLabel}).\n\nDetail Status Sesi:\n${statusLines.join("\n")}`;
 
       return {
         success: true,
@@ -2872,7 +2959,7 @@ export const teacherTeachingAttendanceService = {
     }
   },
 
-  // Validate Attendance (Approve / Reject) by Wakakur / Admin
+  // Validate Attendance (Approve / Reject) by Kepala Sekolah / Wakakur / Admin
   async validateAttendance(params: {
     attendanceId: string;
     dateStr?: string;
@@ -2880,25 +2967,31 @@ export const teacherTeachingAttendanceService = {
     validationNote?: string;
     validatorUserId: string;
     validatorUserName: string;
+    validatorRole?: string;
+    isSimulation?: boolean;
   }): Promise<void> {
     const resolvedUid = resolveUserId(params.validatorUserId);
     if (!resolvedUid) {
       throw new Error("Gagal memvalidasi absensi: Identitas Pengguna (Firebase Auth UID) tidak ditemukan.");
     }
 
-    const docRef = doc(db, COLLECTION_NAME, params.attendanceId);
+    const targetCollection = params.isSimulation ? "teacher_teaching_attendances_simulation" : COLLECTION_NAME;
+    const docRef = doc(db, targetCollection, params.attendanceId);
     const snap = await getDoc(docRef);
     if (!snap.exists()) {
       throw new Error("Data absensi tidak ditemukan.");
     }
 
     const now = new Date().toISOString();
+    const validatorRoleName = params.validatorRole || "Waka Kurikulum";
     const updates: Partial<TeacherTeachingAttendance> = {
       attendanceStatus: params.status,
+      lateValidationStatus: params.status === "Approved" ? "APPROVED" : "REJECTED",
       validatedBy: params.validatorUserName,
       validatedByUserId: resolvedUid,
+      validatedByRole: validatorRoleName,
       validatedAt: now,
-      validationNote: params.validationNote || (params.status === "Approved" ? "Disetujui Waka Kurikulum" : "Ditolak Waka Kurikulum"),
+      validationNote: params.validationNote || (params.status === "Approved" ? `Disetujui oleh ${validatorRoleName}` : `Ditolak oleh ${validatorRoleName}`),
       approvalType: "Manual",
       updatedAt: now
     };
@@ -2906,20 +2999,23 @@ export const teacherTeachingAttendanceService = {
     await updateDoc(docRef, sanitizeFirestorePayload(updates));
 
     const data = snap.data();
-    const auditColRef = collection(db, AUDIT_LOGS_COLLECTION);
+    const auditColRef = collection(db, params.isSimulation ? "teacher_attendance_audit_logs_simulation" : AUDIT_LOGS_COLLECTION);
     await addDoc(auditColRef, sanitizeFirestorePayload({
       attendanceDate: params.dateStr || data.date,
       inputTimestamp: now,
       userId: resolvedUid,
       userName: params.validatorUserName,
       scheduleId: data.scheduleId,
+      teacherId: data.teacherId,
       teacherName: data.teacherName,
+      classId: data.classId,
       className: data.className,
       subjectName: data.subjectName,
       jp: data.jp,
       previousStatus: data.attendanceStatus || "Pending",
-      newStatus: params.status,
-      reason: `Validasi Waka Kurikulum: ${params.status} (${params.validationNote || "-"})`,
+      newStatus: params.status === "Approved" ? (data.status || "Hadir Mengajar") : "DITOLAK",
+      reason: `Validasi ${validatorRoleName}: ${params.status} (${params.validationNote || "-"})`,
+      validationResult: params.status === "Approved" ? "Diterima / Hadir" : "Ditolak",
       isLateInput: false
     }));
   },
@@ -2935,6 +3031,7 @@ export const teacherTeachingAttendanceService = {
     rejectedCount: number;
     automaticApprovalCount: number;
     manualApprovalCount: number;
+    latePendingCount: number;
     totalCount: number;
   }> {
     const targetDate = dateStr || getTodayDateStr();
@@ -2945,6 +3042,7 @@ export const teacherTeachingAttendanceService = {
     let rejectedCount = 0;
     let automaticApprovalCount = 0;
     let manualApprovalCount = 0;
+    let latePendingCount = 0;
 
     items.forEach(item => {
       if (item.status === "KBM Ditiadakan") return;
@@ -2952,6 +3050,11 @@ export const teacherTeachingAttendanceService = {
       const evalRes = this.evaluateAttendanceApprovalStatus(item);
       const status = item.attendanceStatus || evalRes.attendanceStatus;
       const type = item.approvalType || evalRes.approvalType;
+
+      const isLatePending = !!item.requiresLateValidation && status === "Pending";
+      if (isLatePending) {
+        latePendingCount++;
+      }
 
       if (status === "Approved") {
         approvedCount++;
@@ -2970,6 +3073,7 @@ export const teacherTeachingAttendanceService = {
       rejectedCount,
       automaticApprovalCount,
       manualApprovalCount,
+      latePendingCount,
       totalCount: items.length
     };
   },

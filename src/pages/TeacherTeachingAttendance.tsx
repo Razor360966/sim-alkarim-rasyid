@@ -117,7 +117,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
 
   // Validation State
   const [validationSearchQuery, setValidationSearchQuery] = useState<string>("");
-  const [validationStatusFilter, setValidationStatusFilter] = useState<"ALL" | "Pending" | "Approved" | "Rejected">("Pending");
+  const [validationStatusFilter, setValidationStatusFilter] = useState<"ALL" | "Pending" | "LateOver15" | "Approved" | "Rejected">("Pending");
   const [rejectModalItem, setRejectModalItem] = useState<{ id: string; dateStr: string; teacherName: string; subjectName: string; className: string } | null>(null);
   const [rejectReason, setRejectReason] = useState<string>("");
   const [selectedValidationIds, setSelectedValidationIds] = useState<string[]>([]);
@@ -180,13 +180,15 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
   const validateMutation = useMutation({
     mutationFn: async (params: { id: string; dateStr: string; status: "Approved" | "Rejected"; validationNote?: string }) => {
       if (!user) throw new Error("Belum diautentikasi");
+      const validatorRole = isKepalaSekolah ? "Kepala Sekolah" : "Waka Kurikulum";
       await teacherTeachingAttendanceService.validateAttendance({
         attendanceId: params.id,
         dateStr: params.dateStr,
         status: params.status,
         validationNote: params.validationNote,
         validatorUserId: user.uid,
-        validatorUserName: user.displayName || user.name || "Wakakur"
+        validatorUserName: user.displayName || user.name || validatorRole,
+        validatorRole: validatorRole
       });
     },
     onSuccess: () => {
@@ -206,14 +208,16 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
   const batchApproveMutation = useMutation({
     mutationFn: async (ids: string[]) => {
       if (!user) throw new Error("Belum diautentikasi");
+      const validatorRole = isKepalaSekolah ? "Kepala Sekolah" : "Waka Kurikulum";
       for (const id of ids) {
         await teacherTeachingAttendanceService.validateAttendance({
           attendanceId: id,
           dateStr: selectedDate,
           status: "Approved",
-          validationNote: "Persetujuan Masal Waka Kurikulum",
+          validationNote: `Persetujuan Masal ${validatorRole}`,
           validatorUserId: user.uid,
-          validatorUserName: user.displayName || user.name || "Wakakur"
+          validatorUserName: user.displayName || user.name || validatorRole,
+          validatorRole: validatorRole
         });
       }
     },
@@ -2000,7 +2004,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
           </div>
 
           {/* Validation Statistics Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
             <div className="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-slate-200 dark:border-zinc-800 shadow-xs">
               <div className="flex items-center justify-between text-slate-500 dark:text-zinc-400 mb-2">
                 <span className="text-[11px] font-bold uppercase tracking-wider">Total Sesi</span>
@@ -2014,6 +2018,24 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
               <p className="text-[10px] text-slate-400 font-medium mt-0.5">Sesi mengajar terdaftar</p>
             </div>
 
+            <div className="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-rose-200 dark:border-rose-900/60 shadow-xs relative overflow-hidden">
+              <div className="flex items-center justify-between text-rose-600 dark:text-rose-400 mb-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider">Terlambat &gt;15m</span>
+                <div className="p-2 bg-rose-50 dark:bg-rose-950/60 rounded-xl text-rose-600 dark:text-rose-400">
+                  <Clock className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="text-2xl font-black text-rose-600 dark:text-rose-400 flex items-center gap-2">
+                {validationStats?.latePendingCount || 0}
+                {!!validationStats?.latePendingCount && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] bg-rose-600 text-white font-extrabold animate-pulse">
+                    Kunci JP
+                  </span>
+                )}
+              </div>
+              <p className="text-[10px] text-rose-600/80 dark:text-rose-400/80 font-medium mt-0.5">Menunggu validasi Kepsek/Wakakur</p>
+            </div>
+
             <div className="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-amber-200 dark:border-amber-900/60 shadow-xs relative overflow-hidden">
               <div className="flex items-center justify-between text-amber-600 dark:text-amber-400 mb-2">
                 <span className="text-[11px] font-bold uppercase tracking-wider">Pending</span>
@@ -2023,13 +2045,8 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
               </div>
               <div className="text-2xl font-black text-amber-600 dark:text-amber-400 flex items-center gap-2">
                 {validationStats?.pendingCount || 0}
-                {!!validationStats?.pendingCount && (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] bg-amber-500 text-white font-extrabold animate-pulse">
-                    Perlu Tindakan
-                  </span>
-                )}
               </div>
-              <p className="text-[10px] text-amber-600/80 dark:text-amber-400/80 font-medium mt-0.5">Memerlukan persetujuan</p>
+              <p className="text-[10px] text-amber-600/80 dark:text-amber-400/80 font-medium mt-0.5">Total antrean validasi</p>
             </div>
 
             <div className="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-emerald-200 dark:border-emerald-900/60 shadow-xs">
@@ -2055,7 +2072,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
               <div className="text-2xl font-black text-indigo-600 dark:text-indigo-400">
                 {validationStats?.manualApprovalCount || 0}
               </div>
-              <p className="text-[10px] text-indigo-600/80 dark:text-indigo-400/80 font-medium mt-0.5">Disetujui Waka Kurikulum</p>
+              <p className="text-[10px] text-indigo-600/80 dark:text-indigo-400/80 font-medium mt-0.5">Disetujui Kepsek/Wakakur</p>
             </div>
 
             <div className="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-rose-200 dark:border-rose-900/60 shadow-xs">
@@ -2102,10 +2119,11 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
               {/* Status Filter Sub-Tabs */}
               <div className="flex items-center gap-1 bg-slate-100 dark:bg-zinc-800 p-1 rounded-xl flex-wrap">
                 {[
-                  { id: "Pending", label: "Pending Validasi", icon: AlertTriangle, color: "text-amber-600" },
-                  { id: "Approved", label: "Disetujui", icon: CheckCircle2, color: "text-emerald-600" },
-                  { id: "Rejected", label: "Ditolak", icon: UserX, color: "text-rose-600" },
-                  { id: "ALL", label: "Semua Sesi", icon: Layers, color: "text-slate-600" }
+                  { id: "Pending", label: "Pending Validasi", icon: AlertTriangle, count: validationStats?.pendingCount },
+                  { id: "LateOver15", label: "Terlambat >15m", icon: Clock, count: validationStats?.latePendingCount, isUrgent: true },
+                  { id: "Approved", label: "Disetujui", icon: CheckCircle2 },
+                  { id: "Rejected", label: "Ditolak", icon: UserX },
+                  { id: "ALL", label: "Semua Sesi", icon: Layers }
                 ].map(tab => (
                   <button
                     key={tab.id}
@@ -2113,12 +2131,21 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                     onClick={() => setValidationStatusFilter(tab.id as any)}
                     className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
                       validationStatusFilter === tab.id
-                        ? "bg-amber-600 text-white shadow-xs"
+                        ? tab.isUrgent ? "bg-rose-600 text-white shadow-xs" : "bg-amber-600 text-white shadow-xs"
                         : "text-slate-600 dark:text-zinc-400 hover:bg-slate-200/70 dark:hover:bg-zinc-700/60"
                     }`}
                   >
                     <tab.icon className="w-3.5 h-3.5" />
                     <span>{tab.label}</span>
+                    {tab.count !== undefined && tab.count > 0 && (
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                        validationStatusFilter === tab.id
+                          ? "bg-white text-slate-900"
+                          : tab.isUrgent ? "bg-rose-600 text-white" : "bg-amber-500 text-white"
+                      }`}>
+                        {tab.count}
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -2161,8 +2188,11 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                 if (item.status === "KBM Ditiadakan") return false;
                 const evalRes = teacherTeachingAttendanceService.evaluateAttendanceApprovalStatus(item);
                 const currentStatus = item.validatedByUserId ? (item.attendanceStatus || evalRes.attendanceStatus) : evalRes.attendanceStatus;
+                const isLateOver15 = !!item.requiresLateValidation || (item.lateMinutes !== undefined && item.lateMinutes > 15);
 
-                if (validationStatusFilter !== "ALL" && currentStatus !== validationStatusFilter) {
+                if (validationStatusFilter === "LateOver15") {
+                  if (!isLateOver15 || currentStatus !== "Pending") return false;
+                } else if (validationStatusFilter !== "ALL" && currentStatus !== validationStatusFilter) {
                   return false;
                 }
 
@@ -2206,11 +2236,11 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                         <th className="py-3 px-3">Tanggal & Sesi</th>
                         <th className="py-3 px-3">Nama Guru</th>
                         <th className="py-3 px-3">Mapel & Kelas</th>
-                        <th className="py-3 px-3">Check-In / Check-Out</th>
+                        <th className="py-3 px-3">Waktu Scan Asli & Jadwal</th>
                         <th className="py-3 px-3">Durasi</th>
-                        <th className="py-3 px-3">Status & Alasan Pending</th>
+                        <th className="py-3 px-3">Status & Alasan</th>
                         <th className="py-3 px-3">Tipe Approval</th>
-                        <th className="py-3 px-3 text-center">Aksi Wakakur</th>
+                        <th className="py-3 px-3 text-center">Aksi Validasi (Kepsek / Wakakur)</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-150 dark:divide-zinc-800 font-medium text-slate-800 dark:text-zinc-200">
@@ -2221,9 +2251,10 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                         const pendingReason = isManuallyVal ? (item.pendingReason || "") : evalRes.pendingReason;
                         const approvalType = isManuallyVal ? (item.approvalType || evalRes.approvalType) : evalRes.approvalType;
                         const isChecked = !!item.id && selectedValidationIds.includes(item.id);
+                        const isLateOver15 = !!item.requiresLateValidation || (item.lateMinutes !== undefined && item.lateMinutes > 15);
 
                         return (
-                          <tr key={item.id || idx} className="hover:bg-slate-50 dark:hover:bg-zinc-800/40">
+                          <tr key={item.id || idx} className={`hover:bg-slate-50 dark:hover:bg-zinc-800/40 ${isLateOver15 && currentStatus === "Pending" ? "bg-rose-50/40 dark:bg-rose-950/20" : ""}`}>
                             <td className="py-3 px-3 text-center">
                               {item.id ? (
                                 <input
@@ -2242,7 +2273,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                             </td>
                             <td className="py-3 px-3">
                               <div className="font-bold text-slate-900 dark:text-zinc-100">{item.date}</div>
-                              <div className="text-[10px] font-semibold text-blue-600 dark:text-blue-400">{item.jp} ({item.timeSlot})</div>
+                              <div className="text-[10px] font-semibold text-blue-600 dark:text-blue-400">{item.jp} ({item.timeSlot || `${item.scheduleStartTime || ""}-${item.scheduleEndTime || ""}`})</div>
                             </td>
                             <td className="py-3 px-3">
                               <div className="font-bold text-slate-900 dark:text-zinc-100">{item.teacherName}</div>
@@ -2253,14 +2284,21 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                               <div className="text-[10px] text-slate-500 font-semibold">Kelas {item.className}</div>
                             </td>
                             <td className="py-3 px-3">
-                              <div className="flex items-center gap-1.5 text-xs">
-                                <span className={`font-bold ${item.checkInTime ? "text-emerald-600 dark:text-emerald-400" : "text-rose-500"}`}>
-                                  IN: {item.checkInTime || "-"}
-                                </span>
-                                <span className="text-slate-300">|</span>
-                                <span className={`font-bold ${item.checkOutTime ? "text-blue-600 dark:text-blue-400" : "text-amber-500"}`}>
-                                  OUT: {item.checkOutTime || "-"}
-                                </span>
+                              <div className="space-y-1 text-xs">
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`font-bold ${item.checkInTime ? "text-emerald-600 dark:text-emerald-400" : "text-rose-500"}`}>
+                                    IN: {item.checkInTime || "-"}
+                                  </span>
+                                  <span className="text-slate-300">|</span>
+                                  <span className={`font-bold ${item.checkOutTime ? "text-blue-600 dark:text-blue-400" : "text-amber-500"}`}>
+                                    OUT: {item.checkOutTime || "-"}
+                                  </span>
+                                </div>
+                                {item.lateMinutes !== undefined && item.lateMinutes > 0 && (
+                                  <div className={`text-[10px] font-bold ${item.lateMinutes > 15 ? "text-rose-600 dark:text-rose-400" : "text-amber-600 dark:text-amber-400"}`}>
+                                    Keterlambatan: +{item.lateMinutes} Menit {item.scheduleStartTime ? `(Mulai ${item.scheduleStartTime})` : ""}
+                                  </div>
+                                )}
                               </div>
                             </td>
                             <td className="py-3 px-3 font-bold text-slate-700 dark:text-zinc-300">
@@ -2268,17 +2306,31 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                             </td>
                             <td className="py-3 px-3">
                               <div className="space-y-1">
-                                <span className={`px-2 py-0.5 rounded-md font-bold text-[10px] inline-flex items-center gap-1 ${
-                                  currentStatus === "Approved" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" :
-                                  currentStatus === "Rejected" ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300" :
-                                  "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
-                                }`}>
-                                  {currentStatus === "Approved" && <CheckCircle2 className="w-3 h-3 text-emerald-600" />}
-                                  {currentStatus === "Rejected" && <UserX className="w-3 h-3 text-rose-600" />}
-                                  {currentStatus === "Pending" && <AlertTriangle className="w-3 h-3 text-amber-600" />}
-                                  {currentStatus}
-                                </span>
-                                {pendingReason && currentStatus === "Pending" && (
+                                {isLateOver15 && currentStatus === "Pending" ? (
+                                  <span className="px-2 py-0.5 rounded-md font-bold text-[10px] inline-flex items-center gap-1 bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-300 dark:border-rose-800">
+                                    <Clock className="w-3 h-3 text-rose-600" />
+                                    TERLAMBAT &gt;15 MENIT — MENUNGGU VALIDASI
+                                  </span>
+                                ) : (
+                                  <span className={`px-2 py-0.5 rounded-md font-bold text-[10px] inline-flex items-center gap-1 ${
+                                    currentStatus === "Approved" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" :
+                                    currentStatus === "Rejected" ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300" :
+                                    "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                                  }`}>
+                                    {currentStatus === "Approved" && <CheckCircle2 className="w-3 h-3 text-emerald-600" />}
+                                    {currentStatus === "Rejected" && <UserX className="w-3 h-3 text-rose-600" />}
+                                    {currentStatus === "Pending" && <AlertTriangle className="w-3 h-3 text-amber-600" />}
+                                    {currentStatus}
+                                  </span>
+                                )}
+
+                                {isLateOver15 && currentStatus === "Pending" && (
+                                  <div className="text-[10px] font-semibold text-rose-600 dark:text-rose-400">
+                                    🔒 Kehadiran JP = 0 (Terkunci sampai divalidasi)
+                                  </div>
+                                )}
+
+                                {pendingReason && currentStatus === "Pending" && !isLateOver15 && (
                                   <div className="text-[10px] font-medium text-amber-700 dark:text-amber-300 leading-tight">
                                     ⚠️ {pendingReason}
                                   </div>
@@ -2297,7 +2349,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                                 {approvalType}
                               </span>
                               {item.validatedBy && (
-                                <div className="text-[9px] text-slate-400 mt-0.5">Oleh: {item.validatedBy}</div>
+                                <div className="text-[9px] text-slate-400 mt-0.5">Oleh: {item.validatedBy} {item.validatedByRole ? `(${item.validatedByRole})` : ""}</div>
                               )}
                             </td>
                             <td className="py-3 px-3 text-center">
@@ -2311,13 +2363,13 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                                         id: item.id!,
                                         dateStr: item.date,
                                         status: "Approved",
-                                        validationNote: "Disetujui Waka Kurikulum"
+                                        validationNote: isLateOver15 ? "Keterlambatan disetujui - JP terhitung hadir" : "Disetujui"
                                       })}
                                       className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold shadow-2xs transition-all cursor-pointer flex items-center gap-1"
-                                      title="Setujui Absensi Sesi Ini"
+                                      title="Terima / Setujui Absensi Sesi Ini"
                                     >
                                       <CheckCircle2 className="w-3 h-3" />
-                                      Setujui
+                                      Terima
                                     </button>
                                   )}
                                   {currentStatus !== "Rejected" && (
@@ -2332,7 +2384,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                                           subjectName: item.subjectName,
                                           className: item.className
                                         });
-                                        setRejectReason("");
+                                        setRejectReason(isLateOver15 ? `Keterlambatan ${item.lateMinutes || 0} menit ditolak` : "");
                                       }}
                                       className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-[11px] font-bold shadow-2xs transition-all cursor-pointer flex items-center gap-1"
                                       title="Tolak Absensi Sesi Ini"
