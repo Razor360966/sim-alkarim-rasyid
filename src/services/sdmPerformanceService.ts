@@ -19,6 +19,8 @@ import { gtkDevelopmentService } from "./gtkDevelopmentService";
 import { academicPlanningService } from "./academicPlanning.service";
 import { schoolSettingsService } from "./schoolSettings.service";
 import { teacherDisciplineService } from "./teacherDiscipline.service";
+import { mutabaahService } from "./mutabaahService";
+import { userService } from "./user.service";
 
 export interface MasterJabatan {
   id: string; // e.g., "guru", "musrif"
@@ -333,43 +335,87 @@ export const sdmPerformanceService = {
         console.warn("GTK activities fetch error:", e);
       }
 
-      // 5. Fetch Mutaba'ah Ruhiyah Guru logs
+      // 5. Fetch Mutaba'ah Ruhiyah Guru entries and logs
       let mutabaahBulanIni = 0;
       let mutabaahSemester = 0;
       let mutabaahTahunan = 0;
 
       try {
-        const allLogs = await gtkDevelopmentService.getMutabaahLogs(academicYearId, semesterId, teacherId);
-        
-        const now = new Date();
-        const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-        
-        const logsBulanIni = allLogs.filter(l => l.date.startsWith(currentMonthStr));
-        const logsSemester = allLogs;
-        const currentYearStr = String(now.getFullYear());
-        const logsTahunan = allLogs.filter(l => l.date.startsWith(currentYearStr));
+        const [allEntries, allUsers] = await Promise.all([
+          mutabaahService.getAllEntries(),
+          userService.getUsers()
+        ]);
 
-        const calcPercent = (logsList: any[]) => {
-          let terlaksana = 0;
-          let checked = 0;
-          logsList.forEach(log => {
-            if (log.indicators) {
-              Object.values(log.indicators).forEach((status: any) => {
-                if (status === "Terlaksana") {
-                  terlaksana++;
-                  checked++;
-                } else if (status === "Belum Terlaksana") {
-                  checked++;
-                }
-              });
-            }
-          });
-          return checked > 0 ? Math.round((terlaksana / checked) * 100) : 0;
-        };
+        const teacherAliases = new Set<string>();
+        if (teacherId) teacherAliases.add(teacherId);
 
-        mutabaahBulanIni = calcPercent(logsBulanIni);
-        mutabaahSemester = calcPercent(logsSemester);
-        mutabaahTahunan = calcPercent(logsTahunan);
+        const matchedUsers = allUsers.filter(u => 
+          u.teacherId === teacherId || 
+          u.userId === teacherId || 
+          u.id === teacherId
+        );
+        matchedUsers.forEach(u => {
+          if (u.userId) teacherAliases.add(u.userId);
+          if (u.id) teacherAliases.add(u.id);
+        });
+
+        const teacherEntries = allEntries.filter(e => 
+          (e.userId && teacherAliases.has(e.userId)) ||
+          ((e as any).teacherId && teacherAliases.has((e as any).teacherId))
+        );
+
+        if (teacherEntries.length > 0) {
+          const now = new Date();
+          const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+          const currentYearStr = String(now.getFullYear());
+
+          const entriesBulanIni = teacherEntries.filter(e => e.date.startsWith(currentMonthStr));
+          const entriesSemester = teacherEntries;
+          const entriesTahunan = teacherEntries.filter(e => e.date.startsWith(currentYearStr));
+
+          const calcEntriesAvg = (list: typeof teacherEntries) => {
+            if (list.length === 0) return 0;
+            const sum = list.reduce((acc, curr) => acc + (curr.compliancePercentage ?? 0), 0);
+            return Math.min(100, Math.round(sum / list.length));
+          };
+
+          mutabaahBulanIni = calcEntriesAvg(entriesBulanIni);
+          mutabaahSemester = calcEntriesAvg(entriesSemester);
+          mutabaahTahunan = calcEntriesAvg(entriesTahunan);
+        } else {
+          // Fallback to gtkDevelopmentService logs if no daily entries exist
+          const allLogs = await gtkDevelopmentService.getMutabaahLogs(academicYearId, semesterId, teacherId);
+          
+          const now = new Date();
+          const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+          
+          const logsBulanIni = allLogs.filter(l => l.date.startsWith(currentMonthStr));
+          const logsSemester = allLogs;
+          const currentYearStr = String(now.getFullYear());
+          const logsTahunan = allLogs.filter(l => l.date.startsWith(currentYearStr));
+
+          const calcPercent = (logsList: any[]) => {
+            let terlaksana = 0;
+            let checked = 0;
+            logsList.forEach(log => {
+              if (log.indicators) {
+                Object.values(log.indicators).forEach((status: any) => {
+                  if (status === "Terlaksana") {
+                    terlaksana++;
+                    checked++;
+                  } else if (status === "Belum Terlaksana") {
+                    checked++;
+                  }
+                });
+              }
+            });
+            return checked > 0 ? Math.round((terlaksana / checked) * 100) : 0;
+          };
+
+          mutabaahBulanIni = calcPercent(logsBulanIni);
+          mutabaahSemester = calcPercent(logsSemester);
+          mutabaahTahunan = calcPercent(logsTahunan);
+        }
 
       } catch (e) {
         console.warn("Mutaba'ah fetch error:", e);

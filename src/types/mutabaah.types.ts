@@ -55,6 +55,8 @@ export interface SdmMutabaahEntryChange {
 export interface SdmMutabaahEntry {
   id: string; // format: `${userId}_${date}`
   userId: string;
+  teacherId?: string;
+  userEmail?: string;
   userName: string;
   userRole: string;
   date: string; // YYYY-MM-DD

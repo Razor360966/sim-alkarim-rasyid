@@ -259,6 +259,60 @@ export const executiveMutabaahService = {
       }
     });
 
+    // Build comprehensive aliases map for each teacher in filteredTeachers
+    const teacherAliasesMap = new Map<string, Set<string>>();
+    filteredTeachers.forEach(t => {
+      const aliases = new Set<string>();
+      if (t.userId) aliases.add(t.userId);
+      
+      const matchedUser = allUsers.find(u => 
+        (u.userId && u.userId === t.userId) || 
+        (u.id && u.id === t.userId) || 
+        (u.teacherId && u.teacherId === t.userId) ||
+        (u.name && t.name && u.name.toLowerCase().trim() === t.name.toLowerCase().trim())
+      );
+      if (matchedUser) {
+        if (matchedUser.userId) aliases.add(matchedUser.userId);
+        if (matchedUser.id) aliases.add(matchedUser.id);
+        if (matchedUser.teacherId) aliases.add(matchedUser.teacherId);
+      }
+
+      const matchedTch = allTeachers.find(tch => 
+        tch.id === t.userId || 
+        tch.teacherId === t.userId ||
+        (tch.name && t.name && tch.name.toLowerCase().trim() === t.name.toLowerCase().trim())
+      );
+      if (matchedTch) {
+        if (matchedTch.id) aliases.add(matchedTch.id);
+        if (matchedTch.teacherId) aliases.add(matchedTch.teacherId);
+      }
+
+      teacherAliasesMap.set(t.userId, aliases);
+    });
+
+    const findEntryForTeacher = (teacherUserId: string, teacherName: string, dateStr: string): SdmMutabaahEntry | null => {
+      const directKey = `${teacherUserId}_${dateStr}`;
+      if (allEntriesMap.has(directKey)) return allEntriesMap.get(directKey)!;
+
+      const aliases = teacherAliasesMap.get(teacherUserId);
+      if (aliases) {
+        for (const alias of aliases) {
+          const aliasKey = `${alias}_${dateStr}`;
+          if (allEntriesMap.has(aliasKey)) return allEntriesMap.get(aliasKey)!;
+        }
+      }
+
+      const tNameLower = (teacherName || "").toLowerCase().trim();
+      for (const entry of allEntriesMap.values()) {
+        if (entry.date === dateStr) {
+          if ((entry as any).teacherId && aliases?.has((entry as any).teacherId)) return entry;
+          if (tNameLower && entry.userName && entry.userName.toLowerCase().trim() === tNameLower) return entry;
+        }
+      }
+
+      return null;
+    };
+
     // 4. Construct Records Matrix (Filtered Teachers x Dates in Range)
     const rawRecords: ExecutiveMutabaahRecord[] = [];
 
@@ -291,8 +345,7 @@ export const executiveMutabaahService = {
 
     for (const dStr of datesInRange) {
       for (const t of filteredTeachers) {
-        const key = `${t.userId}_${dStr}`;
-        const entry = allEntriesMap.get(key) || null;
+        const entry = findEntryForTeacher(t.userId, t.name, dStr);
 
         const teacherStat = teacherStatsMap.get(t.userId);
 

@@ -18,6 +18,7 @@ import { curriculumPlanningService } from "./curriculumPlanning.service";
 import { lessonPlanService } from "./lessonPlan.service";
 import { teachingJournalService } from "./teachingJournalService";
 import { mutabaahService } from "./mutabaahService";
+import { userService } from "./user.service";
 import { 
   DisciplineCategory,
   DisciplineWeightsConfig,
@@ -145,6 +146,7 @@ export const teacherDisciplineService = {
       // 1. Fetch all dependencies concurrently
       const [
         allTeachers,
+        allUsers,
         allSchedules,
         allPeriods,
         allAttendances,
@@ -158,6 +160,7 @@ export const teacherDisciplineService = {
         historySnap
       ] = await Promise.all([
         teacherService.getTeachers(),
+        userService.getUsers(),
         scheduleService.getSchedules(filters?.academicYearId, filters?.semesterId),
         lessonPeriodService.getLessonPeriods(),
         teacherTeachingAttendanceService.getAllAttendances({
@@ -515,9 +518,34 @@ export const teacherDisciplineService = {
         const totalJpScheduled = subjectsDetail.reduce((sum, s) => sum + s.periodTargetJp, 0);
 
         // -------------------------------------------------------------
-        // PILAR 2: MUTABAAH
+        // PILAR 2: MUTABAAH (Unified Identity Resolution)
         // -------------------------------------------------------------
-        const teacherMutabaahEntries = inRangeMutabaah.filter(m => m.userId === teacher.id);
+        const teacherAliases = new Set<string>();
+        if (teacher.id) teacherAliases.add(teacher.id);
+        if (teacher.teacherId) teacherAliases.add(teacher.teacherId);
+        if ((teacher as any).userId) teacherAliases.add((teacher as any).userId);
+
+        // Find linked users by teacherId, email, or exact name
+        const matchingUsers = allUsers.filter(u => 
+          (u.teacherId && (u.teacherId === teacher.id || u.teacherId === teacher.teacherId)) || 
+          (teacher.email && u.email && u.email.toLowerCase() === teacher.email.toLowerCase()) ||
+          (teacher.name && u.name && u.name.toLowerCase().trim() === teacher.name.toLowerCase().trim())
+        );
+
+        matchingUsers.forEach(u => {
+          if (u.userId) teacherAliases.add(u.userId);
+          if (u.id) teacherAliases.add(u.id);
+        });
+
+        const teacherNameLower = (teacher.name || "").toLowerCase().trim();
+
+        const teacherMutabaahEntries = inRangeMutabaah.filter(m => {
+          if (m.userId && teacherAliases.has(m.userId)) return true;
+          if ((m as any).teacherId && teacherAliases.has((m as any).teacherId)) return true;
+          if (teacherNameLower && m.userName && m.userName.toLowerCase().trim() === teacherNameLower) return true;
+          return false;
+        });
+
         const mutabaahByDate = new Map<string, typeof teacherMutabaahEntries[0]>();
         teacherMutabaahEntries.forEach(m => {
           if (m.date) mutabaahByDate.set(m.date, m);
@@ -571,12 +599,14 @@ export const teacherDisciplineService = {
 
         // Mandatory days denominator = active school days in range or calendar days
         const mandatoryMutabaahDays = Math.max(activeDatesCount, 1);
-        const avgCompletenessPercentage = mandatoryMutabaahDays > 0
-          ? Math.round(sumCompleteness / mandatoryMutabaahDays)
-          : 100;
+        const avgCompletenessPercentage = filledDaysCount > 0
+          ? Math.round(sumCompleteness / filledDaysCount)
+          : 0;
         
-        // Mutabaah Score (0-100)
-        const mutabaahScore = Math.min(100, Math.max(0, avgCompletenessPercentage));
+        // Mutabaah Score (0-100): Calculated based on active mandatory days
+        const mutabaahScore = mandatoryMutabaahDays > 0
+          ? Math.min(100, Math.max(0, Math.round(sumCompleteness / mandatoryMutabaahDays)))
+          : (filledDaysCount > 0 ? avgCompletenessPercentage : 0);
 
         const mutabaahDetail: MutabaahDisciplineDetail = {
           mandatoryDays: mandatoryMutabaahDays,
