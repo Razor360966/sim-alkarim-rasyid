@@ -31,8 +31,8 @@ import { TeacherTeachingAttendance } from "../types/teacherTeachingAttendance.ty
 import { ClassQrCardsModal } from "../components/ClassQrCardsModal";
 import { HalaqahGroupQrCardsModal } from "../components/HalaqahGroupQrCardsModal";
 
-// Synthesize pleasant chime sound on success scan
-const playAudioFeedback = (type: "success_checkin" | "success_checkout" | "error") => {
+// Synthesize pleasant chime sound on success scan or warning chime on late pending
+const playAudioFeedback = (type: "success_checkin" | "success_checkout" | "warning_late" | "error") => {
   try {
     const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
     if (!AudioContext) return;
@@ -60,6 +60,28 @@ const playAudioFeedback = (type: "success_checkin" | "success_checkout" | "error
       osc2.start(now + 0.1);
       osc1.stop(now + 0.35);
       osc2.stop(now + 0.35);
+    } else if (type === "warning_late") {
+      const now = ctx.currentTime;
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc1.type = "triangle";
+      osc2.type = "triangle";
+      osc1.frequency.setValueAtTime(440, now); // A4
+      osc2.frequency.setValueAtTime(554.37, now + 0.15); // C#5
+
+      gain.gain.setValueAtTime(0.2, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+
+      osc1.connect(gain);
+      osc2.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc1.start(now);
+      osc2.start(now + 0.15);
+      osc1.stop(now + 0.45);
+      osc2.stop(now + 0.45);
     } else if (type === "success_checkout") {
       const now = ctx.currentTime;
       const osc = ctx.createOscillator();
@@ -111,10 +133,12 @@ export const TeachingQrCheckInPage: React.FC = () => {
 
   const [isScanning, setIsScanning] = useState<boolean>(false);
   const [scanResult, setScanResult] = useState<{
-    type: "success" | "error" | "info";
-    action?: "CHECK_IN" | "CHECK_OUT";
+    type: "success" | "error" | "info" | "warning";
+    action?: "CHECK_IN" | "CHECK_OUT" | "DUPLICATE_SCAN" | "LATE_PENDING";
     message: string;
     record?: TeacherTeachingAttendance;
+    requiresLateValidation?: boolean;
+    lateMinutes?: number;
   } | null>(null);
 
   const [processing, setProcessing] = useState<boolean>(false);
@@ -254,6 +278,12 @@ export const TeachingQrCheckInPage: React.FC = () => {
         semesterId: activeSemId
       });
 
+      const isLatePending = !!(
+        (res as any).requiresLateValidation || 
+        (res as any).isLateOver15 || 
+        (res.record?.requiresLateValidation && res.record?.attendanceStatus === "Pending")
+      );
+
       if ((res as any).isDuplicateScan || (res.action as string) === "DUPLICATE_SCAN" || (res.action as string) === "IGNORED_DOUBLE_SCAN") {
         playAudioFeedback("success_checkin");
         setScanResult({
@@ -261,6 +291,16 @@ export const TeachingQrCheckInPage: React.FC = () => {
           action: "DUPLICATE_SCAN",
           message: res.message,
           record: res.record
+        });
+      } else if (res.success && isLatePending) {
+        playAudioFeedback("warning_late");
+        setScanResult({
+          type: "warning",
+          action: "LATE_PENDING",
+          message: res.message,
+          record: res.record,
+          requiresLateValidation: true,
+          lateMinutes: (res as any).lateMinutes || res.record?.lateMinutes || 0
         });
       } else if (res.success) {
         playAudioFeedback(res.action === "CHECK_OUT" ? "success_checkout" : "success_checkin");
@@ -525,23 +565,29 @@ export const TeachingQrCheckInPage: React.FC = () => {
             {/* Scan Result Feedback Alert Box */}
             {scanResult && (
               <div className={`p-5 rounded-2xl border transition-all animate-fade-in ${
-                scanResult.action === "DUPLICATE_SCAN" || scanResult.type === "warning"
-                  ? "bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200"
-                  : scanResult.type === "success"
-                    ? scanResult.action === "CHECK_OUT"
-                      ? "bg-blue-50 dark:bg-blue-950/40 border-blue-300 dark:border-blue-800 text-blue-900 dark:text-blue-200"
-                      : "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200"
-                    : "bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200"
+                scanResult.action === "LATE_PENDING"
+                  ? "bg-amber-500/10 dark:bg-amber-950/60 border-2 border-amber-400 dark:border-amber-600 text-amber-950 dark:text-amber-100 shadow-md"
+                  : scanResult.action === "DUPLICATE_SCAN" || scanResult.type === "warning"
+                    ? "bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200"
+                    : scanResult.type === "success"
+                      ? scanResult.action === "CHECK_OUT"
+                        ? "bg-blue-50 dark:bg-blue-950/40 border-blue-300 dark:border-blue-800 text-blue-900 dark:text-blue-200"
+                        : "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200"
+                      : "bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200"
               }`}>
                 <div className="flex items-start gap-3">
                   <div className={`p-2.5 rounded-xl shrink-0 ${
-                    scanResult.action === "DUPLICATE_SCAN" || scanResult.type === "warning"
-                      ? "bg-amber-600 text-white"
-                      : scanResult.type === "success"
-                        ? scanResult.action === "CHECK_OUT" ? "bg-blue-600 text-white" : "bg-emerald-600 text-white"
-                        : "bg-rose-600 text-white"
+                    scanResult.action === "LATE_PENDING"
+                      ? "bg-amber-600 text-white shadow-sm"
+                      : scanResult.action === "DUPLICATE_SCAN" || scanResult.type === "warning"
+                        ? "bg-amber-600 text-white"
+                        : scanResult.type === "success"
+                          ? scanResult.action === "CHECK_OUT" ? "bg-blue-600 text-white" : "bg-emerald-600 text-white"
+                          : "bg-rose-600 text-white"
                   }`}>
-                    {scanResult.action === "DUPLICATE_SCAN" || scanResult.type === "warning" ? (
+                    {scanResult.action === "LATE_PENDING" ? (
+                      <Clock className="w-6 h-6 animate-pulse" />
+                    ) : scanResult.action === "DUPLICATE_SCAN" || scanResult.type === "warning" ? (
                       <CheckCircle2 className="w-6 h-6" />
                     ) : scanResult.type === "success" ? (
                       <CheckCircle2 className="w-6 h-6" />
@@ -549,19 +595,26 @@ export const TeachingQrCheckInPage: React.FC = () => {
                       <AlertCircle className="w-6 h-6" />
                     )}
                   </div>
-                  <div className="space-y-1">
+                  <div className="space-y-1 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="font-black uppercase tracking-wider text-xs">
-                        {scanResult.action === "DUPLICATE_SCAN" || scanResult.type === "warning"
-                          ? "SCAN TERDETEKSI KEMBALI (DUPLIKAT)"
-                          : scanResult.type === "success"
-                            ? scanResult.action === "CHECK_OUT" ? "BERHASIL CHECK OUT" : "BERHASIL CHECK IN"
-                            : "GAGAL VALIDASI CHECK-IN / CHECK-OUT"}
+                        {scanResult.action === "LATE_PENDING"
+                          ? "TERLAMBAT >15 MENIT — MENUNGGU VALIDASI"
+                          : scanResult.action === "DUPLICATE_SCAN" || scanResult.type === "warning"
+                            ? "SCAN TERDETEKSI KEMBALI (DUPLIKAT)"
+                            : scanResult.type === "success"
+                              ? scanResult.action === "CHECK_OUT" ? "BERHASIL CHECK OUT" : "BERHASIL CHECK IN"
+                              : "GAGAL VALIDASI CHECK-IN / CHECK-OUT"}
                       </span>
                     </div>
                     <p className="text-xs font-semibold leading-relaxed whitespace-pre-line">
                       {scanResult.message}
                     </p>
+                    {scanResult.action === "LATE_PENDING" && (
+                      <div className="mt-2.5 p-2.5 bg-amber-500/15 border border-amber-400/40 rounded-xl text-[11px] font-bold text-amber-900 dark:text-amber-200">
+                        🛡️ <strong>Catatan Sistem:</strong> Scan Anda telah dicatat, namun kehadiran pada sesi JP ini belum dihitung (0 JP) sampai disetujui oleh Kepala Sekolah atau Waka Kurikulum. Sesi JP selanjutnya tetap terbuka normal saat jamnya tiba.
+                      </div>
+                    )}
                     {scanResult.record && (
                       <div className="mt-2 text-[11px] pt-2 border-t border-black/10 dark:border-white/10 space-y-2">
                         <div className="grid grid-cols-2 gap-2">

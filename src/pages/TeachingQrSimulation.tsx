@@ -218,10 +218,23 @@ export const TeachingQrSimulationPage: React.FC = () => {
         isSimulation: true // EXPLICIT SIMULATION FLAG
       });
 
+      const isLatePending = !!(
+        (res as any).requiresLateValidation ||
+        (res as any).isLateOver15 ||
+        (res.record?.requiresLateValidation && res.record?.attendanceStatus === "Pending")
+      );
+
       if ((res as any).isDuplicateScan || (res.action as string) === "DUPLICATE_SCAN" || (res.action as string) === "IGNORED_DOUBLE_SCAN") {
         setScanResult({
           type: "warning",
           action: "DUPLICATE_SCAN",
+          message: res.message,
+          record: res.record
+        });
+      } else if (res.success && isLatePending) {
+        setScanResult({
+          type: "warning",
+          action: "LATE_PENDING" as any,
           message: res.message,
           record: res.record
         });
@@ -427,7 +440,7 @@ export const TeachingQrSimulationPage: React.FC = () => {
               Sandbox Mode: QR Check-in / Check-out Guru
             </h1>
             <p className="text-sm text-amber-100/90 mt-1 max-w-3xl leading-relaxed">
-              Mode ini menjalankan <strong>seluruh algoritma validasi produksi secara 100% identik</strong> (jadwal, toleransi keterlambatan 15 mnt, penguncian &gt;25 mnt, mapel terjeda istirahat, dan rentang Multi-JP). Data hasil tes disimpan khusus di koleksi <code>teacher_teaching_attendances_simulation</code> tanpa mempengaruhi data absensi produksi.
+              Mode ini menjalankan <strong>seluruh algoritma validasi produksi secara 100% identik</strong> (jadwal, toleransi keterlambatan 15 mnt, penahanan status &gt;15 mnt untuk validasi pimpinan/wakakur, mapel terjeda istirahat, dan rentang Multi-JP). Data hasil tes disimpan khusus di koleksi <code>teacher_teaching_attendances_simulation</code> tanpa mempengaruhi data absensi produksi.
             </p>
           </div>
         </div>
@@ -637,7 +650,11 @@ export const TeachingQrSimulationPage: React.FC = () => {
           {scanResult && (
             <div
               className={`p-4 rounded-2xl border text-xs leading-relaxed transition-all shadow-sm ${
-                scanResult.type === "success"
+                (scanResult as any).action === "LATE_PENDING"
+                  ? "bg-amber-500/10 dark:bg-amber-950/40 border-2 border-amber-400 dark:border-amber-600 text-amber-950 dark:text-amber-100 shadow-md"
+                  : scanResult.type === "warning"
+                  ? "bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200"
+                  : scanResult.type === "success"
                   ? "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200"
                   : scanResult.type === "error"
                   ? "bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200"
@@ -645,7 +662,11 @@ export const TeachingQrSimulationPage: React.FC = () => {
               }`}
             >
               <div className="flex items-start gap-2.5">
-                {scanResult.type === "success" ? (
+                {(scanResult as any).action === "LATE_PENDING" ? (
+                  <Clock className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5 animate-pulse" />
+                ) : scanResult.type === "warning" ? (
+                  <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                ) : scanResult.type === "success" ? (
                   <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
                 ) : scanResult.type === "error" ? (
                   <AlertTriangle className="w-5 h-5 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
@@ -653,15 +674,24 @@ export const TeachingQrSimulationPage: React.FC = () => {
                   <Info className="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
                 )}
 
-                <div className="space-y-1">
+                <div className="space-y-1 flex-1">
                   <div className="font-extrabold text-sm">
-                    {scanResult.type === "success"
+                    {(scanResult as any).action === "LATE_PENDING"
+                      ? "Hasil Simulasi: SCAN TERCATAT — MENUNGGU VALIDASI (TERLAMBAT >15 MENIT)"
+                      : scanResult.type === "warning"
+                      ? `Peringatan Simulasi (${scanResult.action || "PERINGATAN"})`
+                      : scanResult.type === "success"
                       ? `Hasil Simulasi (${scanResult.action || "SUKSES"})`
                       : scanResult.type === "error"
                       ? "Hasil Simulasi Ditolak (Sesuai Algoritma Validation Rules)"
                       : "Informasi Simulasi"}
                   </div>
                   <p className="whitespace-pre-line">{scanResult.message}</p>
+                  {(scanResult as any).action === "LATE_PENDING" && (
+                    <div className="mt-2 p-2 bg-amber-500/15 border border-amber-400/40 rounded-xl text-[11px] font-bold text-amber-900 dark:text-amber-200">
+                      🛡️ <strong>Simulasi Rule:</strong> Status sesi ini adalah <code>Pending</code> (0 JP). Menunggu persetujuan manual kepala sekolah atau waka kurikulum. Sesi JP selanjutnya tetap dapat di-scan tepat waktu secara terpisah.
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -704,7 +734,7 @@ export const TeachingQrSimulationPage: React.FC = () => {
           </div>
 
           <div className="bg-amber-50 dark:bg-amber-950/20 p-4 rounded-2xl border border-amber-200/60 dark:border-amber-900/40">
-            <div className="text-[11px] font-bold text-amber-700 dark:text-amber-400 uppercase">Terlambat (16-25m)</div>
+            <div className="text-[11px] font-bold text-amber-700 dark:text-amber-400 uppercase">Terlambat &gt;15m (Pending)</div>
             <div className="text-2xl font-black text-amber-800 dark:text-amber-300 mt-1">{terlambatCount}</div>
           </div>
 

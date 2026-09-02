@@ -229,7 +229,7 @@ export const ExecutiveTeachingAnalyticsWidget: React.FC<ExecutiveTeachingAnalyti
               <span className="text-[10px] font-bold text-slate-500">Top 5</span>
             </div>
             {analytics.mostLockedTeachers.length === 0 ? (
-              <p className="text-xs text-slate-400 py-3 text-center">Nihil. Tidak ada sesi terkunci (&gt;25 menit).</p>
+              <p className="text-xs text-slate-400 py-3 text-center">Nihil. Tidak ada sesi terkunci (&gt;15 menit).</p>
             ) : (
               <div className="space-y-1.5">
                 {analytics.mostLockedTeachers.map((t, idx) => (

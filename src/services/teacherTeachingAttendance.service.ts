@@ -1972,6 +1972,9 @@ export const teacherTeachingAttendanceService = {
     isAlreadyCompleted?: boolean;
     isDuplicateScan?: boolean;
     record?: TeacherTeachingAttendance;
+    requiresLateValidation?: boolean;
+    isLateOver15?: boolean;
+    lateMinutes?: number;
   }> {
     try {
       const currentUserId = resolveUserId(params.currentUser?.uid || (params.currentUser as any)?.userId || params.currentUser?.id, params.currentUser);
@@ -2819,14 +2822,17 @@ export const teacherTeachingAttendanceService = {
       }
 
       const checkInSuccessMsg = hasPendingLate
-        ? `⚠️ CHECK IN TERCATAT — TERLAMBAT >15 MENIT\nKelas ${targetClassName} (${targetGroup.subjectName} - ${targetGroup.jpLabel})\n\nDetail Status Sesi:\n${statusLines.join("\n")}\n\nPerhatian: Sesi yang terlambat >15 menit dikunci untuk perhitungan kehadiran sampai divalidasi oleh Kepala Sekolah / Waka Kurikulum. Sesi JP selanjutnya tetap terbuka.`
+        ? `⚠️ SCAN TERCATAT — MENUNGGU VALIDASI (TERLAMBAT >15 MENIT)\nKelas ${targetClassName} (${targetGroup.subjectName} - ${targetGroup.jpLabel})\n\nDetail Status Sesi:\n${statusLines.join("\n")}\n\nPerhatian: Sesi yang terlambat >15 menit dikunci untuk perhitungan kehadiran (0 JP) sampai divalidasi oleh Kepala Sekolah / Waka Kurikulum. Sesi JP selanjutnya tetap terbuka.`
         : `CHECK IN Berhasil di Kelas ${targetClassName} (${targetGroup.subjectName} - ${targetGroup.jpLabel}).\n\nDetail Status Sesi:\n${statusLines.join("\n")}`;
 
       return {
         success: true,
         action: "CHECK_IN",
         message: checkInSuccessMsg,
-        record: targetGroup.items[0]
+        record: targetGroup.items[0],
+        requiresLateValidation: hasPendingLate,
+        isLateOver15: hasPendingLate,
+        lateMinutes: primaryActive?.lateMinutes || 0
       };
     } catch (error: any) {
       console.error("[QR Audit ERROR] Exception in processQrCheckIn:", error);
@@ -2837,7 +2843,7 @@ export const teacherTeachingAttendanceService = {
     }
   },
 
-  // Unlock Locked Session (>25m late) by Wakakur / Admin
+  // Unlock Locked Session by Wakakur / Admin
   async unlockLateCheckIn(params: {
     scheduleId: string;
     dateStr?: string;

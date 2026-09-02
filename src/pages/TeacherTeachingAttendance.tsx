@@ -3928,7 +3928,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                 {unlockLateModalItem.subjectName} — Kelas {unlockLateModalItem.className} ({unlockLateModalItem.jp})
               </div>
               <div className="text-amber-700 dark:text-amber-300 text-[11px] font-semibold">
-                Sesi ini terkunci karena batas waktu Check-in (25 menit) terlampaui. Membuka kunci akan mengizinkan guru melakukan scan QR Check-in.
+                Sesi ini berstatus terkunci/terlambat (&gt;15 menit). Membuka kunci akan mengizinkan guru melakukan scan QR Check-in.
               </div>
             </div>
 
