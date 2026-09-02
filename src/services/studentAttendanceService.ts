@@ -13,6 +13,7 @@ import {
 } from "firebase/firestore";
 import { db, handleFirestoreError, OperationType } from "../firebase/config";
 import { Student } from "../types";
+import { isStudentActive } from "../utils/studentHelper";
 import { 
   ClassStudentAttendanceRecord, 
   StudentAttendanceItem, 
@@ -53,13 +54,15 @@ export const studentAttendanceService = {
       const colRef = collection(db, STUDENTS_COLLECTION);
       const q = query(
         colRef, 
-        where("classId", "==", classId),
-        where("status", "==", "Aktif")
+        where("classId", "==", classId)
       );
       const snapshot = await getDocs(q);
       const items: Student[] = [];
       snapshot.forEach(d => {
-        items.push({ id: d.id, ...d.data() } as Student);
+        const student = { id: d.id, ...d.data() } as Student;
+        if (isStudentActive(student)) {
+          items.push(student);
+        }
       });
       // Sort alphabetically by name
       items.sort((a, b) => (a.name || "").localeCompare(b.name || ""));

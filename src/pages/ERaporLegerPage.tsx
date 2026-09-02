@@ -8,10 +8,11 @@ import { scheduleService } from "../services/schedule.service";
 import {
   ERaporLegerEntry,
   ERaporLegerSemesterColumn,
+  ERaporLegerSemesterScore,
   ERaporHistoricalAssessment
 } from "../types/eRapor.types";
 import { Class, Subject, Student } from "../types";
-import { getSubjectGroupType, isSubjectReportVisible } from "../utils/subjectHelper";
+import { getSubjectGroupType, isSubjectReportVisible, getSubjectShortName } from "../utils/subjectHelper";
 import {
   BookOpen,
   Calendar,
@@ -180,7 +181,127 @@ export default function ERaporLegerPage() {
     loadLegerData();
   }, [selectedClassId, selectedSubjectId, subjectTypeFilter, teacherAllowedSubjectIds]);
 
-  // Filtered Leger entries based on search query
+  // Current selected class object
+  const currentClassObject = classes.find(c => c.classId === selectedClassId || c.name === selectedClassId);
+
+  // Pure Guru subjects list
+  const pureGuruSubjects = useMemo(() => {
+    if (!isPureGuru || !teacherAllowedSubjectIds) return [];
+    return subjects.filter(s => teacherAllowedSubjectIds.includes(s.id));
+  }, [isPureGuru, teacherAllowedSubjectIds, subjects]);
+
+  // Active subjects to show in table header groups
+  const activeSubjects = useMemo(() => {
+    let filtered = subjects.filter(s => isSubjectReportVisible(s));
+
+    if (isPureGuru && teacherAllowedSubjectIds) {
+      filtered = filtered.filter(s => teacherAllowedSubjectIds.includes(s.id));
+    }
+
+    if (subjectTypeFilter === "UMUM") {
+      filtered = filtered.filter(s => getSubjectGroupType(s) === "UMUM");
+    } else if (subjectTypeFilter === "PONDOK") {
+      filtered = filtered.filter(s => getSubjectGroupType(s) === "KEPESANTRENAN");
+    }
+
+    if (selectedSubjectId !== "ALL") {
+      filtered = filtered.filter(s => s.id === selectedSubjectId);
+    }
+
+    // Retain only subjects present in legerEntries to avoid phantom empty columns
+    const subjectsInEntries = new Set(legerEntries.map(e => e.subjectId));
+    const finalSubs = filtered.filter(s => subjectsInEntries.has(s.id) || selectedSubjectId === s.id);
+
+    // Fallback if subjects in entries are not yet in subjects master state
+    legerEntries.forEach(entry => {
+      if (!finalSubs.some(s => s.id === entry.subjectId)) {
+        if (selectedSubjectId === "ALL" || selectedSubjectId === entry.subjectId) {
+          finalSubs.push({
+            id: entry.subjectId,
+            code: entry.subjectId,
+            name: entry.subjectName,
+            group: (entry.subjectGroup as any) || "A",
+            kkm: 75,
+            grades: ["7", "8", "9"],
+            createdAt: ""
+          });
+        }
+      }
+    });
+
+    return finalSubs;
+  }, [subjects, isPureGuru, teacherAllowedSubjectIds, subjectTypeFilter, selectedSubjectId, legerEntries]);
+
+  // Active semester columns
+  const activeColumns = useMemo(() => {
+    if (selectedSeqFilter === "ALL") return legerColumns;
+    return legerColumns.filter(c => c.sequence === selectedSeqFilter);
+  }, [legerColumns, selectedSeqFilter]);
+
+  // Grouped Horizontal Student Matrix (1 Row = 1 Student)
+  const horizontalStudents = useMemo(() => {
+    const studentMap = new Map<string, {
+      studentId: string;
+      studentName: string;
+      studentNis?: string;
+      studentNisn?: string;
+      subjectScores: Map<string, {
+        scores: { [seq: number]: ERaporLegerSemesterScore };
+        avg: number | null;
+        count: number;
+      }>;
+    }>();
+
+    legerEntries.forEach(entry => {
+      if (!studentMap.has(entry.studentId)) {
+        studentMap.set(entry.studentId, {
+          studentId: entry.studentId,
+          studentName: entry.studentName,
+          studentNis: entry.studentNis,
+          studentNisn: entry.studentNisn,
+          subjectScores: new Map()
+        });
+      }
+
+      const st = studentMap.get(entry.studentId)!;
+
+      // Calculate subject average from activeColumns
+      let sum = 0;
+      let count = 0;
+      activeColumns.forEach(col => {
+        const item = entry.semesterScores[col.sequence];
+        if (item && item.score !== null && item.score !== undefined) {
+          sum += item.score;
+          count++;
+        }
+      });
+
+      const avg = count > 0 ? Number((sum / count).toFixed(1)) : null;
+
+      st.subjectScores.set(entry.subjectId, {
+        scores: entry.semesterScores,
+        avg,
+        count
+      });
+    });
+
+    // Filter by search query
+    let list = Array.from(studentMap.values());
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter(st =>
+        st.studentName.toLowerCase().includes(q) ||
+        (st.studentNis && st.studentNis.includes(q)) ||
+        (st.studentNisn && st.studentNisn.includes(q))
+      );
+    }
+
+    // Alphabetical sort by student name
+    list.sort((a, b) => a.studentName.localeCompare(b.studentName));
+    return list;
+  }, [legerEntries, activeColumns, searchQuery]);
+
+  // Filtered Leger entries based on search query (for backwards compatibility with detail modal)
   const filteredEntries = useMemo(() => {
     return legerEntries.filter(entry => {
       const matchSearch =
@@ -190,9 +311,6 @@ export default function ERaporLegerPage() {
       return matchSearch;
     });
   }, [legerEntries, searchQuery]);
-
-  // Current selected class object
-  const currentClassObject = classes.find(c => c.classId === selectedClassId || c.name === selectedClassId);
 
   // Grouped entries by Student for Student View / Print
   const studentGroupedEntries = useMemo(() => {
@@ -295,45 +413,44 @@ export default function ERaporLegerPage() {
     setIsHistoricalModalOpen(true);
   };
 
-  // Export Leger to Excel/CSV
+  // Export Leger to Excel/CSV (Horizontal Matrix format)
   const handleExportExcel = () => {
-    if (filteredEntries.length === 0) {
+    if (horizontalStudents.length === 0) {
       toast("Tidak ada data Leger untuk diexport.", "error");
       return;
     }
 
-    const headers = ["No", "NIS", "Nama Siswa", "Mata Pelajaran", "Kelompok Mapel"];
-    legerColumns.forEach(col => {
-      headers.push(`${col.label} (${col.subLabel || ''})`);
+    const headers = ["No", "NIS", "NISN", "Nama Siswa"];
+    activeSubjects.forEach(sub => {
+      const short = getSubjectShortName(sub);
+      activeColumns.forEach(col => {
+        headers.push(`${short}_${col.label}`);
+      });
+      headers.push(`${short}_RATA`);
     });
-    headers.push("Rata-rata");
 
     const rows: string[][] = [];
-    filteredEntries.forEach((entry, idx) => {
-      const displayType = entry.subjectType === "PONDOK" || entry.subjectType === "KEPESANTRENAN" ? "KEPESANTRENAN" : "UMUM";
+    horizontalStudents.forEach((student, idx) => {
       const row: string[] = [
         String(idx + 1),
-        entry.studentNis || "-",
-        `"${entry.studentName.replace(/"/g, '""')}"`,
-        `"${entry.subjectName.replace(/"/g, '""')}"`,
-        displayType
+        student.studentNis || "-",
+        student.studentNisn || "-",
+        `"${student.studentName.replace(/"/g, '""')}"`
       ];
 
-      let sum = 0;
-      let count = 0;
-      legerColumns.forEach(col => {
-        const item = entry.semesterScores[col.sequence];
-        if (item && item.score !== null) {
-          row.push(String(item.score));
-          sum += item.score;
-          count++;
-        } else {
-          row.push("-");
-        }
+      activeSubjects.forEach(sub => {
+        const subData = student.subjectScores.get(sub.id);
+        activeColumns.forEach(col => {
+          const sc = subData?.scores[col.sequence]?.score;
+          if (sc !== null && sc !== undefined) {
+            row.push(String(sc));
+          } else {
+            row.push("-");
+          }
+        });
+        row.push(subData?.avg !== null && subData?.avg !== undefined ? String(subData.avg) : "-");
       });
 
-      const avg = count > 0 ? (sum / count).toFixed(1) : "-";
-      row.push(avg);
       rows.push(row);
     });
 
@@ -373,17 +490,19 @@ export default function ERaporLegerPage() {
 
         {/* Action Controls */}
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={() => setIsHistoricalModalOpen(true)}
-            className="px-3.5 py-2 text-xs font-bold bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30 rounded-xl transition-all flex items-center gap-2"
-          >
-            <History className="w-4 h-4" />
-            Input Nilai Historis
-          </button>
+          {(isWaliKelas || isAdminOrPimpinan) && (
+            <button
+              onClick={() => setIsHistoricalModalOpen(true)}
+              className="px-3.5 py-2 text-xs font-bold bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30 rounded-xl transition-all flex items-center gap-2 cursor-pointer shadow-2xs"
+            >
+              <History className="w-4 h-4" />
+              Input Nilai Historis
+            </button>
+          )}
 
           <button
             onClick={handleExportExcel}
-            className="px-3.5 py-2 text-xs font-bold bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 text-slate-700 dark:text-zinc-300 border border-slate-200 dark:border-zinc-700 rounded-xl transition-all flex items-center gap-2"
+            className="px-3.5 py-2 text-xs font-bold bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 text-slate-700 dark:text-zinc-300 border border-slate-200 dark:border-zinc-700 rounded-xl transition-all flex items-center gap-2 cursor-pointer"
           >
             <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
             Export Excel
@@ -391,7 +510,7 @@ export default function ERaporLegerPage() {
 
           <button
             onClick={() => setIsPrintModalOpen(true)}
-            className="px-3.5 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-sm transition-all flex items-center gap-2"
+            className="px-3.5 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-sm transition-all flex items-center gap-2 cursor-pointer"
           >
             <Printer className="w-4 h-4" />
             Cetak Leger
@@ -440,37 +559,44 @@ export default function ERaporLegerPage() {
             </select>
           </div>
 
-          {/* 2. Pilih Mapel (if not restricted pure guru) */}
+          {/* 2. Pilih Mapel (if not restricted pure guru or if pure guru has > 1 mapel) */}
           <div>
             <label className="text-[11px] font-bold text-slate-600 dark:text-zinc-400 block mb-1">
               Mata Pelajaran
             </label>
-            <select
-              value={selectedSubjectId}
-              onChange={(e) => setSelectedSubjectId(e.target.value)}
-              className="w-full text-xs p-2.5 bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 rounded-xl font-bold text-slate-800 dark:text-zinc-100"
-            >
-              {!isPureGuru && <option value="ALL">Semua Mata Pelajaran</option>}
-              {subjects
-                .filter(sub => {
-                  if (isPureGuru && teacherAllowedSubjectIds) {
-                    if (!teacherAllowedSubjectIds.includes(sub.id)) return false;
-                  }
-                  if (!isSubjectReportVisible(sub)) return false;
-                  const grp = getSubjectGroupType(sub);
-                  if (subjectTypeFilter === "UMUM" && grp !== "UMUM") return false;
-                  if (subjectTypeFilter === "PONDOK" && grp !== "KEPESANTRENAN") return false;
-                  return true;
-                })
-                .map((sub) => {
-                  const grpType = getSubjectGroupType(sub);
-                  return (
-                    <option key={sub.id} value={sub.id}>
-                      {sub.name} ({grpType})
-                    </option>
-                  );
-                })}
-            </select>
+            {isPureGuru && pureGuruSubjects.length === 1 ? (
+              <div className="w-full text-xs p-2.5 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50 rounded-xl font-bold text-emerald-800 dark:text-emerald-300 flex items-center gap-2">
+                <BookOpen className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <span className="truncate">{pureGuruSubjects[0].name} ({getSubjectGroupType(pureGuruSubjects[0])})</span>
+              </div>
+            ) : (
+              <select
+                value={selectedSubjectId}
+                onChange={(e) => setSelectedSubjectId(e.target.value)}
+                className="w-full text-xs p-2.5 bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 rounded-xl font-bold text-slate-800 dark:text-zinc-100"
+              >
+                {!isPureGuru && <option value="ALL">Semua Mata Pelajaran</option>}
+                {subjects
+                  .filter(sub => {
+                    if (isPureGuru && teacherAllowedSubjectIds) {
+                      if (!teacherAllowedSubjectIds.includes(sub.id)) return false;
+                    }
+                    if (!isSubjectReportVisible(sub)) return false;
+                    const grp = getSubjectGroupType(sub);
+                    if (subjectTypeFilter === "UMUM" && grp !== "UMUM") return false;
+                    if (subjectTypeFilter === "PONDOK" && grp !== "KEPESANTRENAN") return false;
+                    return true;
+                  })
+                  .map((sub) => {
+                    const grpType = getSubjectGroupType(sub);
+                    return (
+                      <option key={sub.id} value={sub.id}>
+                        {sub.name} ({grpType})
+                      </option>
+                    );
+                  })}
+              </select>
+            )}
           </div>
 
           {/* 3. Jenis Mapel Tabs */}
@@ -613,7 +739,7 @@ export default function ERaporLegerPage() {
           <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-emerald-600" />
           Memuat matriks Leger Nilai...
         </div>
-      ) : filteredEntries.length === 0 ? (
+      ) : horizontalStudents.length === 0 ? (
         <div className="bg-white dark:bg-zinc-900 rounded-2xl p-12 border border-slate-200 dark:border-zinc-800 text-center space-y-3">
           <Info className="w-8 h-8 text-slate-400 mx-auto" />
           <p className="text-sm font-bold text-slate-700 dark:text-zinc-300">Tidak ada data Leger ditemukan.</p>
@@ -622,17 +748,17 @@ export default function ERaporLegerPage() {
           </p>
         </div>
       ) : (
-        <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-200 dark:border-zinc-800 shadow-sm overflow-hidden">
-          <div className="p-4 border-b border-slate-200 dark:border-zinc-800 flex items-center justify-between">
+        <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-200 dark:border-zinc-800 shadow-sm overflow-hidden flex flex-col">
+          <div className="p-4 border-b border-slate-200 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-3">
             <h3 className="text-xs font-bold text-slate-800 dark:text-zinc-200 flex items-center gap-2">
               Matriks Leger Kelas {currentClassObject?.name || selectedClassId}
               <span className="text-[11px] text-slate-500 dark:text-zinc-400 font-normal">
-                ({filteredEntries.length} Baris Data)
+                ({horizontalStudents.length} Siswa, {activeSubjects.length} Mata Pelajaran)
               </span>
             </h3>
 
             {/* Legend */}
-            <div className="flex items-center gap-3 text-[11px] font-semibold">
+            <div className="flex flex-wrap items-center gap-3 text-[11px] font-semibold">
               <span className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> e-Rapor Resmi
               </span>
@@ -645,126 +771,178 @@ export default function ERaporLegerPage() {
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
+          <div className="overflow-x-auto max-h-[70vh] relative">
+            <table className="w-full text-left text-xs border-separate border-spacing-0">
               <thead>
-                <tr className="bg-slate-50 dark:bg-zinc-800/80 border-b border-slate-200 dark:border-zinc-800 font-bold text-slate-700 dark:text-zinc-300">
-                  <th className="p-3 w-10 text-center">No</th>
-                  <th className="p-3 min-w-[160px]">Nama Siswa</th>
-                  <th className="p-3 min-w-[150px]">Mata Pelajaran</th>
-                  <th className="p-3 w-28 text-center">Jenis</th>
+                {/* Header Row 1: Fixed Corner Columns & Subject Groups */}
+                <tr className="bg-slate-100 dark:bg-zinc-800 text-slate-700 dark:text-zinc-200 font-bold border-b border-slate-200 dark:border-zinc-700">
+                  <th
+                    rowSpan={2}
+                    className="sticky top-0 left-0 z-40 bg-slate-100 dark:bg-zinc-800 p-2.5 text-center w-[50px] min-w-[50px] max-w-[50px] border-r border-b border-slate-200 dark:border-zinc-700"
+                  >
+                    No
+                  </th>
+                  <th
+                    rowSpan={2}
+                    className="sticky top-0 left-[50px] z-40 bg-slate-100 dark:bg-zinc-800 p-2.5 text-center w-[90px] min-w-[90px] max-w-[90px] border-r border-b border-slate-200 dark:border-zinc-700"
+                  >
+                    NIS
+                  </th>
+                  <th
+                    rowSpan={2}
+                    className="sticky top-0 left-[140px] z-40 bg-slate-100 dark:bg-zinc-800 p-2.5 text-left w-[220px] min-w-[220px] max-w-[220px] border-r-2 border-b border-slate-300 dark:border-zinc-700 shadow-[4px_0_10px_-2px_rgba(0,0,0,0.12)]"
+                  >
+                    Nama Siswa
+                  </th>
 
-                  {legerColumns
-                    .filter(col => selectedSeqFilter === "ALL" || selectedSeqFilter === col.sequence)
-                    .map((col) => (
-                      <th key={col.sequence} className="p-3 text-center min-w-[90px] border-l border-slate-200 dark:border-zinc-800">
-                        <div>{col.label}</div>
-                        <div className="text-[10px] text-slate-400 font-normal">{col.subLabel}</div>
+                  {activeSubjects.map((sub) => {
+                    const short = getSubjectShortName(sub);
+                    const subType = getSubjectGroupType(sub);
+                    const isPondok = subType === "KEPESANTRENAN";
+                    const colSpan = activeColumns.length + 1; // S1..Sn + RATA
+
+                    return (
+                      <th
+                        key={sub.id}
+                        colSpan={colSpan}
+                        title={`${sub.name} (${isPondok ? "Kepesantrenan" : "Umum"})`}
+                        className={`sticky top-0 z-30 p-2 text-center border-l-2 border-b border-slate-300 dark:border-zinc-700 h-[40px] ${
+                          isPondok
+                            ? "bg-amber-100 dark:bg-amber-950 text-amber-950 dark:text-amber-200"
+                            : "bg-slate-100 dark:bg-zinc-800 text-slate-800 dark:text-zinc-200"
+                        }`}
+                      >
+                        <div className="font-extrabold uppercase tracking-wide truncate max-w-[220px] mx-auto text-xs">
+                          {short}
+                        </div>
+                        <div className="text-[10px] font-normal text-slate-500 dark:text-zinc-400 truncate max-w-[200px] mx-auto">
+                          {sub.name}
+                        </div>
                       </th>
-                    ))}
+                    );
+                  })}
 
-                  <th className="p-3 text-center w-20 border-l border-slate-200 dark:border-zinc-800">Rata2</th>
-                  <th className="p-3 text-center w-20">Aksi</th>
+                  <th
+                    rowSpan={2}
+                    className="sticky top-0 right-0 z-40 bg-slate-100 dark:bg-zinc-800 p-2.5 text-center w-[56px] min-w-[56px] max-w-[56px] border-l border-b border-slate-200 dark:border-zinc-700 shadow-[-2px_0_4px_rgba(0,0,0,0.05)]"
+                  >
+                    Aksi
+                  </th>
+                </tr>
+
+                {/* Header Row 2: Subcolumns (Semesters + Rata) */}
+                <tr className="bg-slate-50 dark:bg-zinc-850 text-slate-600 dark:text-zinc-300 font-semibold border-b border-slate-200 dark:border-zinc-700 text-[11px]">
+                  {activeSubjects.map((sub) => (
+                    <React.Fragment key={`sub_sub_${sub.id}`}>
+                      {activeColumns.map((col) => (
+                        <th
+                          key={`${sub.id}_col_${col.sequence}`}
+                          className="sticky top-[40px] z-30 bg-slate-50 dark:bg-zinc-850 p-1.5 text-center min-w-[48px] border-l border-b border-slate-200 dark:border-zinc-700"
+                        >
+                          <span title={col.subLabel}>{col.label}</span>
+                        </th>
+                      ))}
+                      <th
+                        key={`${sub.id}_avg`}
+                        className="sticky top-[40px] z-30 bg-slate-200 dark:bg-zinc-800 p-1.5 text-center min-w-[54px] font-bold text-slate-800 dark:text-zinc-100 border-l border-r border-b border-slate-300 dark:border-zinc-700"
+                      >
+                        RATA
+                      </th>
+                    </React.Fragment>
+                  ))}
                 </tr>
               </thead>
+
               <tbody className="divide-y divide-slate-100 dark:divide-zinc-800/60">
-                {filteredEntries.map((entry, index) => {
-                  // Compute average
-                  let totalScore = 0;
-                  let filledCount = 0;
+                {horizontalStudents.map((student, idx) => (
+                  <tr
+                    key={student.studentId}
+                    className="group hover:bg-slate-50 dark:hover:bg-zinc-800 transition-colors"
+                  >
+                    {/* Sticky No */}
+                    <td className="sticky left-0 z-20 bg-white dark:bg-zinc-900 group-hover:bg-slate-50 dark:group-hover:bg-zinc-800 p-2.5 text-center text-slate-500 font-medium w-[50px] min-w-[50px] max-w-[50px] border-r border-b border-slate-200 dark:border-zinc-800">
+                      {idx + 1}
+                    </td>
 
-                  legerColumns.forEach(col => {
-                    const item = entry.semesterScores[col.sequence];
-                    if (item && item.score !== null) {
-                      totalScore += item.score;
-                      filledCount++;
-                    }
-                  });
+                    {/* Sticky NIS */}
+                    <td className="sticky left-[50px] z-20 bg-white dark:bg-zinc-900 group-hover:bg-slate-50 dark:group-hover:bg-zinc-800 p-2.5 text-center font-mono text-[11px] text-slate-600 dark:text-zinc-400 w-[90px] min-w-[90px] max-w-[90px] border-r border-b border-slate-200 dark:border-zinc-800">
+                      {student.studentNis || "—"}
+                    </td>
 
-                  const avgScore = filledCount > 0 ? (totalScore / filledCount).toFixed(1) : "—";
+                    {/* Sticky Nama Siswa */}
+                    <td className="sticky left-[140px] z-20 bg-white dark:bg-zinc-900 group-hover:bg-slate-50 dark:group-hover:bg-zinc-800 p-2.5 font-semibold text-slate-800 dark:text-zinc-100 w-[220px] min-w-[220px] max-w-[220px] border-r-2 border-b border-slate-300 dark:border-zinc-700 shadow-[4px_0_10px_-2px_rgba(0,0,0,0.12)]">
+                      <div className="truncate max-w-[210px]" title={student.studentName}>
+                        {student.studentName}
+                      </div>
+                      {student.studentNisn && (
+                        <div className="text-[10px] text-slate-400 font-normal">NISN: {student.studentNisn}</div>
+                      )}
+                    </td>
 
-                  return (
-                    <tr
-                      key={`${entry.studentId}_${entry.subjectId}`}
-                      className="hover:bg-slate-50/80 dark:hover:bg-zinc-800/40 transition-colors"
-                    >
-                      <td className="p-3 text-center text-slate-500 font-medium">{index + 1}</td>
-                      <td className="p-3 font-semibold text-slate-800 dark:text-zinc-100">
-                        <div>{entry.studentName}</div>
-                        <div className="text-[10px] text-slate-400 font-normal">NIS: {entry.studentNis || "—"}</div>
-                      </td>
-                      <td className="p-3 text-slate-700 dark:text-zinc-300 font-medium">
-                        {entry.subjectName}
-                        <span className="text-[10px] text-slate-400 block font-normal">{entry.subjectGroup}</span>
-                      </td>
-                      <td className="p-3 text-center">
-                        <span
-                          className={`px-2 py-0.5 text-[10px] font-bold rounded-md ${
-                            entry.subjectType === "PONDOK"
-                              ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
-                              : "bg-slate-100 text-slate-700 dark:bg-zinc-800 dark:text-zinc-300"
-                          }`}
-                        >
-                          {entry.subjectType === "PONDOK" ? "Pesantren" : "Umum"}
-                        </span>
-                      </td>
+                    {/* Subject Columns */}
+                    {activeSubjects.map((sub) => {
+                      const subData = student.subjectScores.get(sub.id);
 
-                      {/* Semester Scores */}
-                      {legerColumns
-                        .filter(col => selectedSeqFilter === "ALL" || selectedSeqFilter === col.sequence)
-                        .map((col) => {
-                          const item = entry.semesterScores[col.sequence];
-                          const hasScore = item && item.score !== null;
-                          const isERapor = item?.source === "ERAPOR";
-                          const isHist = item?.source === "HISTORICAL";
+                      return (
+                        <React.Fragment key={`cell_${student.studentId}_${sub.id}`}>
+                          {activeColumns.map((col) => {
+                            const scoreItem = subData?.scores[col.sequence];
+                            const hasScore = scoreItem && scoreItem.score !== null && scoreItem.score !== undefined;
+                            const isERapor = scoreItem?.source === "ERAPOR";
 
-                          return (
-                            <td
-                              key={col.sequence}
-                              onClick={() => openHistoricalForEntry(entry.studentId, entry.subjectId, col.sequence, item?.score)}
-                              className="p-3 text-center border-l border-slate-200 dark:border-zinc-800 cursor-pointer hover:bg-emerald-50/50 dark:hover:bg-emerald-950/20 transition-all group"
-                              title="Klik untuk menginput/mengedit nilai historis"
-                            >
-                              {hasScore ? (
-                                <div className="inline-flex flex-col items-center">
+                            return (
+                              <td
+                                key={`${student.studentId}_${sub.id}_${col.sequence}`}
+                                onClick={() =>
+                                  openHistoricalForEntry(
+                                    student.studentId,
+                                    sub.id,
+                                    col.sequence,
+                                    scoreItem?.score
+                                  )
+                                }
+                                className="p-1.5 text-center border-l border-b border-slate-200 dark:border-zinc-800 cursor-pointer hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-all group/cell"
+                                title={`Klik untuk input/edit: ${student.studentName} - ${sub.name} (${col.label})`}
+                              >
+                                {hasScore ? (
                                   <span
-                                    className={`text-xs font-bold px-2 py-0.5 rounded-lg ${
+                                    className={`inline-block text-[11px] font-bold px-1.5 py-0.5 rounded ${
                                       isERapor
                                         ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
                                         : "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300"
                                     }`}
                                   >
-                                    {item.score}
+                                    {scoreItem.score}
                                   </span>
-                                  <span className="text-[9px] text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    {isERapor ? "e-Rapor" : "Historis"}
+                                ) : (
+                                  <span className="text-slate-300 dark:text-zinc-600 font-bold group-hover/cell:text-emerald-600">
+                                    —
                                   </span>
-                                </div>
-                              ) : (
-                                <span className="text-slate-300 dark:text-zinc-600 font-bold group-hover:text-emerald-600">
-                                  —
-                                </span>
-                              )}
-                            </td>
-                          );
-                        })}
+                                )}
+                              </td>
+                            );
+                          })}
 
-                      <td className="p-3 text-center font-extrabold text-slate-800 dark:text-zinc-100 border-l border-slate-200 dark:border-zinc-800">
-                        {avgScore}
-                      </td>
+                          {/* Subject Average */}
+                          <td className="p-1.5 text-center font-bold text-slate-800 dark:text-zinc-100 bg-slate-50 dark:bg-zinc-850/60 border-l border-r border-b border-slate-300 dark:border-zinc-700 text-[11px]">
+                            {subData?.avg !== null && subData?.avg !== undefined ? subData.avg : "—"}
+                          </td>
+                        </React.Fragment>
+                      );
+                    })}
 
-                      <td className="p-3 text-center">
-                        <button
-                          onClick={() => setSelectedStudentForDetail(entry.studentId)}
-                          className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-zinc-800 rounded-lg transition-all"
-                          title="Lihat Riwayat Nilai Siswa"
-                        >
-                          <Eye className="w-4 h-4" />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
+                    {/* Action Button */}
+                    <td className="sticky right-0 z-20 bg-white dark:bg-zinc-900 group-hover:bg-slate-50 dark:group-hover:bg-zinc-800 p-2 text-center w-[56px] min-w-[56px] max-w-[56px] border-l border-b border-slate-200 dark:border-zinc-800 shadow-[-2px_0_4px_rgba(0,0,0,0.05)]">
+                      <button
+                        onClick={() => setSelectedStudentForDetail(student.studentId)}
+                        className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-zinc-800 rounded-lg transition-all"
+                        title="Lihat Riwayat Nilai Lengkap Siswa"
+                      >
+                        <Eye className="w-4 h-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

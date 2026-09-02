@@ -29,6 +29,8 @@ import { ExecutiveComplianceDashboard } from "../components/dashboard/ExecutiveC
 import { ExecutiveTeachingAnalyticsWidget } from "../components/ExecutiveTeachingAnalyticsWidget";
 import { ExecutiveMutabaahWidget } from "../components/ExecutiveMutabaahWidget";
 import { ExecutiveHalaqahAttendanceWidget } from "../components/ExecutiveHalaqahAttendanceWidget";
+import { TeacherMonthlyAttendanceSummary } from "../components/TeacherMonthlyAttendanceSummary";
+import { isStudentActive } from "../utils/studentHelper";
 import { 
   X,
   Users, 
@@ -256,7 +258,7 @@ export const Dashboard: React.FC = () => {
   const [drilldownModal, setDrilldownModal] = React.useState<{
     isOpen: boolean;
     title: string;
-    type: "unfilled_journals" | "unfilled_halaqah" | "missing_prota" | "missing_prosem" | "missing_rpp" | "student_violations" | "student_rewards" | "broken_sarpras" | "active_maintenance";
+    type: "unfilled_journals" | "unfilled_halaqah" | "missing_prota" | "missing_prosem" | "missing_rpp" | "student_violations" | "student_rewards" | "broken_sarpras" | "active_maintenance" | "teaching_attendance_detail" | "students" | "teachers" | "classes" | "subjects" | "academic_leger";
     data: any[];
   }>({
     isOpen: false,
@@ -431,7 +433,8 @@ export const Dashboard: React.FC = () => {
     if (viewingRole !== "musrif") return null;
 
     const myGroupIds = myGroups.map(g => g.id);
-    const myStudentsList = allMembers.filter(m => myGroupIds.includes(m.groupId));
+    const activeStudentIds = new Set(students.filter(isStudentActive).map(s => s.id));
+    const myStudentsList = allMembers.filter(m => myGroupIds.includes(m.groupId) && activeStudentIds.has(m.studentId));
     const totalMyStudents = myStudentsList.length;
 
     // Mutabaah Hari Ini
@@ -493,21 +496,44 @@ export const Dashboard: React.FC = () => {
 
   const isLoading = isLoadingStudents || isLoadingTeachers || isLoadingClasses || isLoadingSubjects || isLoadingYears;
 
-  // Aggregate stats
-  const totalStudents = students.length;
+  // Aggregate stats (Filtering by Active Status while preserving historical references)
+  // Concept: Total Siswa = jumlah siswa dengan status "AKTIF"
+  const activeStudents = React.useMemo(() => {
+    return students.filter(isStudentActive);
+  }, [students]);
+
+  const inactiveStudents = React.useMemo(() => {
+    return students.filter((s) => !isStudentActive(s));
+  }, [students]);
+
+  const activeTeachers = React.useMemo(() => {
+    return teachers.filter(t => t.status === true || t.status === "Aktif" || t.status === undefined);
+  }, [teachers]);
+
+  const inactiveTeachers = React.useMemo(() => {
+    return teachers.filter(t => t.status === false || t.status === "Nonaktif");
+  }, [teachers]);
+
+  // Total Siswa is strictly count of active students
+  const totalStudents = activeStudents.length;
+  const totalActiveStudents = activeStudents.length;
+  const totalInactiveStudents = inactiveStudents.length;
+  const totalAllStudentRecordCount = students.length;
+  const totalActiveTeachers = activeTeachers.length;
   const totalTeachers = teachers.length;
   const totalClasses = classes.length;
   const totalSubjects = subjects.length;
 
-  // Chart 1: Students distribution by Grade
+  // Chart 1: Active Students distribution by Grade
   const gradeData = React.useMemo(() => {
     const grades = { "Grade 7": 0, "Grade 8": 0, "Grade 9": 0, "Belum Diatur": 0 };
-    students.forEach(s => {
+    activeStudents.forEach(s => {
       const cls = classes.find(c => c.id === s.classId);
       if (cls) {
-        if (cls.grade === "7") grades["Grade 7"]++;
-        else if (cls.grade === "8") grades["Grade 8"]++;
-        else if (cls.grade === "9") grades["Grade 9"]++;
+        if (cls.grade === "7" || cls.gradeLevel === "VII") grades["Grade 7"]++;
+        else if (cls.grade === "8" || cls.gradeLevel === "VIII") grades["Grade 8"]++;
+        else if (cls.grade === "9" || cls.gradeLevel === "IX") grades["Grade 9"]++;
+        else grades["Belum Diatur"]++;
       } else {
         grades["Belum Diatur"]++;
       }
@@ -518,20 +544,16 @@ export const Dashboard: React.FC = () => {
       { name: "Kelas 9", Siswa: grades["Grade 9"] },
       { name: "Tanpa Kelas", Siswa: grades["Belum Diatur"] }
     ];
-  }, [students, classes]);
+  }, [activeStudents, classes]);
 
   // Chart 2: Teacher status distribution (Aktif / Nonaktif)
   const COLORS = ["#10b981", "#ef4444"];
   const teacherStatusData = React.useMemo(() => {
-    const counts: Record<string, number> = { "Aktif": 0, "Nonaktif": 0 };
-    teachers.forEach(t => {
-      const label = t.status ? "Aktif" : "Nonaktif";
-      counts[label]++;
-    });
-    return Object.entries(counts)
-      .map(([name, value]) => ({ name, value }))
-      .filter(item => item.value > 0);
-  }, [teachers]);
+    return [
+      { name: "Aktif", value: totalActiveTeachers },
+      { name: "Nonaktif", value: inactiveTeachers.length }
+    ].filter(item => item.value > 0);
+  }, [totalActiveTeachers, inactiveTeachers]);
 
   const teacherId = user?.teacherId || "";
 
@@ -1193,6 +1215,16 @@ export const Dashboard: React.FC = () => {
                   ))
                 )}
               </div>
+            </div>
+
+            {/* Rekap Kehadiran Mengajar Bulanan Guru */}
+            <div className="mt-8">
+              <TeacherMonthlyAttendanceSummary
+                teacherId={teacherId || user?.id || ""}
+                teacherName={user?.displayName || "Guru"}
+                academicYearId={activeAcademicYearObj?.id}
+                semesterId={activeSemesterObj?.id}
+              />
             </div>
 
             {/* Agenda Akademik Pekan Ini */}
@@ -2071,51 +2103,111 @@ export const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Stats Cards Grid */}
+      {/* Stats Cards Grid with Drilldown Interactivity */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         
-        {/* Siswa */}
-        <div className="bg-white dark:bg-zinc-900 rounded-xl border border-slate-200 dark:border-zinc-800 p-5 flex items-center gap-4 hover:shadow-sm transition-shadow shadow-xs">
-          <div className="h-12 w-12 rounded-lg bg-blue-50 dark:bg-blue-950/20 flex items-center justify-center text-blue-600 dark:text-blue-400">
-            <Users className="h-6 w-6" />
+        {/* Siswa Aktif */}
+        <div 
+          onClick={() => setDrilldownModal({
+            isOpen: true,
+            title: "Daftar & Distribusi Siswa (Aktif & Nonaktif)",
+            type: "students",
+            data: students
+          })}
+          className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-200 dark:border-zinc-800 p-5 flex items-center justify-between hover:shadow-md hover:border-blue-400/50 transition-all cursor-pointer group shadow-xs"
+        >
+          <div className="flex items-center gap-4">
+            <div className="h-12 w-12 rounded-xl bg-blue-50 dark:bg-blue-950/20 flex items-center justify-center text-blue-600 dark:text-blue-400 group-hover:scale-105 transition-transform">
+              <Users className="h-6 w-6" />
+            </div>
+            <div>
+              <p className="text-[10px] text-slate-500 dark:text-zinc-500 font-bold uppercase tracking-wider">Total Siswa</p>
+              <h3 className="text-2xl font-black text-slate-800 dark:text-white mt-0.5">{totalStudents}</h3>
+              <p className="text-[10px] text-slate-400 dark:text-zinc-500 font-medium mt-0.5">
+                {totalInactiveStudents > 0 ? `${totalStudents} Siswa Aktif • ${totalInactiveStudents} Nonaktif/Lulus` : "Semua Siswa Aktif"}
+              </p>
+            </div>
           </div>
-          <div>
-            <p className="text-[10px] text-slate-500 dark:text-zinc-500 font-bold uppercase tracking-wider">Total Siswa</p>
-            <h3 className="text-xl font-bold text-slate-800 dark:text-white mt-1">{totalStudents}</h3>
-          </div>
+          <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
+            Rincian &rarr;
+          </span>
         </div>
 
-        {/* Guru */}
-        <div className="bg-white dark:bg-zinc-900 rounded-xl border border-slate-200 dark:border-zinc-800 p-5 flex items-center gap-4 hover:shadow-sm transition-shadow shadow-xs">
-          <div className="h-12 w-12 rounded-lg bg-emerald-50 dark:bg-emerald-950/20 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
-            <GraduationCap className="h-6 w-6" />
+        {/* Guru & Staf */}
+        <div 
+          onClick={() => setDrilldownModal({
+            isOpen: true,
+            title: "Daftar Tenaga Pendidik & Kependidikan (GTK)",
+            type: "teachers",
+            data: teachers
+          })}
+          className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-200 dark:border-zinc-800 p-5 flex items-center justify-between hover:shadow-md hover:border-emerald-400/50 transition-all cursor-pointer group shadow-xs"
+        >
+          <div className="flex items-center gap-4">
+            <div className="h-12 w-12 rounded-xl bg-emerald-50 dark:bg-emerald-950/20 flex items-center justify-center text-emerald-600 dark:text-emerald-400 group-hover:scale-105 transition-transform">
+              <GraduationCap className="h-6 w-6" />
+            </div>
+            <div>
+              <p className="text-[10px] text-slate-500 dark:text-zinc-500 font-bold uppercase tracking-wider">Guru & Staf Aktif</p>
+              <h3 className="text-2xl font-black text-slate-800 dark:text-white mt-0.5">{totalActiveTeachers}</h3>
+              <p className="text-[10px] text-slate-400 dark:text-zinc-500 font-medium mt-0.5">
+                {inactiveTeachers.length > 0 ? `+${inactiveTeachers.length} Nonaktif` : "Semua GTK Aktif"}
+              </p>
+            </div>
           </div>
-          <div>
-            <p className="text-[10px] text-slate-500 dark:text-zinc-500 font-bold uppercase tracking-wider">Guru & Staf</p>
-            <h3 className="text-xl font-bold text-slate-800 dark:text-white mt-1">{totalTeachers}</h3>
-          </div>
+          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
+            Rincian &rarr;
+          </span>
         </div>
 
         {/* Kelas */}
-        <div className="bg-white dark:bg-zinc-900 rounded-xl border border-slate-200 dark:border-zinc-800 p-5 flex items-center gap-4 hover:shadow-sm transition-shadow shadow-xs">
-          <div className="h-12 w-12 rounded-lg bg-amber-50 dark:bg-amber-950/20 flex items-center justify-center text-amber-600 dark:text-amber-400">
-            <DoorClosed className="h-6 w-6" />
+        <div 
+          onClick={() => setDrilldownModal({
+            isOpen: true,
+            title: "Daftar Rombongan Belajar (Kelas & Wali Kelas)",
+            type: "classes",
+            data: classes
+          })}
+          className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-200 dark:border-zinc-800 p-5 flex items-center justify-between hover:shadow-md hover:border-amber-400/50 transition-all cursor-pointer group shadow-xs"
+        >
+          <div className="flex items-center gap-4">
+            <div className="h-12 w-12 rounded-xl bg-amber-50 dark:bg-amber-950/20 flex items-center justify-center text-amber-600 dark:text-amber-400 group-hover:scale-105 transition-transform">
+              <DoorClosed className="h-6 w-6" />
+            </div>
+            <div>
+              <p className="text-[10px] text-slate-500 dark:text-zinc-500 font-bold uppercase tracking-wider">Total Rombel / Kelas</p>
+              <h3 className="text-2xl font-black text-slate-800 dark:text-white mt-0.5">{totalClasses}</h3>
+              <p className="text-[10px] text-slate-400 dark:text-zinc-500 font-medium mt-0.5">Kelas VII, VIII & IX</p>
+            </div>
           </div>
-          <div>
-            <p className="text-[10px] text-slate-500 dark:text-zinc-500 font-bold uppercase tracking-wider">Total Kelas</p>
-            <h3 className="text-xl font-bold text-slate-800 dark:text-white mt-1">{totalClasses}</h3>
-          </div>
+          <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
+            Rincian &rarr;
+          </span>
         </div>
 
         {/* Mata Pelajaran */}
-        <div className="bg-white dark:bg-zinc-900 rounded-xl border border-slate-200 dark:border-zinc-800 p-5 flex items-center gap-4 hover:shadow-sm transition-shadow shadow-xs">
-          <div className="h-12 w-12 rounded-lg bg-indigo-50 dark:bg-indigo-950/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
-            <BookOpen className="h-6 w-6" />
+        <div 
+          onClick={() => setDrilldownModal({
+            isOpen: true,
+            title: "Daftar Mata Pelajaran & Kurikulum Terdaftar",
+            type: "subjects",
+            data: subjects
+          })}
+          className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-200 dark:border-zinc-800 p-5 flex items-center justify-between hover:shadow-md hover:border-indigo-400/50 transition-all cursor-pointer group shadow-xs"
+        >
+          <div className="flex items-center gap-4">
+            <div className="h-12 w-12 rounded-xl bg-indigo-50 dark:bg-indigo-950/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400 group-hover:scale-105 transition-transform">
+              <BookOpen className="h-6 w-6" />
+            </div>
+            <div>
+              <p className="text-[10px] text-slate-500 dark:text-zinc-500 font-bold uppercase tracking-wider">Mata Pelajaran</p>
+              <h3 className="text-2xl font-black text-slate-800 dark:text-white mt-0.5">{totalSubjects}</h3>
+              <p className="text-[10px] text-slate-400 dark:text-zinc-500 font-medium mt-0.5">Umum & Kepesantrenan</p>
+            </div>
           </div>
-          <div>
-            <p className="text-[10px] text-slate-500 dark:text-zinc-500 font-bold uppercase tracking-wider">Mata Pelajaran</p>
-            <h3 className="text-xl font-bold text-slate-800 dark:text-white mt-1">{totalSubjects}</h3>
-          </div>
+          <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
+            Rincian &rarr;
+          </span>
         </div>
 
       </div>
@@ -3332,6 +3424,41 @@ export const Dashboard: React.FC = () => {
                             <th className="p-3 font-bold text-slate-500 uppercase text-right">Estimasi Biaya</th>
                           </>
                         )}
+                        {drilldownModal.type === "students" && (
+                          <>
+                            <th className="p-3 font-bold text-slate-500 uppercase">NIS / NISN</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Nama Santri</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">L/P</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Kelas</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase text-center">Status</th>
+                          </>
+                        )}
+                        {drilldownModal.type === "teachers" && (
+                          <>
+                            <th className="p-3 font-bold text-slate-500 uppercase">NIP / NUPTK</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Nama Lengkap & Gelar</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">L/P</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Kontak / WA</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase text-center">Status</th>
+                          </>
+                        )}
+                        {drilldownModal.type === "classes" && (
+                          <>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Kode</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Nama Rombel / Kelas</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Tingkat</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Wali Kelas</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase text-center">Kapasitas</th>
+                          </>
+                        )}
+                        {drilldownModal.type === "subjects" && (
+                          <>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Kode</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Nama Mata Pelajaran</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase">Kategori / Kelompok</th>
+                            <th className="p-3 font-bold text-slate-500 uppercase text-center">Alokasi Beban</th>
+                          </>
+                        )}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-zinc-850">
@@ -3462,6 +3589,77 @@ export const Dashboard: React.FC = () => {
                               </td>
                             </>
                           )}
+                          {drilldownModal.type === "students" && (
+                            <>
+                              <td className="p-3 font-mono text-slate-500">{item.nisn || item.nis || "-"}</td>
+                              <td className="p-3 font-bold text-slate-850 dark:text-zinc-200">{item.name}</td>
+                              <td className="p-3 font-bold text-slate-600 dark:text-zinc-400">{item.gender === "Laki-laki" ? "L" : "P"}</td>
+                              <td className="p-3 text-slate-600 dark:text-zinc-400">{item.className || "Tanpa Kelas"}</td>
+                              <td className="p-3 text-center">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold ${
+                                  !item.status || item.status === "Aktif"
+                                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+                                    : "bg-slate-200 text-slate-700 dark:bg-zinc-800 dark:text-zinc-400"
+                                }`}>
+                                  {item.status || "Aktif"}
+                                </span>
+                              </td>
+                            </>
+                          )}
+                          {drilldownModal.type === "teachers" && (
+                            <>
+                              <td className="p-3 font-mono text-slate-500">{item.nip || item.nuptk || "-"}</td>
+                              <td className="p-3 font-bold text-slate-850 dark:text-zinc-200">
+                                {item.name} {item.title ? `, ${item.title}` : ""}
+                              </td>
+                              <td className="p-3 font-bold text-slate-600 dark:text-zinc-400">{item.gender === "Laki-laki" ? "L" : "P"}</td>
+                              <td className="p-3 text-slate-600 dark:text-zinc-400 font-mono text-[11px]">{item.phone || "-"}</td>
+                              <td className="p-3 text-center">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold ${
+                                  item.status === true || item.status === "Aktif" || item.status === undefined
+                                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+                                    : "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300"
+                                }`}>
+                                  {item.status === false || item.status === "Nonaktif" ? "Nonaktif" : "Aktif"}
+                                </span>
+                              </td>
+                            </>
+                          )}
+                          {drilldownModal.type === "classes" && (
+                            <>
+                              <td className="p-3 font-mono font-bold text-slate-700 dark:text-zinc-300">{item.code || item.name}</td>
+                              <td className="p-3 font-bold text-slate-850 dark:text-zinc-200">{item.name}</td>
+                              <td className="p-3">
+                                <span className="bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded font-mono font-bold">
+                                  Tingkat {item.gradeLevel || item.grade || "-"}
+                                </span>
+                              </td>
+                              <td className="p-3 font-semibold text-slate-700 dark:text-zinc-300">
+                                {item.homeroomTeacherName || item.waliKelasName || "Belum ditentukan"}
+                              </td>
+                              <td className="p-3 text-center font-mono font-bold text-slate-700 dark:text-zinc-300">
+                                {students.filter(s => s.classId === item.id && isStudentActive(s)).length} / {item.capacity || 32} Siswa Aktif
+                              </td>
+                            </>
+                          )}
+                          {drilldownModal.type === "subjects" && (
+                            <>
+                              <td className="p-3 font-mono font-bold text-slate-700 dark:text-zinc-300">{item.code || "-"}</td>
+                              <td className="p-3 font-bold text-slate-850 dark:text-zinc-200">{item.name}</td>
+                              <td className="p-3 text-slate-600 dark:text-zinc-400">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                  item.category === "Kepesantrenan"
+                                    ? "bg-teal-50 text-teal-700 dark:bg-teal-950/30 dark:text-teal-400"
+                                    : "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/30 dark:text-indigo-400"
+                                }`}>
+                                  {item.category || "Umum"}
+                                </span>
+                              </td>
+                              <td className="p-3 text-center font-mono font-bold text-indigo-600 dark:text-blue-400">
+                                {item.weeklyHours || 2} JP/Pekan
+                              </td>
+                            </>
+                          )}
                         </tr>
                       ))}
                     </tbody>
@@ -3471,7 +3669,45 @@ export const Dashboard: React.FC = () => {
             </div>
 
             {/* Footer */}
-            <div className="p-4 border-t border-slate-100 dark:border-zinc-850 bg-slate-50 dark:bg-zinc-950/25 flex justify-end">
+            <div className="p-4 border-t border-slate-100 dark:border-zinc-850 bg-slate-50 dark:bg-zinc-950/25 flex items-center justify-between">
+              <div>
+                {drilldownModal.type === "students" && (
+                  <Link
+                    to="/students"
+                    onClick={() => setDrilldownModal(prev => ({ ...prev, isOpen: false }))}
+                    className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+                  >
+                    Buka Manajemen Siswa Lengkap &rarr;
+                  </Link>
+                )}
+                {drilldownModal.type === "teachers" && (
+                  <Link
+                    to="/teachers"
+                    onClick={() => setDrilldownModal(prev => ({ ...prev, isOpen: false }))}
+                    className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+                  >
+                    Buka Manajemen GTK Lengkap &rarr;
+                  </Link>
+                )}
+                {drilldownModal.type === "classes" && (
+                  <Link
+                    to="/classes"
+                    onClick={() => setDrilldownModal(prev => ({ ...prev, isOpen: false }))}
+                    className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+                  >
+                    Buka Manajemen Rombel Lengkap &rarr;
+                  </Link>
+                )}
+                {drilldownModal.type === "subjects" && (
+                  <Link
+                    to="/subjects"
+                    onClick={() => setDrilldownModal(prev => ({ ...prev, isOpen: false }))}
+                    className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+                  >
+                    Buka Manajemen Mata Pelajaran &rarr;
+                  </Link>
+                )}
+              </div>
               <button 
                 onClick={() => setDrilldownModal(prev => ({ ...prev, isOpen: false }))}
                 className="px-5 py-2 bg-slate-800 text-white hover:bg-slate-900 dark:bg-zinc-800 dark:hover:bg-zinc-750 font-bold rounded-xl transition-all cursor-pointer text-xs"

@@ -145,15 +145,15 @@ export function DataTable<T>({
         </div>
       </div>
 
-      {/* Table Shell with responsive layout */}
-      <div className="overflow-x-auto border border-slate-200 dark:border-zinc-800 rounded-xl shadow-xs bg-white dark:bg-zinc-900/40">
+      {/* Table Shell with responsive layout & Sticky Header */}
+      <div className="overflow-x-auto overflow-y-auto max-h-[70vh] border border-slate-200 dark:border-zinc-800 rounded-xl shadow-xs bg-white dark:bg-zinc-900/40">
         <table className="w-full text-left text-sm border-collapse">
-          <thead>
-            <tr className="bg-slate-50/75 dark:bg-zinc-900 border-b border-slate-200 dark:border-zinc-800 text-slate-500 dark:text-zinc-400 font-semibold">
+          <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-zinc-900 shadow-xs">
+            <tr className="bg-slate-50 dark:bg-zinc-900 border-b border-slate-200 dark:border-zinc-800 text-slate-500 dark:text-zinc-400 font-semibold">
               {columns.map((col, idx) => (
                 <th
                   key={idx}
-                  className={`px-6 py-4 ${col.className || ""}`}
+                  className={`px-6 py-4 bg-slate-50 dark:bg-zinc-900 ${col.className || ""}`}
                 >
                   {col.sortable && (col.sortKey || typeof col.accessor === "string") ? (
                     <button
@@ -182,7 +182,7 @@ export function DataTable<T>({
                   )}
                 </th>
               ))}
-              {actions && <th className="px-6 py-4 text-right">Aksi</th>}
+              {actions && <th className="px-6 py-4 bg-slate-50 dark:bg-zinc-900 text-right">Aksi</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-zinc-800">

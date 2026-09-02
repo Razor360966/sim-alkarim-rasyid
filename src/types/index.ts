@@ -80,6 +80,8 @@ export interface Subject {
   subjectType?: "UMUM" | "KEPESANTRENAN" | "PONDOK"; // e-Rapor classification
   learningType?: SubjectLearningType; // Jenis Pembelajaran: REGULER | BLOK
   reportDisplay?: SubjectReportDisplay; // Status Tampil di Rapor: TAMPIL_RAPOR | TIDAK_TAMPIL_RAPOR
+  shortName?: string; // e.g. "MTK", "IPA" (singkatan untuk Leger)
+  singkatan?: string; // alias singkatan
   teacherId?: string;
   createdAt: string;
 }

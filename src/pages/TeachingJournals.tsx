@@ -40,6 +40,7 @@ import {
   lessonPeriodService 
 } from "../services/lessonPeriod.service";
 import { StudentAttendanceModal } from "../components/StudentAttendanceModal";
+import { isStudentActive } from "../utils/studentHelper";
 import { 
   TeachingJournal, 
   StudentAttendance, 
@@ -455,7 +456,7 @@ export const TeachingJournals: React.FC = () => {
       setSelectedSchedule(schedObj);
 
       // Find exact student count in class
-      const classStudents = students.filter(s => s.classId === meeting.classId && s.status === "Aktif");
+      const classStudents = students.filter(s => s.classId === meeting.classId && isStudentActive(s));
       const count = classStudents.length;
 
       setAttendance({

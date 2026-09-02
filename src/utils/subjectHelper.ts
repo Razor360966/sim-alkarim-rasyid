@@ -93,4 +93,89 @@ export function isSubjectReportVisible(subject?: Subject | null): boolean {
   return getSubjectReportDisplay(subject) === "TAMPIL_RAPOR";
 }
 
+/**
+ * Standard subject abbreviations dictionary for Leger
+ */
+const STANDARD_SUBJECT_ABBREVIATIONS: Record<string, string> = {
+  "matematika": "MTK",
+  "ilmu pengetahuan alam": "IPA",
+  "ipa": "IPA",
+  "ilmu pengetahuan sosial": "IPS",
+  "ips": "IPS",
+  "bahasa indonesia": "B.IND",
+  "bahasa inggris": "B.ING",
+  "bahasa arab": "B.ARB",
+  "pendidikan agama islam": "PAI",
+  "pendidikan agama islam dan budi pekerti": "PAI",
+  "pai": "PAI",
+  "pendidikan pancasila": "PPKn",
+  "pendidikan pancasila dan kewarganegaraan": "PPKn",
+  "ppkn": "PPKn",
+  "pkn": "PPKn",
+  "pendidikan jasmani, olahraga, dan kesehatan": "PJOK",
+  "pendidikan jasmani dan kesehatan": "PJOK",
+  "penjasorkes": "PJOK",
+  "pjok": "PJOK",
+  "informatika": "INF",
+  "teknologi informasi dan komunikasi": "TIK",
+  "tik": "INF",
+  "prakarya": "PRAK",
+  "prakarya dan kewirausahaan": "PRAK",
+  "pkwu": "PRAK",
+  "seni budaya": "SBK",
+  "seni rupa": "SR",
+  "seni musik": "SM",
+  "seni tari": "ST",
+  "tahfidz": "THFDZ",
+  "tahfidzul qur'an": "THFDZ",
+  "tahfidz al-qur'an": "THFDZ",
+  "tahsin": "THSN",
+  "fiqih": "FIQIH",
+  "fikih": "FIQIH",
+  "aqidah akhlak": "AQIDAH",
+  "akidah akhlak": "AQIDAH",
+  "qur'an hadits": "Q.HADITS",
+  "al-qur'an hadits": "Q.HADITS",
+  "hadits": "HADITS",
+  "sejarah kebudayaan islam": "SKI",
+  "ski": "SKI",
+  "nahwu": "NAHWU",
+  "shorof": "SHOROF",
+  "sharaf": "SHOROF",
+  "sorof": "SHOROF",
+  "tajwid": "TAJWID",
+  "bimbingan konseling": "BK"
+};
+
+/**
+ * Get display short name for Subject in Leger matrix
+ */
+export function getSubjectShortName(subject?: (Partial<Subject> & { name?: string; shortName?: string; singkatan?: string }) | null): string {
+  if (!subject) return "-";
+  if (subject.shortName && subject.shortName.trim() !== "") {
+    return subject.shortName.trim();
+  }
+  if (subject.singkatan && subject.singkatan.trim() !== "") {
+    return subject.singkatan.trim();
+  }
+
+  const name = (subject.name || "").trim();
+  if (!name) return "-";
+
+  const lower = name.toLowerCase().replace(/['"`]/g, "").trim();
+  if (STANDARD_SUBJECT_ABBREVIATIONS[lower]) {
+    return STANDARD_SUBJECT_ABBREVIATIONS[lower];
+  }
+
+  // Check substring match for common subjects
+  for (const [key, abbr] of Object.entries(STANDARD_SUBJECT_ABBREVIATIONS)) {
+    if (lower === key || lower.startsWith(key + " ") || lower.endsWith(" " + key)) {
+      return abbr;
+    }
+  }
+
+  // If no match found, use exact name without arbitrary truncations as requested
+  return name;
+}
+
 

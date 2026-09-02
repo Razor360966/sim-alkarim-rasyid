@@ -10,6 +10,7 @@ import { studentService } from "../services/studentService";
 import { eRaporService } from "../services/eRapor.service";
 import { extracurricularService } from "../services/extracurricular.service";
 import { AcademicYear, Semester, Class, Subject, Student } from "../types";
+import { isStudentActive } from "../utils/studentHelper";
 import {
   ERaporTp,
   ERaporAssessment,
@@ -188,7 +189,7 @@ export default function ERaporTeacherInput() {
       try {
         const targetClass = classes.find((c) => c.id === selectedClassId);
         const allStudents = await studentService.getStudents();
-        const loadedStudents = allStudents.filter((s) => s.classId === selectedClassId);
+        const loadedStudents = allStudents.filter((s) => s.classId === selectedClassId && isStudentActive(s));
         setStudents(loadedStudents);
 
         const ver = await eRaporService.getClassVerification(selectedAcademicYearId, selectedSemesterId, selectedClassId);

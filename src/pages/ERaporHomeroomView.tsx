@@ -7,6 +7,7 @@ import { classService } from "../services/classService";
 import { studentService } from "../services/studentService";
 import { eRaporService } from "../services/eRapor.service";
 import { AcademicYear, Semester, Class, Student } from "../types";
+import { isStudentActive } from "../utils/studentHelper";
 import {
   ERaporSubjectCompleteness,
   ERaporClassVerification,
@@ -102,7 +103,7 @@ export default function ERaporHomeroomView() {
       setIsLoading(true);
       try {
         const allStudents = await studentService.getStudents();
-        const classStudents = allStudents.filter((s) => s.classId === selectedClassId);
+        const classStudents = allStudents.filter((s) => s.classId === selectedClassId && isStudentActive(s));
 
         const [monitoring, requests] = await Promise.all([
           eRaporService.getHomeroomMonitoringData(

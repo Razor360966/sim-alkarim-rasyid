@@ -15,6 +15,7 @@ import { useToast } from "../contexts/ToastContext";
 import { Loading } from "../components/Loading";
 import { exportToExcel, exportToPDF } from "../utils/exportUtils";
 import { sortClasses, compareClassNames, getGradeLevelWeight } from "../utils/classSorter";
+import { isStudentActive } from "../utils/studentHelper";
 import { 
   Users, 
   Plus, 
@@ -291,8 +292,10 @@ export const Students: React.FC = () => {
   // Filter Summary Details & Stats
   const filterSummary = useMemo(() => {
     const total = sortedStudents.length;
-    const maleCount = sortedStudents.filter((s) => s.gender === "L").length;
-    const femaleCount = sortedStudents.filter((s) => s.gender === "P").length;
+    const activeCount = sortedStudents.filter(isStudentActive).length;
+    const inactiveCount = sortedStudents.filter((s) => !isStudentActive(s)).length;
+    const maleCount = sortedStudents.filter((s) => s.gender === "L" && (filterStatus !== "ALL" || isStudentActive(s))).length;
+    const femaleCount = sortedStudents.filter((s) => s.gender === "P" && (filterStatus !== "ALL" || isStudentActive(s))).length;
 
     // Count unique rombel among filtered students
     const rombelSet = new Set<string>();
@@ -304,7 +307,7 @@ export const Students: React.FC = () => {
     const uniqueRombelCount = rombelSet.size;
 
     let title = "Semua Tingkat & Rombel";
-    let subtitle = `Menampilkan ${total} siswa dari ${uniqueRombelCount} rombel`;
+    let subtitle = `Menampilkan ${activeCount} siswa aktif ${inactiveCount > 0 ? `(+${inactiveCount} nonaktif/riwayat)` : ""} dari ${uniqueRombelCount} rombel`;
 
     const selectedClassObj = filterClassId !== "ALL" ? classMap.get(filterClassId) : null;
 
@@ -312,17 +315,17 @@ export const Students: React.FC = () => {
       const gradeLabel = getGradeLabel(filterGradeLevel);
       if (filterClassId === "ALL") {
         title = `${gradeLabel} — Semua Rombel`;
-        subtitle = `Menampilkan ${total} siswa dari ${uniqueRombelCount} rombel tingkat ${filterGradeLevel}`;
+        subtitle = `Menampilkan ${activeCount} siswa aktif dari ${uniqueRombelCount} rombel tingkat ${filterGradeLevel}`;
       } else {
         title = `${gradeLabel} • ${selectedClassObj?.name || filterClassId}`;
-        subtitle = `Menampilkan ${total} siswa${selectedClassObj?.homeroomTeacherName ? ` (Wali Kelas: ${selectedClassObj.homeroomTeacherName})` : ""}`;
+        subtitle = `Menampilkan ${activeCount} siswa aktif${selectedClassObj?.homeroomTeacherName ? ` (Wali Kelas: ${selectedClassObj.homeroomTeacherName})` : ""}`;
       }
     } else if (filterGradeLevel === "NO_CLASS") {
       title = "Siswa Tanpa Kelas";
-      subtitle = `Menampilkan ${total} siswa yang belum ditempatkan pada rombongan belajar`;
+      subtitle = `Menampilkan ${activeCount} siswa aktif yang belum ditempatkan pada rombongan belajar`;
     } else if (filterClassId !== "ALL") {
       title = `Rombel: ${selectedClassObj?.name || filterClassId}`;
-      subtitle = `Menampilkan ${total} siswa${selectedClassObj?.homeroomTeacherName ? ` (Wali Kelas: ${selectedClassObj.homeroomTeacherName})` : ""}`;
+      subtitle = `Menampilkan ${activeCount} siswa aktif${selectedClassObj?.homeroomTeacherName ? ` (Wali Kelas: ${selectedClassObj.homeroomTeacherName})` : ""}`;
     }
 
     const selectedYearObj = academicYears.find((y) => y.id === effectiveAcademicYearId);
@@ -334,6 +337,8 @@ export const Students: React.FC = () => {
 
     return {
       total,
+      activeCount,
+      inactiveCount,
       maleCount,
       femaleCount,
       uniqueRombelCount,
@@ -341,7 +346,7 @@ export const Students: React.FC = () => {
       subtitle,
       yearLabel
     };
-  }, [sortedStudents, classMap, filterGradeLevel, filterClassId, effectiveAcademicYearId, academicYears]);
+  }, [sortedStudents, classMap, filterGradeLevel, filterClassId, filterStatus, effectiveAcademicYearId, academicYears]);
 
   // Forms
   const createForm = useForm<StudentFormValues>({
@@ -972,8 +977,17 @@ export const Students: React.FC = () => {
         {/* Quick Stat Badges */}
         <div className="flex flex-wrap items-center gap-2">
           <div className="px-3 py-1 bg-white dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 rounded-xl text-xs font-bold text-gray-700 dark:text-zinc-200 shadow-2xs">
-            Total: <span className="text-blue-600 dark:text-blue-400 font-extrabold">{filterSummary.total}</span> Siswa
+            {filterStatus === "ALL" ? (
+              <>Total Siswa: <span className="text-emerald-600 dark:text-emerald-400 font-extrabold">{filterSummary.activeCount}</span> <span className="text-[10px] text-gray-400 font-normal">Aktif</span></>
+            ) : (
+              <>Total ({filterStatus}): <span className="text-blue-600 dark:text-blue-400 font-extrabold">{filterSummary.total}</span> Siswa</>
+            )}
           </div>
+          {filterStatus === "ALL" && filterSummary.inactiveCount > 0 && (
+            <div className="px-2.5 py-1 bg-slate-100 dark:bg-zinc-800/80 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs font-bold text-slate-600 dark:text-zinc-400">
+              Riwayat / Nonaktif: <span className="font-extrabold">{filterSummary.inactiveCount}</span>
+            </div>
+          )}
           <div className="px-2.5 py-1 bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200/60 dark:border-blue-900/40 rounded-xl text-xs font-bold text-blue-700 dark:text-blue-300">
             L: {filterSummary.maleCount}
           </div>

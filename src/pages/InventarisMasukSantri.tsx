@@ -17,6 +17,7 @@ import {
   AuditStatusLog
 } from "../services/inventarisService";
 import { Student, Class, AcademicYear } from "../types";
+import { isStudentActive } from "../utils/studentHelper";
 import { Dialog } from "../components/Dialog";
 import { Loading } from "../components/Loading";
 import {
@@ -131,7 +132,7 @@ export const InventarisMasukSantri: React.FC = () => {
       setCategories(cats);
 
       const stds = await studentService.getStudents();
-      setStudents(stds);
+      setStudents(stds.filter(isStudentActive));
 
       const cls = await classService.getClasses();
       setClasses(cls);
@@ -1523,7 +1524,7 @@ export const InventarisMasukSantri: React.FC = () => {
               <div className="flex items-center justify-between w-full">
                 <p className={`text-[10px] font-bold uppercase tracking-wider ${
                   filterRole === "musrif" ? "text-purple-100" : "text-slate-400"
-                }`}>Oleh Musrif</p>
+                }`}>Oleh Guru Halaqoh</p>
                 <UserCheck className={`h-4 w-4 ${
                   filterRole === "musrif" ? "text-white" : "text-purple-600 dark:text-purple-400"
                 }`} />
@@ -2099,7 +2100,7 @@ export const InventarisMasukSantri: React.FC = () => {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 p-6 rounded-3xl">
             <div>
               <h2 className="text-sm font-extrabold text-slate-800 dark:text-white">Manajemen Penugasan Pemeriksa</h2>
-              <p className="text-[11px] text-slate-400">Tugaskan Guru atau Musrif untuk dapat menginput hasil ceklis asrama.</p>
+              <p className="text-[11px] text-slate-400">Tugaskan Guru atau Guru Halaqoh untuk dapat menginput hasil ceklis asrama.</p>
             </div>
 
             <button
@@ -2499,7 +2500,7 @@ export const InventarisMasukSantri: React.FC = () => {
       >
         <div className="space-y-4">
           <div className="space-y-1">
-            <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Pilih Guru / Musrif</label>
+            <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Pilih Guru / Guru Halaqoh</label>
             <select
               value={selectedUserToAssign}
               onChange={(e) => setSelectedUserToAssign(e.target.value)}

@@ -8,6 +8,7 @@ import { studentService } from "../services/studentService";
 import { eRaporService } from "../services/eRapor.service";
 import { schoolIdentityService } from "../services/schoolIdentity.service";
 import { Student, Class, AcademicYear, Semester } from "../types";
+import { isStudentActive } from "../utils/studentHelper";
 import { ERaporSettingsConfig } from "../types/eRapor.types";
 import {
   calculateStudentBiodataCompleteness,
@@ -171,7 +172,7 @@ export default function ERaporStudentBiodataPage() {
       try {
         const allStudents = await studentService.getStudents();
         const filtered = allStudents.filter(
-          (s) => s.classId === selectedClassId && s.status === "Aktif"
+          (s) => s.classId === selectedClassId && isStudentActive(s)
         );
         setStudents(filtered);
       } catch (e) {

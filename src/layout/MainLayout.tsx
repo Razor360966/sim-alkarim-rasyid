@@ -255,7 +255,21 @@ export const MainLayout: React.FC = () => {
     return item.roles.some(r => activeMappedRoles.includes(r));
   });
 
-  if (user.role === "musrif") {
+  if (activeMappedRoles.includes("kepala sekolah")) {
+    allowedMenuItems = [
+      { name: "Dashboard Eksekutif", path: "/", icon: LayoutDashboard, roles: ["kepala sekolah"] },
+      { name: "Profil Saya", path: "/profile", icon: UserIcon, roles: ["kepala sekolah"], group: "Akun Saya" },
+      { name: "Tentang Aplikasi", path: "/about", icon: Info, roles: ["kepala sekolah"], group: "Akun Saya" },
+      { name: "Pengaturan Akun", path: "/change-password", icon: SettingsIcon, roles: ["kepala sekolah"], group: "Akun Saya" }
+    ];
+  } else if (activeMappedRoles.includes("ketua yayasan")) {
+    allowedMenuItems = [
+      { name: "Dashboard Yayasan", path: "/", icon: LayoutDashboard, roles: ["ketua yayasan"] },
+      { name: "Profil Saya", path: "/profile", icon: UserIcon, roles: ["ketua yayasan"], group: "Akun Saya" },
+      { name: "Tentang Aplikasi", path: "/about", icon: Info, roles: ["ketua yayasan"], group: "Akun Saya" },
+      { name: "Pengaturan Akun", path: "/change-password", icon: SettingsIcon, roles: ["ketua yayasan"], group: "Akun Saya" }
+    ];
+  } else if (user.role === "musrif") {
     allowedMenuItems = [
       { name: "Dashboard", path: "/", icon: LayoutDashboard, roles: ["musrif"] },
       { name: "Kelompok Asrama", path: "/musrif-journals?tab=kelompok", icon: Users, roles: ["musrif"], group: "Halaqah Musrif (Asrama)" },

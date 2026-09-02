@@ -35,6 +35,7 @@ import {
   ERaporExecutiveDrilldownItem
 } from "../types/eRapor.types";
 import { Student, Subject, AcademicYear, Semester } from "../types";
+import { isStudentActive } from "../utils/studentHelper";
 import { AppConfig, APP_CONFIG } from "../config/appConfig";
 import { academicYearService } from "./academicYear.service";
 import { semesterService } from "./semester.service";
@@ -686,10 +687,15 @@ export const eRaporService = {
     });
 
     const studentsRef = collection(db, "students");
-    const studentQuery = query(studentsRef, where("classId", "==", classId), where("active", "==", true));
+    const studentQuery = query(studentsRef, where("classId", "==", classId));
     const studentSnap = await getDocs(studentQuery);
     const studentIds: string[] = [];
-    studentSnap.forEach((d) => studentIds.push(d.id));
+    studentSnap.forEach((d) => {
+      const st = { id: d.id, ...d.data() } as Student;
+      if (isStudentActive(st)) {
+        studentIds.push(d.id);
+      }
+    });
 
     if (studentIds.length === 0) {
       return { success: false, message: `Tidak ada siswa aktif terdaftar di kelas ${className}.` };
@@ -825,10 +831,15 @@ export const eRaporService = {
     const isClassVerified = verificationStatus === "TERVERIFIKASI" || verificationStatus === "LOCKED";
 
     const studentsRef = collection(db, "students");
-    const sQuery = query(studentsRef, where("classId", "==", classId), where("active", "==", true));
+    const sQuery = query(studentsRef, where("classId", "==", classId));
     const sSnap = await getDocs(sQuery);
     const students: Student[] = [];
-    sSnap.forEach((d) => students.push({ id: d.id, ...d.data() } as Student));
+    sSnap.forEach((d) => {
+      const st = { id: d.id, ...d.data() } as Student;
+      if (isStudentActive(st)) {
+        students.push(st);
+      }
+    });
 
     // Subject master map
     const subjSnap = await getDocs(collection(db, "subjects"));
@@ -998,11 +1009,11 @@ export const eRaporService = {
     });
 
     const studentsRef = collection(db, "students");
-    const stSnap = await getDocs(query(studentsRef, where("active", "==", true)));
+    const stSnap = await getDocs(studentsRef);
     const studentsByClass = new Map<string, Student[]>();
     stSnap.forEach((d) => {
       const st = { id: d.id, ...d.data() } as Student;
-      if (st.classId) {
+      if (st.classId && isStudentActive(st)) {
         if (!studentsByClass.has(st.classId)) studentsByClass.set(st.classId, []);
         studentsByClass.get(st.classId)!.push(st);
       }
@@ -1420,10 +1431,10 @@ export const eRaporService = {
 
     const columns = await this.getLegerSemesterColumns(maxSemesters);
 
-    // Fetch students in class
+    // Fetch students in class (active students only)
     const allStudents = await studentService.getStudents();
     const students = allStudents
-      .filter(s => s.classId === classId || s.className === classId)
+      .filter(s => (s.classId === classId || s.className === classId) && isStudentActive(s))
       .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
     // Fetch subjects
