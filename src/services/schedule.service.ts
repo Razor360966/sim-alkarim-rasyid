@@ -19,6 +19,7 @@ import { academicYearService } from "./academicYear.service";
 import { semesterService } from "./semester.service";
 import { teacherService } from "./teacherService";
 import { subjectService } from "./subjectService";
+import { teacherAssignmentService } from "./teacherAssignment.service";
 import { Schedule, TeacherAssignment, LessonPeriod, LessonPeriodType, CurriculumMatrix, Class } from "../types";
 
 const COLLECTION_NAME = "schedules";
@@ -601,14 +602,16 @@ export const scheduleService = {
       subjectsList,
       matrixList,
       periodsList,
-      settings
+      settings,
+      assignmentsList
     ] = await Promise.all([
       classService.getClasses(),
       teacherService.getTeachers(),
       subjectService.getSubjects(),
       curriculumMatrixService.getCurriculumMatrix(),
       lessonPeriodService.getLessonPeriods(),
-      schoolSettingsService.getSettings()
+      schoolSettingsService.getSettings(),
+      teacherAssignmentService.getTeacherAssignmentsByPeriod(academicYearId, semesterId)
     ]);
 
     // --- STEP 1b: PARSE CUSTOM RULES ---
@@ -762,21 +765,23 @@ export const scheduleService = {
 
         const remainingJp = Math.max(0, reqJp - lockedJpCount);
 
-        let resolvedTeacherId = m.teacherId || "GURU_ALM_01";
-        let resolvedTeacherName = m.teacherName || "Guru Pengampu";
+        // SSOT: Central Resolver with 4-tier hierarchy (teacher_assignments -> matrix_grade -> matrix_global -> fallback)
+        const resolved = teacherAssignmentService.resolveTeacherAssignmentSync({
+          academicYearId,
+          semesterId,
+          subjectId: m.subjectId,
+          classId: cls.id || cls.classId,
+          gradeLevel: cls.gradeLevel,
+          curriculumMatrixItem: m,
+          preloadedAssignments: assignmentsList
+        });
 
-        if (m.useDifferentTeachers) {
-          if (cls.gradeLevel === "VII") {
-            resolvedTeacherId = m.teacherId_vii || m.teacherId || "GURU_ALM_01";
-            resolvedTeacherName = m.teacherName_vii || m.teacherName || "Guru Pengampu";
-          } else if (cls.gradeLevel === "VIII") {
-            resolvedTeacherId = m.teacherId_viii || m.teacherId || "GURU_ALM_01";
-            resolvedTeacherName = m.teacherName_viii || m.teacherName || "Guru Pengampu";
-          } else if (cls.gradeLevel === "IX") {
-            resolvedTeacherId = m.teacherId_ix || m.teacherId || "GURU_ALM_01";
-            resolvedTeacherName = m.teacherName_ix || m.teacherName || "Guru Pengampu";
-          }
-        }
+        const resolvedTeacherId = resolved.teacherId || "GURU_ALM_01";
+        const resolvedTeacherName = resolved.teacherName || "Guru Pengampu";
+
+        // SSOT: Resolve active subject name from Master Subjects with safe fallback to curriculum_matrix snapshot
+        const masterSubj = subjectsList.find(s => s.id === m.subjectId);
+        const displaySubjectName = masterSubj?.name || m.subjectName;
 
         if (remainingJp > 0) {
           tasksRaw.push({
@@ -784,7 +789,7 @@ export const scheduleService = {
             className: cls.name,
             gradeLevel: cls.gradeLevel,
             subjectId: m.subjectId,
-            subjectName: m.subjectName,
+            subjectName: displaySubjectName,
             teacherId: resolvedTeacherId,
             teacherName: resolvedTeacherName,
             totalJpRequired: reqJp,

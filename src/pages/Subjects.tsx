@@ -30,7 +30,10 @@ import {
   ChevronDown,
   Search,
   Lock,
-  ArrowLeftRight
+  ArrowLeftRight,
+  CheckCircle2,
+  XCircle,
+  Power
 } from "lucide-react";
 import {
   getSubjectCategoryType,
@@ -144,6 +147,12 @@ export const Subjects: React.FC = () => {
   const [activeTabFilter, setActiveTabFilter] = useState<"ALL" | "UMUM" | "KEPESANTRENAN" | "UNCLASSIFIED">("ALL");
   const [learningTypeFilter, setLearningTypeFilter] = useState<"ALL" | "REGULER" | "BLOK">("ALL");
   const [reportDisplayFilter, setReportDisplayFilter] = useState<"ALL" | "TAMPIL_RAPOR" | "TIDAK_TAMPIL_RAPOR">("ALL");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
+  const [usageCheck, setUsageCheck] = useState<{
+    loading: boolean;
+    inUse: boolean;
+    reasons: string[];
+  }>({ loading: false, inUse: false, reasons: [] });
 
   // Sorting & Pagination States
   const [sortField, setSortField] = useState<keyof Subject | "groupType" | "learningType" | "reportDisplay" | "categoryType">("name");
@@ -195,15 +204,38 @@ export const Subjects: React.FC = () => {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: subjectService.deleteSubject,
-    onSuccess: () => {
+    mutationFn: ({ id, force }: { id: string; force?: boolean }) =>
+      subjectService.deleteSubject(id, force),
+    onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ["subjects"] });
-      toast("Mata Pelajaran berhasil dihapus!", "success");
+      if (res.deactivated) {
+        toast(res.message, "info");
+      } else {
+        toast(res.message, "success");
+      }
       setIsDeleteOpen(false);
     },
-    onError: (err) => {
+    onError: (err: any) => {
       console.error(err);
-      toast("Gagal menghapus data", "error");
+      toast("Gagal memproses penghapusan: " + (err?.message || ""), "error");
+    }
+  });
+
+  const toggleStatusMutation = useMutation({
+    mutationFn: async ({ id, activate }: { id: string; activate: boolean }) => {
+      if (activate) {
+        await subjectService.activateSubject(id);
+      } else {
+        await subjectService.deactivateSubject(id);
+      }
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["subjects"] });
+      toast(`Mata pelajaran berhasil ${variables.activate ? "diaktifkan" : "dinonaktifkan"}!`, "success");
+    },
+    onError: (err: any) => {
+      console.error(err);
+      toast("Gagal mengubah status mata pelajaran: " + (err?.message || ""), "error");
     }
   });
 
@@ -266,11 +298,15 @@ export const Subjects: React.FC = () => {
   const handleDeleteOpen = (subject: Subject) => {
     setSelectedSubject(subject);
     setIsDeleteOpen(true);
+    setUsageCheck({ loading: true, inUse: false, reasons: [] });
+    subjectService.checkSubjectUsage(subject.id).then((res) => {
+      setUsageCheck({ loading: false, inUse: res.inUse, reasons: res.reasons });
+    });
   };
 
-  const handleDeleteConfirm = () => {
+  const handleDeleteConfirm = (force: boolean = false) => {
     if (selectedSubject) {
-      deleteMutation.mutate(selectedSubject.id);
+      deleteMutation.mutate({ id: selectedSubject.id, force });
     }
   };
 
@@ -320,9 +356,13 @@ export const Subjects: React.FC = () => {
       const rDisplay = getSubjectReportDisplay(s);
       if (reportDisplayFilter !== "ALL" && rDisplay !== reportDisplayFilter) return false;
 
+      // 4. Status Aktif / Nonaktif Filter
+      if (statusFilter === "ACTIVE" && s.isActive === false) return false;
+      if (statusFilter === "INACTIVE" && s.isActive !== false) return false;
+
       return true;
     });
-  }, [subjects, searchQuery, activeTabFilter, learningTypeFilter, reportDisplayFilter]);
+  }, [subjects, searchQuery, activeTabFilter, learningTypeFilter, reportDisplayFilter, statusFilter]);
 
   // Sorted dataset
   const sortedSubjects = useMemo(() => {
@@ -586,18 +626,36 @@ export const Subjects: React.FC = () => {
                 }}
                 className="p-1.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-750 rounded-xl text-xs font-semibold text-slate-800 dark:text-zinc-200 cursor-pointer"
               >
-                <option value="ALL">Semua Status (Tampil & Tidak)</option>
+                <option value="ALL">Semua Rapor (Tampil & Tidak)</option>
                 <option value="TAMPIL_RAPOR">Hanya Tampil di Rapor</option>
                 <option value="TIDAK_TAMPIL_RAPOR">Hanya Tidak Tampil</option>
               </select>
             </div>
 
-            {(learningTypeFilter !== "ALL" || reportDisplayFilter !== "ALL" || searchQuery) && (
+            {/* Filter Status Aktif */}
+            <div className="flex items-center gap-1.5">
+              <span className="font-semibold text-slate-600 dark:text-zinc-400">Status:</span>
+              <select
+                value={statusFilter}
+                onChange={(e) => {
+                  setStatusFilter(e.target.value as any);
+                  setCurrentPage(1);
+                }}
+                className="p-1.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-750 rounded-xl text-xs font-semibold text-slate-800 dark:text-zinc-200 cursor-pointer"
+              >
+                <option value="ALL">Semua Status</option>
+                <option value="ACTIVE">Hanya Aktif</option>
+                <option value="INACTIVE">Hanya Nonaktif</option>
+              </select>
+            </div>
+
+            {(learningTypeFilter !== "ALL" || reportDisplayFilter !== "ALL" || statusFilter !== "ALL" || searchQuery) && (
               <button
                 onClick={() => {
                   setSearchQuery("");
                   setLearningTypeFilter("ALL");
                   setReportDisplayFilter("ALL");
+                  setStatusFilter("ALL");
                   setCurrentPage(1);
                 }}
                 className="px-2 py-1 text-[11px] font-bold text-slate-500 hover:text-rose-600 dark:text-zinc-400 dark:hover:text-rose-400 cursor-pointer transition-colors"
@@ -838,10 +896,15 @@ export const Subjects: React.FC = () => {
                   Kelas Tingkat
                 </th>
 
-                {/* 11. Sticky Frozen Column: Aksi on Right */}
+                {/* 11. Status */}
+                <th scope="col" className="min-w-[100px] px-4 py-3.5 bg-slate-50 dark:bg-zinc-900 text-center">
+                  Status
+                </th>
+
+                {/* 12. Sticky Frozen Column: Aksi on Right */}
                 <th
                   scope="col"
-                  className="sticky right-0 top-0 z-30 w-[96px] min-w-[96px] max-w-[96px] px-3.5 py-3.5 text-center bg-slate-100 dark:bg-zinc-850 border-l-2 border-slate-300 dark:border-zinc-700 shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.08)] dark:shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.4)]"
+                  className="sticky right-0 top-0 z-30 w-[112px] min-w-[112px] max-w-[112px] px-3 py-3.5 text-center bg-slate-100 dark:bg-zinc-850 border-l-2 border-slate-300 dark:border-zinc-700 shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.08)] dark:shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.4)]"
                 >
                   Aksi
                 </th>
@@ -852,7 +915,7 @@ export const Subjects: React.FC = () => {
             <tbody className="divide-y divide-slate-100 dark:divide-zinc-800/80">
               {paginatedSubjects.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-6 py-12 text-center text-slate-500 dark:text-zinc-400">
+                  <td colSpan={12} className="px-6 py-12 text-center text-slate-500 dark:text-zinc-400">
                     <p className="text-sm font-semibold">Tidak ada mata pelajaran ditemukan</p>
                     <p className="text-xs text-slate-400 mt-1">Coba sesuaikan kata kunci pencarian atau reset filter di atas.</p>
                   </td>
@@ -972,9 +1035,36 @@ export const Subjects: React.FC = () => {
                         {formatGrades(item)}
                       </td>
 
-                      {/* 11. Sticky Frozen Column: Aksi on Right with Left Shadow Border */}
-                      <td className="sticky right-0 z-10 w-[96px] min-w-[96px] max-w-[96px] px-3 py-3 text-center bg-white dark:bg-zinc-900 group-hover:bg-blue-50/80 dark:group-hover:bg-zinc-850 border-l-2 border-slate-300 dark:border-zinc-700 shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.08)] dark:shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.4)] transition-colors">
+                      {/* 11. Status */}
+                      <td className="px-4 py-3 whitespace-nowrap text-center">
+                        {item.isActive !== false ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 rounded-full">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                            Aktif
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-bold bg-slate-100 text-slate-600 dark:bg-zinc-800 dark:text-zinc-400 border border-slate-300 dark:border-zinc-750 rounded-full">
+                            <XCircle className="w-3 h-3 text-slate-400" />
+                            Nonaktif
+                          </span>
+                        )}
+                      </td>
+
+                      {/* 12. Sticky Frozen Column: Aksi on Right with Left Shadow Border */}
+                      <td className="sticky right-0 z-10 w-[112px] min-w-[112px] max-w-[112px] px-2 py-3 text-center bg-white dark:bg-zinc-900 group-hover:bg-blue-50/80 dark:group-hover:bg-zinc-850 border-l-2 border-slate-300 dark:border-zinc-700 shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.08)] dark:shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.4)] transition-colors">
                         <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => toggleStatusMutation.mutate({ id: item.id, activate: item.isActive === false })}
+                            disabled={toggleStatusMutation.isPending}
+                            className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                              item.isActive === false
+                                ? "text-emerald-600 hover:bg-emerald-100/70 dark:hover:bg-emerald-950/60 dark:text-emerald-400"
+                                : "text-slate-400 hover:text-amber-600 hover:bg-amber-100/70 dark:hover:bg-amber-950/60 dark:hover:text-amber-400"
+                            }`}
+                            title={item.isActive === false ? `Aktifkan Mapel: ${item.name}` : `Nonaktifkan Mapel: ${item.name}`}
+                          >
+                            <Power className="h-4 w-4" />
+                          </button>
                           <button
                             onClick={() => handleEditOpen(item)}
                             className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-100/70 dark:hover:bg-blue-950/60 dark:hover:text-blue-400 rounded-lg transition-colors cursor-pointer"
@@ -1301,18 +1391,45 @@ export const Subjects: React.FC = () => {
       <Dialog
         isOpen={isDeleteOpen}
         onClose={() => setIsDeleteOpen(false)}
-        title="Hapus Mata Pelajaran"
-        size="sm"
+        title="Hapus / Nonaktifkan Mata Pelajaran"
+        size="md"
       >
         <div className="space-y-4">
-          <p className="text-sm text-gray-500 dark:text-zinc-400 leading-relaxed">
-            Apakah Anda yakin ingin menghapus Mata Pelajaran{" "}
-            <strong className="text-gray-900 dark:text-white">
+          <p className="text-sm text-gray-600 dark:text-zinc-300 leading-relaxed">
+            Anda memilih mata pelajaran{" "}
+            <strong className="text-gray-900 dark:text-white font-bold">
               {selectedSubject?.name} ({selectedSubject?.code})
             </strong>
-            ? Seluruh data relasi guru pengampu yang terikat dengan mapel ini akan dilepaskan secara permanen.
+            .
           </p>
-          <div className="flex justify-end gap-3 pt-4 border-t border-gray-100 dark:border-zinc-800 mt-4">
+
+          {usageCheck.loading ? (
+            <div className="p-3 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 rounded-xl text-xs text-blue-700 dark:text-blue-300 flex items-center gap-2">
+              <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin shrink-0" />
+              <span>Memeriksa keterikatan data mapel pada jadwal, kurikulum, modul ajar, dan e-rapor...</span>
+            </div>
+          ) : usageCheck.inUse ? (
+            <div className="p-3.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/80 rounded-xl space-y-2">
+              <div className="flex items-center gap-2 text-xs font-bold text-amber-800 dark:text-amber-300">
+                <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                <span>Mata Pelajaran Sedang Digunakan</span>
+              </div>
+              <p className="text-xs text-amber-800/90 dark:text-amber-300/90 leading-relaxed">
+                Mata pelajaran ini memiliki relasi aktif di:{" "}
+                <strong>{usageCheck.reasons.join(", ")}</strong>.
+              </p>
+              <p className="text-[11px] text-amber-700 dark:text-amber-400/80 leading-relaxed">
+                Untuk melindungi keutuhan riwayat nilai siswa dan jadwal sebelumnya, sistem merekomendasikan <strong>Nonaktifkan (Soft-Delete)</strong> agar mapel tidak muncul di pilihan baru tanpa merusak data lampau.
+              </p>
+            </div>
+          ) : (
+            <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 rounded-xl text-xs text-emerald-800 dark:text-emerald-300 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>Mata pelajaran ini belum terikat pada jadwal, kurikulum, ataupun rapor. Aman dihapus secara permanen.</span>
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center justify-end gap-2.5 pt-4 border-t border-gray-100 dark:border-zinc-800 mt-4">
             <button
               type="button"
               onClick={() => setIsDeleteOpen(false)}
@@ -1320,13 +1437,38 @@ export const Subjects: React.FC = () => {
             >
               Batal
             </button>
-            <button
-              onClick={handleDeleteConfirm}
-              disabled={deleteMutation.isPending}
-              className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
-            >
-              {deleteMutation.isPending ? "Menghapus..." : "Ya, Hapus Mapel"}
-            </button>
+
+            {usageCheck.inUse ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteConfirm(true)}
+                  disabled={deleteMutation.isPending}
+                  className="px-3 py-2 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl text-xs font-semibold transition-colors disabled:opacity-50 cursor-pointer"
+                  title="Hapus permanen dokumen dari database (tidak disarankan)"
+                >
+                  {deleteMutation.isPending ? "Memproses..." : "Hapus Paksa"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteConfirm(false)}
+                  disabled={deleteMutation.isPending}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                >
+                  <Power className="w-3.5 h-3.5" />
+                  {deleteMutation.isPending ? "Memproses..." : "Nonaktifkan Mapel (Aman)"}
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => handleDeleteConfirm(true)}
+                disabled={deleteMutation.isPending}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                {deleteMutation.isPending ? "Menghapus..." : "Ya, Hapus Permanen"}
+              </button>
+            )}
           </div>
         </div>
       </Dialog>

@@ -5,7 +5,8 @@ import { classService } from "../services/classService";
 import { semesterService } from "../services/semester.service";
 import { curriculumMatrixService } from "../services/curriculumMatrixService";
 import { lessonPlanService } from "../services/lessonPlan.service";
-import type { Class, Semester, CurriculumMatrix, LessonPlan } from "../types";
+import { subjectService } from "../services/subjectService";
+import type { Class, Semester, CurriculumMatrix, LessonPlan, Subject } from "../types";
 import { 
   FileText, 
   Plus, 
@@ -32,6 +33,7 @@ export const LessonPlans: React.FC = () => {
   const [classes, setClasses] = useState<Class[]>([]);
   const [semesters, setSemesters] = useState<Semester[]>([]);
   const [curriculumMatrix, setCurriculumMatrix] = useState<CurriculumMatrix[]>([]);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
   const [academicYears, setAcademicYears] = useState<{ id: string; name: string }[]>([]);
 
   // Selection Filters
@@ -61,19 +63,21 @@ export const LessonPlans: React.FC = () => {
                              ["admin", "kurikulum", "superadmin", "operator"].includes(currentRole);
   const isGuru = (user?.roles?.includes("guru") || currentRole === "guru") && !isAdminOrKurikulum;
 
-  // Load classes, semesters, matrix
+  // Load classes, semesters, matrix, subjects
   useEffect(() => {
     setLoading(true);
     Promise.all([
       classService.getClasses(),
       semesterService.getSemesters(),
-      curriculumMatrixService.getCurriculumMatrix()
+      curriculumMatrixService.getCurriculumMatrix(),
+      subjectService.getSubjects()
     ])
-      .then(([clsList, semList, matrixList]) => {
+      .then(([clsList, semList, matrixList, subList]) => {
         const activeCls = clsList.filter(c => c.status === "Aktif" && !c.isDeleted);
         setClasses(activeCls);
         setSemesters(semList);
         setCurriculumMatrix(matrixList);
+        setSubjects(subList);
 
         // Group unique academic years from semesters
         const yearsMap = new Map<string, string>();
@@ -119,10 +123,11 @@ export const LessonPlans: React.FC = () => {
     }
 
     const jp = gradeLevel === "VII" ? m.jp_vii : gradeLevel === "VIII" ? m.jp_viii : m.jp_ix;
+    const masterSubj = subjects.find(s => s.id === m.subjectId);
 
     return {
       id: m.subjectId,
-      name: m.subjectName,
+      name: masterSubj?.name || m.subjectName,
       teacherId: assignedTeacherId,
       teacherName: assignedTeacherName,
       jp: jp || 0
@@ -166,10 +171,11 @@ export const LessonPlans: React.FC = () => {
     }
 
     const jp = modalGradeLevel === "VII" ? m.jp_vii : modalGradeLevel === "VIII" ? m.jp_viii : m.jp_ix;
+    const masterSubj = subjects.find(s => s.id === m.subjectId);
 
     return {
       id: m.subjectId,
-      name: m.subjectName,
+      name: masterSubj?.name || m.subjectName,
       teacherId: assignedTeacherId,
       teacherName: assignedTeacherName,
       jp: jp || 0
@@ -254,8 +260,9 @@ export const LessonPlans: React.FC = () => {
       const clsObj = classes.find(c => c.id === formClassId);
       const semObj = semesters.find(s => s.id === formSemesterId);
       const subObj = curriculumMatrix.find(m => m.subjectId === formSubjectId);
+      const masterSubj = subjects.find(s => s.id === formSubjectId);
 
-      const targetSubjectName = subObj?.subjectName || "";
+      const targetSubjectName = masterSubj?.name || subObj?.subjectName || "";
       const targetClassName = clsObj?.name || "";
       const targetSemesterName = semObj?.name || "";
       const targetAcademicYearName = semObj?.academicYearName || "";
@@ -462,7 +469,7 @@ export const LessonPlans: React.FC = () => {
                     {plan.title}
                   </h3>
                   <div className="flex items-center gap-1.5 text-xs text-slate-400 font-medium">
-                    <BookOpen className="h-3.5 w-3.5 text-blue-500" /> {plan.subjectName}
+                    <BookOpen className="h-3.5 w-3.5 text-blue-500" /> {subjects.find(s => s.id === plan.subjectId)?.name || plan.subjectName}
                   </div>
                 </div>
 

@@ -33,7 +33,9 @@ import { classService } from "../services/classService";
 import { teacherService } from "../services/teacherService";
 import { lessonPeriodService } from "../services/lessonPeriod.service";
 import { schoolSettingsService } from "../services/schoolSettings.service";
-import { Schedule, Class, Teacher, LessonPeriod, LessonPeriodType, CurriculumMatrix } from "../types";
+import { subjectService } from "../services/subjectService";
+import { teacherAssignmentService } from "../services/teacherAssignment.service";
+import { Schedule, Class, Teacher, LessonPeriod, LessonPeriodType, CurriculumMatrix, Subject, TeacherAssignment } from "../types";
 import { useToast } from "../contexts/ToastContext";
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
@@ -198,6 +200,27 @@ export default function Schedules() {
     queryFn: () => schoolSettingsService.getSettings()
   });
 
+  const { data: masterSubjects = [] } = useQuery({
+    queryKey: ["subjects"],
+    queryFn: () => subjectService.getSubjects()
+  });
+
+  const { data: teacherAssignments = [], refetch: refetchAssignments } = useQuery({
+    queryKey: ["teacher_assignments", selectedYearId, selectedSemesterId],
+    queryFn: () => teacherAssignmentService.getTeacherAssignmentsByPeriod(selectedYearId, selectedSemesterId),
+    enabled: !!selectedYearId && !!selectedSemesterId
+  });
+
+  // SSOT: Helper to resolve active Subject display name from Master Subjects with fallback to schedule snapshot
+  const getSubjectDisplayName = (schedule?: { subjectId?: string | null; subjectName?: string | null } | null) => {
+    if (!schedule) return "";
+    if (schedule.subjectId) {
+      const masterSubj = masterSubjects.find(s => s.id === schedule.subjectId);
+      if (masterSubj?.name) return masterSubj.name;
+    }
+    return schedule.subjectName || "";
+  };
+
   const activeDays = settings?.activeDays || ["Sabtu", "Minggu", "Senin", "Selasa", "Rabu", "Kamis"];
   const instructionalPeriods = lessonPeriods.filter(p => 
     p.type === LessonPeriodType.LESSON && 
@@ -257,16 +280,17 @@ export default function Schedules() {
   // Active working set: preview if available, otherwise saved dbSchedules
   const activeSchedules = previewSchedules !== null ? previewSchedules : dbSchedules;
 
-  // Compute unique subjects from curriculum matrix
-  const subjects = useMemo(() => {
+  // Compute unique subjects from curriculum matrix for filter dropdown
+  const matrixSubjects = useMemo(() => {
     const map = new Map<string, string>();
     curriculumMatrix.forEach((m) => {
       if (m.subjectId && m.subjectName) {
-        map.set(m.subjectId, m.subjectName);
+        const master = masterSubjects.find(s => s.id === m.subjectId);
+        map.set(m.subjectId, master?.name || m.subjectName);
       }
     });
     return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
-  }, [curriculumMatrix]);
+  }, [curriculumMatrix, masterSubjects]);
 
   // Active classes filtered by Jenjang and Kelas filters and sorted automatically by Jenjang -> Name
   const activeClasses = useMemo(() => {
@@ -421,6 +445,9 @@ export default function Schedules() {
         s.sequence === selectedSlot.sequence)
     );
 
+    const assignedTeacher = teachers.find(t => t.id === teacherId);
+    const resolvedTeacherName = assignedTeacher?.name || matrixItem.teacherName || "Guru Pengampu";
+
     const newSchedule: Schedule = {
       academicYearId: selectedYearId,
       semesterId: selectedSemesterId,
@@ -432,7 +459,7 @@ export default function Schedules() {
       subjectId: subjectId,
       subjectName: matrixItem.subjectName,
       teacherId: teacherId,
-      teacherName: matrixItem.teacherName || "Guru Pengampu",
+      teacherName: resolvedTeacherName,
       isLocked: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -1076,12 +1103,22 @@ export default function Schedules() {
       curriculumMatrix.forEach(m => {
         const req = grade === "VII" ? m.jp_vii : grade === "VIII" ? m.jp_viii : m.jp_ix;
         if (req > 0) {
+          const resolved = teacherAssignmentService.resolveTeacherAssignmentSync({
+            academicYearId: selectedYearId,
+            semesterId: selectedSemesterId,
+            subjectId: m.subjectId,
+            classId: cls.id || cls.classId,
+            gradeLevel: cls.gradeLevel,
+            curriculumMatrixItem: m,
+            preloadedAssignments: teacherAssignments
+          });
+
           classRequirements.push({
             classId: cls.classId,
             subjectId: m.subjectId,
             requiredJp: req,
-            teacherId: m.teacherId || "GURU_ALM_01",
-            teacherName: m.teacherName || "Guru Pengampu",
+            teacherId: resolved.teacherId || "GURU_ALM_01",
+            teacherName: resolved.teacherName || "Guru Pengampu",
             subjectName: m.subjectName
           });
         }
@@ -1313,7 +1350,7 @@ export default function Schedules() {
         );
         if (matched) {
           setCopiedSlot(matched);
-          toast(`Disalin: ${matched.subjectName} (${matched.teacherName})`, "info");
+          toast(`Disalin: ${getSubjectDisplayName(matched)} (${matched.teacherName})`, "info");
         } else {
           toast("Tidak ada jadwal di sel ini untuk disalin.", "warning");
         }
@@ -1519,7 +1556,7 @@ export default function Schedules() {
             "Hari": day,
             "JP": period.title,
             "Waktu": `${period.startTime} - ${period.endTime}`,
-            "Mata Pelajaran": fixedActivity ? fixedActivity.title : (matched ? matched.subjectName : "-"),
+            "Mata Pelajaran": fixedActivity ? fixedActivity.title : (matched ? getSubjectDisplayName(matched) : "-"),
             "Guru Pengampu": fixedActivity ? "" : (matched ? matched.teacherName : "-")
           });
         });
@@ -1540,7 +1577,7 @@ export default function Schedules() {
             "JP": period.title,
             "Waktu": `${period.startTime} - ${period.endTime}`,
             "Kelas": fixedActivity ? "" : (matched ? matched.className : "-"),
-            "Mata Pelajaran": fixedActivity ? fixedActivity.title : (matched ? matched.subjectName : "-")
+            "Mata Pelajaran": fixedActivity ? fixedActivity.title : (matched ? getSubjectDisplayName(matched) : "-")
           });
         });
         reportData.push({});
@@ -1561,7 +1598,7 @@ export default function Schedules() {
               "Hari": day,
               "JP": period.title,
               "Waktu": `${period.startTime} - ${period.endTime}`,
-              "Mata Pelajaran": fixedActivity ? fixedActivity.title : (matched ? matched.subjectName : "-"),
+              "Mata Pelajaran": fixedActivity ? fixedActivity.title : (matched ? getSubjectDisplayName(matched) : "-"),
               "Guru": fixedActivity ? "" : (matched ? matched.teacherName : "-")
             });
           });
@@ -1630,7 +1667,7 @@ export default function Schedules() {
           const matched = filteredItems.find(s => s.day.toLowerCase() === day.toLowerCase() && s.sequence === period.sequence && s.classId === selectedClassId);
           doc.text(period.title, 14, yOffset);
           doc.text(`${period.startTime} - ${period.endTime}`, 30, yOffset);
-          doc.text(fixedActivity ? fixedActivity.title : (matched ? matched.subjectName : "-"), 65, yOffset);
+          doc.text(fixedActivity ? fixedActivity.title : (matched ? getSubjectDisplayName(matched) : "-"), 65, yOffset);
           doc.text(fixedActivity ? "" : (matched ? matched.teacherName : "-"), 125, yOffset);
           yOffset += 7;
         });
@@ -1664,7 +1701,7 @@ export default function Schedules() {
           doc.text(period.title, 14, yOffset);
           doc.text(`${period.startTime} - ${period.endTime}`, 30, yOffset);
           doc.text(fixedActivity ? "" : (matched ? matched.className : "-"), 65, yOffset);
-          doc.text(fixedActivity ? fixedActivity.title : (matched ? matched.subjectName : "-"), 115, yOffset);
+          doc.text(fixedActivity ? fixedActivity.title : (matched ? getSubjectDisplayName(matched) : "-"), 115, yOffset);
           yOffset += 7;
         });
         yOffset += 5;
@@ -2192,7 +2229,7 @@ export default function Schedules() {
               className="text-xs font-bold text-slate-700 dark:text-zinc-300 bg-transparent border-0 p-0 focus:ring-0 cursor-pointer"
             >
               <option value="ALL">Semua Mapel</option>
-              {subjects.map((s) => (
+              {matrixSubjects.map((s) => (
                 <option key={s.id} value={s.id}>{s.name}</option>
               ))}
             </select>
@@ -2338,7 +2375,7 @@ export default function Schedules() {
                                         <div className="flex items-center justify-between">
                                           <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-zinc-100">
                                             <BookOpen className="h-3.5 w-3.5 text-blue-500 flex-shrink-0" />
-                                            {matched ? matched.subjectName : <span className="italic text-slate-400">Isi Slot Kosong...</span>}
+                                            {matched ? getSubjectDisplayName(matched) : <span className="italic text-slate-400">Isi Slot Kosong...</span>}
                                           </div>
                                           <div className="flex items-center gap-1">
                                             <span className={`h-1.5 w-1.5 rounded-full ${getSlotStyling(selectedClassId, day, period.sequence, matched, activeSchedules).colorTag}`} />
@@ -2463,7 +2500,7 @@ export default function Schedules() {
                                           </div>
                                           <div className="flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-zinc-400 mt-1.5 pl-5">
                                             <BookOpen className="h-3 w-3 text-slate-400 flex-shrink-0" />
-                                            Materi: {matched.subjectName}
+                                            Materi: {getSubjectDisplayName(matched)}
                                           </div>
                                         </div>
                                       );
@@ -2684,7 +2721,7 @@ export default function Schedules() {
                             );
                             if (matched) {
                               setCopiedSlot(matched);
-                              toast(`Disalin: ${matched.subjectName} (${matched.teacherName})`, "info");
+                              toast(`Disalin: ${getSubjectDisplayName(matched)} (${matched.teacherName})`, "info");
                             } else {
                               toast("Tidak ada jadwal di sel ini untuk disalin.", "warning");
                             }
@@ -2944,7 +2981,7 @@ export default function Schedules() {
                                                 <span className={`text-[9.5px] font-extrabold tracking-tight uppercase line-clamp-2 leading-tight ${
                                                   styling.status === "conflict" ? "text-rose-700 dark:text-rose-400 font-extrabold" : "text-slate-700 dark:text-zinc-300"
                                                 }`}>
-                                                  {matched.subjectName}
+                                                  {getSubjectDisplayName(matched)}
                                                 </span>
                                                 {matched.isLocked && (
                                                   <Lock className="h-2.5 w-2.5 text-amber-500 shrink-0" />
@@ -3094,7 +3131,8 @@ export default function Schedules() {
                             if (req > 0) {
                               const sched = classScheds.filter(s => s.subjectId === m.subjectId).length;
                               if (sched < req) {
-                                incompleteList.push({ name: m.subjectName, req, sched });
+                                const masterSubj = masterSubjects.find(s => s.id === m.subjectId);
+                                incompleteList.push({ name: masterSubj?.name || m.subjectName, req, sched });
                               }
                             }
                           });
@@ -3243,10 +3281,13 @@ export default function Schedules() {
           curriculumMatrix={curriculumMatrix}
           teachers={teachers}
           activeSchedules={activeSchedules}
+          subjects={masterSubjects}
+          teacherAssignments={teacherAssignments}
           onSave={handleSaveManualSlot}
           onDelete={handleDeleteManualSlot}
           onAssignmentUpdated={() => {
             refetch();
+            refetchAssignments();
           }}
         />
       )}
@@ -3258,6 +3299,7 @@ export default function Schedules() {
         activeSchedules={activeSchedules}
         teachers={teachers}
         classes={classes}
+        subjects={masterSubjects}
         onSuccess={() => {
           refetch();
           toast("Pergantian guru pengampu berhasil diterapkan!", "success");

@@ -23,8 +23,9 @@ import {
   RefreshCw,
   Check
 } from "lucide-react";
-import { Schedule, Class, Teacher, LessonPeriod, CurriculumMatrix, TeacherAssignment } from "../types";
+import { Schedule, Class, Teacher, LessonPeriod, CurriculumMatrix, TeacherAssignment, Subject } from "../types";
 import { scheduleService, resolveTeacherForScheduleDate } from "../services/schedule.service";
+import { teacherAssignmentService } from "../services/teacherAssignment.service";
 
 // --- TYPES FOR ANALYSES ---
 export interface PreAnalysisResult {
@@ -660,6 +661,8 @@ export function ScheduleEditorDialog({
   curriculumMatrix,
   teachers,
   activeSchedules,
+  subjects = [],
+  teacherAssignments = [],
   onSave,
   onDelete,
   onAssignmentUpdated
@@ -677,12 +680,23 @@ export function ScheduleEditorDialog({
   curriculumMatrix: CurriculumMatrix[];
   teachers: Teacher[];
   activeSchedules: Schedule[];
+  subjects?: Subject[];
+  teacherAssignments?: TeacherAssignment[];
   onSave: (subjectId: string, teacherId: string) => void;
   onDelete: () => void;
   onAssignmentUpdated?: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<"edit" | "assignment">("edit");
   const [selectedSubjectId, setSelectedSubjectId] = useState<string>("");
+
+  // SSOT helper
+  const getSubjName = (subId?: string | null, fallback?: string | null) => {
+    if (subId && subjects && subjects.length > 0) {
+      const s = subjects.find(item => item.id === subId);
+      if (s?.name) return s.name;
+    }
+    return fallback || "";
+  };
 
   // Assignment tab state
   const todayStr = useMemo(() => {
@@ -716,21 +730,19 @@ export function ScheduleEditorDialog({
     const scheduled = activeSchedules.filter(s => s.classId === slot.classId && s.subjectId === m.subjectId).length;
     const remaining = Math.max(0, required - scheduled);
 
-    let resolvedTeacherId = m.teacherId || "GURU_ALM_01";
-    let resolvedTeacherName = m.teacherName || "Guru Pengampu";
+    // SSOT: Central Resolver for Teacher Assignment (Slot Class ID -> Grade fallback -> Matrix fallback)
+    const resolved = teacherAssignmentService.resolveTeacherAssignmentSync({
+      academicYearId: slot.matchedSchedule?.academicYearId,
+      semesterId: slot.matchedSchedule?.semesterId,
+      subjectId: m.subjectId,
+      classId: slot.classId,
+      gradeLevel: gradeLevel,
+      curriculumMatrixItem: m,
+      preloadedAssignments: teacherAssignments
+    });
 
-    if (m.useDifferentTeachers) {
-      if (gradeLevel === "VII") {
-        resolvedTeacherId = m.teacherId_vii || m.teacherId || "GURU_ALM_01";
-        resolvedTeacherName = m.teacherName_vii || m.teacherName || "Guru Pengampu";
-      } else if (gradeLevel === "VIII") {
-        resolvedTeacherId = m.teacherId_viii || m.teacherId || "GURU_ALM_01";
-        resolvedTeacherName = m.teacherName_viii || m.teacherName || "Guru Pengampu";
-      } else if (gradeLevel === "IX") {
-        resolvedTeacherId = m.teacherId_ix || m.teacherId || "GURU_ALM_01";
-        resolvedTeacherName = m.teacherName_ix || m.teacherName || "Guru Pengampu";
-      }
-    }
+    const resolvedTeacherId = resolved.teacherId || "GURU_ALM_01";
+    const resolvedTeacherName = resolved.teacherName || "Guru Pengampu";
 
     // Check teacher conflict: Is the teacher teaching another class in the same day and sequence?
     const teacherConflict = activeSchedules.find(s => 
@@ -865,7 +877,9 @@ export function ScheduleEditorDialog({
                 <div className="flex flex-col gap-1 text-xs">
                   <div className="flex justify-between">
                     <span className="text-slate-500">Mata Pelajaran:</span>
-                    <span className="font-bold text-slate-800 dark:text-zinc-200">{slot.matchedSchedule.subjectName}</span>
+                    <span className="font-bold text-slate-800 dark:text-zinc-200">
+                      {getSubjName(slot.matchedSchedule.subjectId, slot.matchedSchedule.subjectName)}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-500">Guru Pengampu Aktif:</span>
@@ -902,15 +916,15 @@ export function ScheduleEditorDialog({
                     >
                       <div className="space-y-0.5">
                         <span className="text-xs font-bold text-slate-800 dark:text-zinc-100 block">
-                          {rec.matrixItem.subjectName}
+                          {getSubjName(rec.matrixItem.subjectId, rec.matrixItem.subjectName)}
                         </span>
                         <span className="text-[10px] text-slate-500 block">
-                          {rec.matrixItem.teacherName} • <span className="font-bold text-blue-600 dark:text-blue-400">Kurang {rec.remaining} JP</span>
+                          {rec.resolvedTeacherName} • <span className="font-bold text-blue-600 dark:text-blue-400">Kurang {rec.remaining} JP</span>
                         </span>
                       </div>
                       <button 
                         onClick={() => {
-                          onSave(rec.matrixItem.subjectId, rec.matrixItem.teacherId);
+                          onSave(rec.matrixItem.subjectId, rec.resolvedTeacherId);
                           onClose();
                         }}
                         className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer"
@@ -941,7 +955,7 @@ export function ScheduleEditorDialog({
                     value={opt.matrixItem.subjectId}
                     disabled={opt.remaining === 0 && opt.matrixItem.subjectId !== slot.matchedSchedule?.subjectId}
                   >
-                    {opt.matrixItem.subjectName} ({opt.resolvedTeacherName}) 
+                    {getSubjName(opt.matrixItem.subjectId, opt.matrixItem.subjectName)} ({opt.resolvedTeacherName}) 
                     {opt.remaining === 0 ? " - [JP Terpenuhi]" : ` - [Kurang ${opt.remaining} JP]`}
                     {opt.teacherConflictClass ? ` - [Bentrok di Kelas ${opt.teacherConflictClass}]` : ""}
                   </option>
@@ -1118,7 +1132,7 @@ export function ScheduleEditorDialog({
                   className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4 cursor-pointer"
                 />
                 <span className="text-[11px] text-slate-600 dark:text-zinc-400 leading-tight">
-                  Terapkan juga ke seluruh slot <b>{slot.matchedSchedule.subjectName}</b> pada <b>{slot.className}</b>.
+                  Terapkan juga ke seluruh slot <b>{getSubjName(slot.matchedSchedule.subjectId, slot.matchedSchedule.subjectName)}</b> pada <b>{slot.className}</b>.
                 </span>
               </label>
             </div>
@@ -1170,6 +1184,7 @@ export function BatchTeacherTransferModal({
   activeSchedules,
   teachers,
   classes,
+  subjects = [],
   onSuccess
 }: {
   isOpen: boolean;
@@ -1177,6 +1192,7 @@ export function BatchTeacherTransferModal({
   activeSchedules: Schedule[];
   teachers: Teacher[];
   classes: Class[];
+  subjects?: Subject[];
   onSuccess: () => void;
 }) {
   const todayStr = useMemo(() => {
@@ -1192,16 +1208,17 @@ export function BatchTeacherTransferModal({
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  // Distinct subjects present in active schedules
+  // Distinct subjects present in active schedules (SSOT: resolve fresh from Master Subjects)
   const availableSubjects = useMemo(() => {
     const map = new Map<string, string>();
     activeSchedules.forEach(s => {
-      if (s.subjectId && s.subjectName) {
-        map.set(s.subjectId, s.subjectName);
+      if (s.subjectId) {
+        const masterSubj = subjects.find(sub => sub.id === s.subjectId);
+        map.set(s.subjectId, masterSubj?.name || s.subjectName || "Mata Pelajaran");
       }
     });
     return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
-  }, [activeSchedules]);
+  }, [activeSchedules, subjects]);
 
   // Classes that currently have schedules for selectedSubjectId
   const subjectClasses = useMemo(() => {

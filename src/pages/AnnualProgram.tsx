@@ -5,6 +5,7 @@ import { classService } from "../services/classService";
 import { curriculumMatrixService } from "../services/curriculumMatrixService";
 import { curriculumPlanningService } from "../services/curriculumPlanning.service";
 import { realTeachingHoursService } from "../services/realTeachingHours.service";
+import { teacherAssignmentService, resolveTeacherAssignmentSync } from "../services/teacherAssignment.service";
 import { useToast } from "../contexts/ToastContext";
 import { useAuth } from "../contexts/AuthContext";
 import type {
@@ -13,8 +14,11 @@ import type {
   CurriculumMatrix, 
   AnnualProgram as AnnualProgramData, 
   ProtaTopic, 
-  ProtaSubTopic 
+  ProtaSubTopic,
+  Subject,
+  TeacherAssignment
 } from "../types";
+import { subjectService } from "../services/subjectService";
 import { 
   Calendar, 
   Plus, 
@@ -47,6 +51,7 @@ export const AnnualProgram: React.FC = () => {
   const [classes, setClasses] = useState<Class[]>([]);
   const [semesters, setSemesters] = useState<Semester[]>([]);
   const [curriculumMatrix, setCurriculumMatrix] = useState<CurriculumMatrix[]>([]);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
 
   // Selection States
   const [selectedClassId, setSelectedClassId] = useState<string>("");
@@ -85,19 +90,21 @@ export const AnnualProgram: React.FC = () => {
   const [newSubJp, setNewSubJp] = useState<number>(0);
   const [newSubDesc, setNewSubDesc] = useState("");
 
-  // Load classes, semesters, matrix
+  // Load classes, semesters, matrix, subjects
   useEffect(() => {
     setLoading(true);
     Promise.all([
       classService.getClasses(),
       semesterService.getSemesters(),
-      curriculumMatrixService.getCurriculumMatrix()
+      curriculumMatrixService.getCurriculumMatrix(),
+      subjectService.getSubjects()
     ])
-      .then(([clsList, semList, matrixList]) => {
+      .then(([clsList, semList, matrixList, subList]) => {
         const activeCls = clsList.filter(c => c.status === "Aktif" && !c.isDeleted);
         setClasses(activeCls);
         setSemesters(semList);
         setCurriculumMatrix(matrixList);
+        setSubjects(subList);
 
         // Group unique academic years from semesters
         const yearsMap = new Map<string, string>();
@@ -145,10 +152,11 @@ export const AnnualProgram: React.FC = () => {
     }
 
     const jp = gradeLevel === "VII" ? m.jp_vii : gradeLevel === "VIII" ? m.jp_viii : m.jp_ix;
+    const masterSubj = subjects.find(s => s.id === m.subjectId);
 
     return {
       id: m.subjectId,
-      name: m.subjectName,
+      name: masterSubj?.name || m.subjectName,
       teacherId: assignedTeacherId,
       teacherName: assignedTeacherName,
       jp: jp || 0

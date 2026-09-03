@@ -83,6 +83,7 @@ export interface Subject {
   shortName?: string; // e.g. "MTK", "IPA" (singkatan untuk Leger)
   singkatan?: string; // alias singkatan
   teacherId?: string;
+  isActive?: boolean; // Soft delete / status aktif (default true jika undefined)
   createdAt: string;
 }
 

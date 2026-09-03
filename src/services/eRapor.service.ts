@@ -680,7 +680,7 @@ export const eRaporService = {
         }
         const subjType = classifySubjectType(masterSubj);
         subjectMap.set(data.subjectId, {
-          name: data.subjectName || masterSubj?.name || "Mata Pelajaran",
+          name: masterSubj?.name || data.subjectName || "Mata Pelajaran",
           type: subjType
         });
       }
@@ -870,7 +870,7 @@ export const eRaporService = {
         }
         const subjType = classifySubjectType(masterSubj);
         subjectsMap.set(data.subjectId, {
-          subjectName: data.subjectName || masterSubj?.name || "Mata Pelajaran",
+          subjectName: masterSubj?.name || data.subjectName || "Mata Pelajaran",
           teacherId: data.teacherId || "",
           teacherName: data.teacherName || "Guru Pengampu",
           type: subjType
@@ -981,7 +981,15 @@ export const eRaporService = {
   }> {
     const schedRef = collection(db, "schedules");
     const q = query(schedRef, where("academicYearId", "==", academicYearId), where("semesterId", "==", semesterId));
-    const snap = await getDocs(q);
+    const [snap, subjSnap] = await Promise.all([
+      getDocs(q),
+      getDocs(collection(db, "subjects"))
+    ]);
+
+    const subjectMasterMap = new Map<string, any>();
+    subjSnap.forEach((d) => {
+      subjectMasterMap.set(d.id, d.data());
+    });
 
     const classSubjectMap = new Map<string, { classId: string; className: string; subjectId: string; subjectName: string; teacherId: string; teacherName: string }>();
     const teacherIds = new Set<string>();
@@ -992,12 +1000,13 @@ export const eRaporService = {
       const data = d.data();
       if (data.classId && data.subjectId) {
         const key = `${data.classId}_${data.subjectId}`;
+        const masterSubj = subjectMasterMap.get(data.subjectId);
         if (!classSubjectMap.has(key)) {
           classSubjectMap.set(key, {
             classId: data.classId,
             className: data.className || "Kelas",
             subjectId: data.subjectId,
-            subjectName: data.subjectName || "Mapel",
+            subjectName: masterSubj?.name || data.subjectName || "Mapel",
             teacherId: data.teacherId || "",
             teacherName: data.teacherName || "Guru"
           });
@@ -1152,8 +1161,8 @@ export const eRaporService = {
           return;
         }
         subjectsMap.set(data.subjectId, {
-          subjectName: data.subjectName || masterSubj?.name || "Mata Pelajaran",
-          group: data.group || masterSubj?.group || "A",
+          subjectName: masterSubj?.name || data.subjectName || "Mata Pelajaran",
+          group: masterSubj?.group || data.group || "A",
           type: classifySubjectType(masterSubj)
         });
       }
