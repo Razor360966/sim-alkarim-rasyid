@@ -82,12 +82,15 @@ export interface TeacherTeachingAttendance {
   lateUnlockedAt?: string;
   lateUnlockReason?: string;
   
-  // Late > 15 minutes validation fields
+  // Late > 15 minutes validation & per-JP locking fields
   lateMinutes?: number;
   scheduleStartTime?: string;
   scheduleEndTime?: string;
   requiresLateValidation?: boolean;
   lateValidationStatus?: "PENDING" | "APPROVED" | "REJECTED";
+  checkInLocked?: boolean;
+  isLateLocked?: boolean;
+  lockReason?: string;
   validatedByRole?: string;
   lateStatusLabel?: string;
   teacherNiy?: string;

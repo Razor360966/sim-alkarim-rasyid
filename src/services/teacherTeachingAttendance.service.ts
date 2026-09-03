@@ -2318,7 +2318,21 @@ export const teacherTeachingAttendanceService = {
 
       // 8. Determine State Machine Action for Scanned Session Group
       // Active group that has checked in but NOT checked out yet -> Action is CHECK_OUT
-      const activeCheckInGroup = sessionGroups.find(g => g.checkInTime && !g.checkOutTime);
+      // CRITICAL: If current time has reached or entered the scheduled start of a SUBSEQUENT unstarted session group,
+      // prioritize CHECK_IN to the new session rather than checking out of an expired old session!
+      const activeCheckInGroup = sessionGroups.find(g => {
+        if (!g.checkInTime || g.checkOutTime) return false;
+
+        const gIndex = sessionGroups.findIndex(sg => sg.sessionKey === g.sessionKey);
+        const nextGroup = (gIndex >= 0 && gIndex + 1 < sessionGroups.length) ? sessionGroups[gIndex + 1] : null;
+
+        if (nextGroup && !nextGroup.checkInTime && currentM >= nextGroup.startM) {
+          // Current time is at or past next group's startM -> next group should be processed for CHECK_IN
+          return false;
+        }
+
+        return true;
+      });
 
       let targetGroup: SessionGroup | null = null;
       let action: "CHECK_IN" | "CHECK_OUT" = "CHECK_IN";
@@ -2452,6 +2466,10 @@ export const teacherTeachingAttendanceService = {
         }
 
         const formattedCheckIn = checkInTimeStr.replace(":", ".");
+        const isPendingLateGroup = Boolean(
+          firstItem.requiresLateValidation && 
+          (firstItem.attendanceStatus === "Pending" || firstItem.lateValidationStatus === "PENDING" || (firstItem as any).checkInLocked)
+        );
 
         // If time elapsed is less than cooldown or within same minute -> DUPLICATE SCAN
         if (secondsSinceCheckIn < cooldownSeconds || timeDiffMinutes < 1) {
@@ -2473,15 +2491,23 @@ export const teacherTeachingAttendanceService = {
             subjectName: firstItem.subjectName,
             status: firstItem.status,
             scanTime: currentTimeStr,
-            changesDescription: `Ignored Double Scan: Scan ulang diabaikan.`
+            changesDescription: isPendingLateGroup 
+              ? `Ignored Double Scan: Sesi (${targetGroup.jpLabel}) terkunci & menunggu validasi.`
+              : `Ignored Double Scan: Scan ulang diabaikan.`
           }));
+
+          const duplicateMsg = isPendingLateGroup
+            ? `🔒 JP SUDAH TERKUNCI\n\nSesi ini (${targetGroup.jpLabel}) sudah memiliki Check-in pada pukul ${formattedCheckIn} WIB dan sedang menunggu validasi Kepala Sekolah/Waka Kurikulum karena keterlambatan >15 menit.\nScan ulang tidak diperbolehkan.`
+            : `Scan terdeteksi kembali.\nCheck-in Anda sudah tercatat pukul ${formattedCheckIn} WIB.\nCheck-out dilakukan setelah pembelajaran selesai.`;
 
           return {
             success: true,
             isDuplicateScan: true,
             action: "DUPLICATE_SCAN",
-            message: `Scan terdeteksi kembali.\nCheck-in Anda sudah tercatat pukul ${formattedCheckIn}.\nCheck-out dilakukan setelah pembelajaran selesai.`,
-            record: firstItem
+            message: duplicateMsg,
+            record: firstItem,
+            requiresLateValidation: isPendingLateGroup,
+            isLateOver15: isPendingLateGroup
           };
         }
 
@@ -2498,12 +2524,18 @@ export const teacherTeachingAttendanceService = {
         const is50PercentPassed = durationMinutes >= minDurationM || (currentM - sessionStartM) >= minDurationM;
 
         if (!is50PercentPassed && !isLastJpEntered) {
+          const duplicateMsg = isPendingLateGroup
+            ? `🔒 JP SUDAH TERKUNCI\n\nSesi ini (${targetGroup.jpLabel}) sudah memiliki Check-in pada pukul ${formattedCheckIn} WIB dan sedang menunggu validasi Kepala Sekolah/Waka Kurikulum karena keterlambatan >15 menit.\nScan ulang tidak diperbolehkan.`
+            : `Scan terdeteksi kembali.\nCheck-in Anda sudah tercatat pukul ${formattedCheckIn} WIB.\nCheck-out dilakukan setelah pembelajaran selesai.`;
+
           return {
             success: true,
             isDuplicateScan: true,
             action: "DUPLICATE_SCAN",
-            message: `Scan terdeteksi kembali.\nCheck-in Anda sudah tercatat pukul ${formattedCheckIn}.\nCheck-out dilakukan setelah pembelajaran selesai.`,
-            record: firstItem
+            message: duplicateMsg,
+            record: firstItem,
+            requiresLateValidation: isPendingLateGroup,
+            isLateOver15: isPendingLateGroup
           };
         }
 
@@ -2700,6 +2732,9 @@ export const teacherTeachingAttendanceService = {
           item.attendanceStatus = "Approved";
           item.approvalType = "Automatic";
           item.requiresLateValidation = false;
+          item.checkInLocked = true;
+          item.isLateLocked = false;
+          item.lockReason = "SESI TERLEWAT SEBELUM SCAN PERTAMA";
           item.scheduleStartTime = itemRange.startStr;
           item.scheduleEndTime = itemRange.endStr;
           item.updatedAt = new Date().toISOString();
@@ -2742,6 +2777,9 @@ export const teacherTeachingAttendanceService = {
             item.approvalType = "Manual";
             item.requiresLateValidation = true;
             item.lateValidationStatus = "PENDING";
+            item.checkInLocked = true;
+            item.isLateLocked = true;
+            item.lockReason = "TERLAMBAT >15 MENIT — MENUNGGU VALIDASI";
             item.pendingReason = "TERLAMBAT >15 MENIT — MENUNGGU VALIDASI";
             item.notes = `Terlambat scan ${lateMinutes} menit (Jadwal: ${itemRange.startStr} WIB, Scan: ${currentTimeStr} WIB). Menunggu validasi Kepala Sekolah / Waka Kurikulum.`;
 
@@ -2754,6 +2792,9 @@ export const teacherTeachingAttendanceService = {
             item.approvalType = "Automatic";
             item.requiresLateValidation = false;
             item.lateValidationStatus = "APPROVED";
+            item.checkInLocked = false;
+            item.isLateLocked = false;
+            item.lockReason = "";
             item.pendingReason = "";
             if (lateMinutes > 0) {
               item.notes = `Scan terlambat ${lateMinutes} menit (Toleransi <=15 Menit).`;
@@ -2873,6 +2914,12 @@ export const teacherTeachingAttendanceService = {
     const updates: Partial<TeacherTeachingAttendance> = {
       status: "Terlambat",
       attendanceStatus: "Approved",
+      lateValidationStatus: "APPROVED",
+      requiresLateValidation: false,
+      checkInLocked: false,
+      isLateLocked: false,
+      lockReason: "",
+      pendingReason: "",
       validatedBy: params.validatorUserName,
       validatedByUserId: resolvedUid,
       validatedAt: now,
@@ -2990,14 +3037,21 @@ export const teacherTeachingAttendanceService = {
 
     const now = new Date().toISOString();
     const validatorRoleName = params.validatorRole || "Waka Kurikulum";
+    const isApproved = params.status === "Approved";
     const updates: Partial<TeacherTeachingAttendance> = {
       attendanceStatus: params.status,
-      lateValidationStatus: params.status === "Approved" ? "APPROVED" : "REJECTED",
+      lateValidationStatus: isApproved ? "APPROVED" : "REJECTED",
+      requiresLateValidation: false,
+      checkInLocked: !isApproved,
+      isLateLocked: !isApproved,
+      lockReason: isApproved ? "" : "VALIDASI DITOLAK — TIDAK HADIR",
+      pendingReason: isApproved ? "" : `Ditolak oleh ${validatorRoleName}`,
+      status: isApproved ? (snap.data()?.status || "Terlambat") : "Tidak Hadir",
       validatedBy: params.validatorUserName,
       validatedByUserId: resolvedUid,
       validatedByRole: validatorRoleName,
       validatedAt: now,
-      validationNote: params.validationNote || (params.status === "Approved" ? `Disetujui oleh ${validatorRoleName}` : `Ditolak oleh ${validatorRoleName}`),
+      validationNote: params.validationNote || (isApproved ? `Disetujui oleh ${validatorRoleName}` : `Ditolak oleh ${validatorRoleName}`),
       approvalType: "Manual",
       updatedAt: now
     };

@@ -22,6 +22,7 @@ import {
 import { Teacher } from "../types";
 import { Loading } from "../components/Loading";
 import { Dialog } from "../components/Dialog";
+import { getAttendanceStatusDisplay } from "../utils/teacherAttendanceDisplayHelper";
 import { 
   ClipboardList, 
   Calendar, 
@@ -2277,7 +2278,9 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                             </td>
                             <td className="py-3 px-3">
                               <div className="font-bold text-slate-900 dark:text-zinc-100">{item.teacherName}</div>
-                              <div className="text-[10px] text-slate-500">{item.status}</div>
+                              <div className="text-[10px] font-semibold text-slate-500">
+                                {getAttendanceStatusDisplay(item).statusLabel}
+                              </div>
                             </td>
                             <td className="py-3 px-3">
                               <div className="font-bold text-slate-800 dark:text-zinc-200">{item.subjectName}</div>
@@ -2306,23 +2309,28 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                             </td>
                             <td className="py-3 px-3">
                               <div className="space-y-1">
-                                {isLateOver15 && currentStatus === "Pending" ? (
-                                  <span className="px-2 py-0.5 rounded-md font-bold text-[10px] inline-flex items-center gap-1 bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-300 dark:border-rose-800">
-                                    <Clock className="w-3 h-3 text-rose-600" />
-                                    TERLAMBAT &gt;15 MENIT — MENUNGGU VALIDASI
-                                  </span>
-                                ) : (
-                                  <span className={`px-2 py-0.5 rounded-md font-bold text-[10px] inline-flex items-center gap-1 ${
-                                    currentStatus === "Approved" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" :
-                                    currentStatus === "Rejected" ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300" :
-                                    "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
-                                  }`}>
-                                    {currentStatus === "Approved" && <CheckCircle2 className="w-3 h-3 text-emerald-600" />}
-                                    {currentStatus === "Rejected" && <UserX className="w-3 h-3 text-rose-600" />}
-                                    {currentStatus === "Pending" && <AlertTriangle className="w-3 h-3 text-amber-600" />}
-                                    {currentStatus}
-                                  </span>
-                                )}
+                                {(() => {
+                                  const displayInfo = getAttendanceStatusDisplay(item);
+                                  return (
+                                    <>
+                                      <span className={`px-2 py-0.5 rounded-md font-bold text-[10px] inline-flex items-center gap-1 border ${displayInfo.badgeFullClass}`}>
+                                        {isLateOver15 && currentStatus === "Pending" ? (
+                                          <Clock className="w-3 h-3 text-rose-600" />
+                                        ) : currentStatus === "Approved" ? (
+                                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                        ) : currentStatus === "Rejected" ? (
+                                          <UserX className="w-3 h-3 text-rose-600" />
+                                        ) : (
+                                          <AlertTriangle className="w-3 h-3 text-amber-600" />
+                                        )}
+                                        {displayInfo.statusLabel}
+                                      </span>
+                                      <div className="text-[10px] font-bold text-slate-600 dark:text-zinc-400">
+                                        Hadir: {displayInfo.hadirJpText}
+                                      </div>
+                                    </>
+                                  );
+                                })()}
 
                                 {isLateOver15 && currentStatus === "Pending" && (
                                   <div className="text-[10px] font-semibold text-rose-600 dark:text-rose-400">
@@ -3290,20 +3298,19 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                           {r.jp} {r.timeSlot ? `(${r.timeSlot})` : ""}
                         </td>
                         <td className="py-2.5 px-3">
-                          <span className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
-                            r.status === "Hadir Mengajar" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" :
-                            r.status === "Terlambat" ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" :
-                            r.status === "Belum Terkonfirmasi" ? "bg-orange-100 text-orange-800 border border-orange-300 dark:bg-orange-950 dark:text-orange-300" :
-                            r.status === "Tidak Hadir" ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300" :
-                            r.status === "Izin" ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-950 dark:text-yellow-300" :
-                            r.status === "Sakit" ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" :
-                            r.status === "Digantikan Guru Lain" ? "bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300" :
-                            r.status === "Tukar Jadwal" ? "bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300" :
-                            r.status === "Tugas Dinas" ? "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300" :
-                            "bg-slate-100 text-slate-700 dark:bg-zinc-800 dark:text-zinc-300"
-                          }`}>
-                            {r.status}
-                          </span>
+                          {(() => {
+                            const displayInfo = getAttendanceStatusDisplay(r);
+                            return (
+                              <div className="flex flex-col items-start gap-1">
+                                <span className={`px-2 py-0.5 rounded-md font-bold text-[10px] border ${displayInfo.badgeFullClass}`}>
+                                  {displayInfo.statusLabel}
+                                </span>
+                                <span className="text-[10px] font-bold text-slate-500 dark:text-zinc-400">
+                                  Hadir: {displayInfo.hadirJpText}
+                                </span>
+                              </div>
+                            );
+                          })()}
                         </td>
                         <td className="py-2.5 px-3">
                           {r.substituteTeacherName ? (
@@ -3446,19 +3453,19 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                           <td className="py-2.5 px-3">{item.className}</td>
                           <td className="py-2.5 px-3 font-bold">{item.jp}</td>
                           <td className="py-2.5 px-3">
-                            <span className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
-                              item.status === "Hadir Mengajar"
-                                ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
-                                : item.status === "Belum Terkonfirmasi"
-                                ? "bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300"
-                                : item.status === "Terlambat"
-                                ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
-                                : item.status === "Digantikan Guru Lain"
-                                ? "bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300"
-                                : "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300"
-                            }`}>
-                              {item.status}
-                            </span>
+                            {(() => {
+                              const displayInfo = getAttendanceStatusDisplay(item);
+                              return (
+                                <div className="flex flex-col items-start gap-1">
+                                  <span className={`px-2 py-0.5 rounded-md font-bold text-[10px] border ${displayInfo.badgeFullClass}`}>
+                                    {displayInfo.statusLabel}
+                                  </span>
+                                  <span className="text-[10px] font-bold text-slate-500 dark:text-zinc-400">
+                                    Hadir: {displayInfo.hadirJpText}
+                                  </span>
+                                </div>
+                              );
+                            })()}
                           </td>
                           <td className="py-2.5 px-3 text-slate-500 dark:text-zinc-400">
                             {item.substituteTeacherName ? `Pengganti: ${item.substituteTeacherName}` : item.notes || "-"}

@@ -13,6 +13,7 @@ import {
   Sparkles
 } from "lucide-react";
 import { TeacherTeachingAttendance } from "../types/teacherTeachingAttendance.types";
+import { getAttendanceStatusDisplay } from "../utils/teacherAttendanceDisplayHelper";
 
 interface TeacherAttendanceTimelineProps {
   history: TeacherTeachingAttendance[];
@@ -80,14 +81,10 @@ export const TeacherAttendanceTimeline: React.FC<TeacherAttendanceTimelineProps>
                   // Evaluate JP sequence display
                   const jpLabel = item.jp || `JP ${item.sequence}`;
                   const timeSlot = item.timeSlot || "-";
-                  const isBelumTerkonfirmasi = item.status === "Belum Terkonfirmasi";
-                  const isHadir = item.status === "Hadir Mengajar";
-                  const isTerlambat = item.status === "Terlambat";
-                  const isAlpa = item.status === "Tidak Hadir";
                   const isSubstitution = item.isSubstitution;
                   const isReplaced = item.isReplaced;
-                  const isTukar = item.status === "Tukar Jadwal";
-                  const isLocked = (item.status as string) === "DIKUNCI" || (item as any).isLocked || (item.notes && item.notes.toLowerCase().includes("dikunci"));
+                  const isBelumTerkonfirmasi = item.status === "Belum Terkonfirmasi";
+                  const statusDisplay = getAttendanceStatusDisplay(item);
 
                   return (
                     <div key={item.id || idx} className="relative space-y-2">
@@ -95,12 +92,10 @@ export const TeacherAttendanceTimeline: React.FC<TeacherAttendanceTimelineProps>
                       <span className={`absolute -left-[21px] top-1 flex h-2.5 w-2.5 rounded-full border-2 border-white dark:border-zinc-900 ${
                         isSubstitution ? "bg-purple-600" :
                         isReplaced ? "bg-orange-500" :
-                        isHadir ? "bg-emerald-500" :
-                        isBelumTerkonfirmasi ? "bg-amber-500 animate-ping" :
-                        isTerlambat ? "bg-amber-500" :
-                        isAlpa ? "bg-rose-500" :
-                        isLocked ? "bg-slate-900" :
-                        "bg-blue-500"
+                        statusDisplay.statusLabel.includes("PENDING") ? "bg-amber-500 animate-ping" :
+                        statusDisplay.isLate ? "bg-amber-500" :
+                        statusDisplay.hadirJpValue === 1 ? "bg-emerald-500" :
+                        "bg-rose-500"
                       }`} />
 
                       <div className={`p-3.5 rounded-2xl border space-y-3 ${
@@ -130,25 +125,14 @@ export const TeacherAttendanceTimeline: React.FC<TeacherAttendanceTimelineProps>
                             </h4>
                           </div>
 
-                          <span className={`px-2.5 py-1 rounded-xl text-[10px] font-black border w-fit ${
-                            isSubstitution ? "bg-purple-100 text-purple-800 border-purple-300 dark:bg-purple-950 dark:text-purple-300" :
-                            isReplaced ? "bg-orange-100 text-orange-800 border-orange-300 dark:bg-orange-950 dark:text-orange-300" :
-                            isHadir ? "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300" :
-                            isBelumTerkonfirmasi ? "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-300" :
-                            isTerlambat ? "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-300" :
-                            isAlpa ? "bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950 dark:text-rose-300" :
-                            isLocked ? "bg-slate-900 text-white border-slate-700" :
-                            "bg-slate-100 text-slate-800 border-slate-300 dark:bg-zinc-800 dark:text-zinc-200"
-                          }`}>
-                            {isSubstitution ? "🟣 MENGGANTIKAN" :
-                             isReplaced ? "🟠 DIGANTIKAN" :
-                             isHadir ? "🟢 HADIR" :
-                             isBelumTerkonfirmasi ? "🟡 BELUM TERKONFIRMASI" :
-                             isTerlambat ? "🟠 TERLAMBAT" :
-                             isAlpa ? "🔴 ALPA" :
-                             isLocked ? "⚫ DIKUNCI" :
-                             item.status}
-                          </span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className={`px-2.5 py-1 rounded-xl text-[10px] font-black border w-fit ${statusDisplay.badgeFullClass}`}>
+                              {statusDisplay.statusLabel}
+                            </span>
+                            <span className="text-[10px] font-bold text-slate-500 dark:text-zinc-400 bg-white dark:bg-zinc-900 px-2 py-0.5 rounded-md border border-slate-200 dark:border-zinc-800">
+                              Hadir: {statusDisplay.hadirJpText}
+                            </span>
+                          </div>
                         </div>
 
                         {/* Substitution Relationship Callout */}

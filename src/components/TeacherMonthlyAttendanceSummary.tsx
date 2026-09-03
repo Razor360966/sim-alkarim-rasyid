@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { TeacherTeachingAttendance } from "../types/teacherTeachingAttendance.types";
+import { getAttendanceStatusDisplay } from "../utils/teacherAttendanceDisplayHelper";
 import { 
   Calendar, 
   CheckCircle2, 
@@ -371,13 +372,7 @@ export const TeacherMonthlyAttendanceSummary: React.FC<Props> = ({
                   {selectedMonth.records.map((rec, idx) => {
                     const isSelf = rec.teacherId === teacherId;
                     const isSub = rec.substituteTeacherId === teacherId;
-
-                    let badgeColor = "bg-slate-100 text-slate-700 dark:bg-zinc-800 dark:text-zinc-300";
-                    if (rec.status === "Hadir Mengajar") badgeColor = "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300";
-                    else if (rec.status === "Terlambat") badgeColor = "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300";
-                    else if (rec.status === "Digantikan Guru Lain") badgeColor = "bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300";
-                    else if (rec.status === "Tidak Hadir" || rec.status === "Alpa") badgeColor = "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300";
-                    else if (rec.status === "Izin" || rec.status === "Sakit" || rec.status === "Tugas Dinas") badgeColor = "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300";
+                    const statusDisplay = getAttendanceStatusDisplay(rec);
 
                     return (
                       <div
@@ -411,9 +406,14 @@ export const TeacherMonthlyAttendanceSummary: React.FC<Props> = ({
                             {rec.checkInTime ? <div>In: {rec.checkInTime}</div> : <div>In: -</div>}
                             {rec.checkOutTime ? <div>Out: {rec.checkOutTime}</div> : <div>Out: -</div>}
                           </div>
-                          <span className={`px-2.5 py-1 rounded-xl text-xs font-bold ${badgeColor}`}>
-                            {rec.status || "Belum Diverifikasi"}
-                          </span>
+                          <div className="flex flex-col items-end gap-1">
+                            <span className={`px-2.5 py-1 rounded-xl text-[10px] font-black border ${statusDisplay.badgeFullClass}`}>
+                              {statusDisplay.statusLabel}
+                            </span>
+                            <span className="text-[10px] font-bold text-slate-500 dark:text-zinc-400">
+                              Hadir: {statusDisplay.hadirJpText}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     );

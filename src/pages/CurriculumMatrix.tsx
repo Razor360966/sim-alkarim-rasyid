@@ -742,6 +742,12 @@ export const CurriculumMatrixPage: React.FC = () => {
     return subjectDetail?.group === "B" ? "Kepesantrenan" : "Umum";
   };
 
+  // Helper to get resolved Subject display name from Master subjects (Single Source of Truth) with fallback to snapshot
+  const getSubjectDisplayName = (item: CurriculumMatrix, subjectsList: Subject[] = subjects) => {
+    const detail = subjectsList.find(s => s.id === item.subjectId);
+    return detail?.name || item.subjectName || "Mata Pelajaran";
+  };
+
   // Filter local matrix by search input
   const filteredLocalMatrix = useMemo(() => {
     if (!searchKeyword.trim()) return localMatrix;
@@ -749,8 +755,10 @@ export const CurriculumMatrixPage: React.FC = () => {
     return localMatrix.filter(item => {
       const subjectDetail = subjects.find(s => s.id === item.subjectId);
       const code = subjectDetail ? (subjectDetail.code || "").toLowerCase() : "";
+      const displayName = getSubjectDisplayName(item, subjects);
 
       return (
+        displayName.toLowerCase().includes(query) ||
         item.subjectName.toLowerCase().includes(query) ||
         code.includes(query) ||
         (item.teacherName || "").toLowerCase().includes(query)
@@ -769,7 +777,7 @@ export const CurriculumMatrixPage: React.FC = () => {
         const orderA = typeof a.order === "number" ? a.order : 0;
         const orderB = typeof b.order === "number" ? b.order : 0;
         if (orderA !== orderB) return orderA - orderB;
-        return a.subjectName.localeCompare(b.subjectName);
+        return getSubjectDisplayName(a, subjects).localeCompare(getSubjectDisplayName(b, subjects));
       });
   }, [filteredLocalMatrix, subjects]);
 
@@ -784,7 +792,7 @@ export const CurriculumMatrixPage: React.FC = () => {
         const orderA = typeof a.order === "number" ? a.order : 0;
         const orderB = typeof b.order === "number" ? b.order : 0;
         if (orderA !== orderB) return orderA - orderB;
-        return a.subjectName.localeCompare(b.subjectName);
+        return getSubjectDisplayName(a, subjects).localeCompare(getSubjectDisplayName(b, subjects));
       });
   }, [filteredLocalMatrix, subjects]);
 
@@ -838,18 +846,19 @@ export const CurriculumMatrixPage: React.FC = () => {
       const orderA = typeof a.order === "number" ? a.order : 0;
       const orderB = typeof b.order === "number" ? b.order : 0;
       if (orderA !== orderB) return orderA - orderB;
-      return a.subjectName.localeCompare(b.subjectName);
+      return getSubjectDisplayName(a, subjects).localeCompare(getSubjectDisplayName(b, subjects));
     });
 
     const formatted = sortedAllItems.map((item, index) => {
       const subjectDetail = subjects.find(s => s.id === item.subjectId);
       const category = getCategory(item, subjects);
+      const resolvedSubjectName = subjectDetail?.name || item.subjectName;
       return {
         "No": index + 1,
         "Kategori": category,
         "Urutan": typeof item.order === "number" ? item.order : 0,
         "Kode Mata Pelajaran": subjectDetail ? subjectDetail.code : "-",
-        "Nama Mata Pelajaran": item.subjectName,
+        "Nama Mata Pelajaran": resolvedSubjectName,
         "JP Kelas VII": item.jp_vii,
         "JP Kelas VIII": item.jp_viii,
         "JP Kelas IX": item.jp_ix,
@@ -887,13 +896,14 @@ export const CurriculumMatrixPage: React.FC = () => {
       const orderA = typeof a.order === "number" ? a.order : 0;
       const orderB = typeof b.order === "number" ? b.order : 0;
       if (orderA !== orderB) return orderA - orderB;
-      return a.subjectName.localeCompare(b.subjectName);
+      return getSubjectDisplayName(a, subjects).localeCompare(getSubjectDisplayName(b, subjects));
     });
 
     const headers = ["No", "Kategori", "Urut", "Mata Pelajaran", "VII JP", "VIII JP", "IX JP", "Guru Pengampu"];
     const rows = sortedAllItems.map((item, index) => {
       const subjectDetail = subjects.find(s => s.id === item.subjectId);
-      const label = subjectDetail ? `[${subjectDetail.code}] ${item.subjectName}` : item.subjectName;
+      const resolvedSubjectName = subjectDetail?.name || item.subjectName;
+      const label = subjectDetail ? `[${subjectDetail.code}] ${resolvedSubjectName}` : resolvedSubjectName;
       const category = getCategory(item, subjects);
       return [
         String(index + 1),
@@ -1066,7 +1076,9 @@ export const CurriculumMatrixPage: React.FC = () => {
 
                           <td className="px-5 py-4">
                             <div className="flex flex-col gap-1 pr-4">
-                              <span className="font-extrabold text-gray-800 dark:text-zinc-100 truncate">{item.subjectName}</span>
+                              <span className="font-extrabold text-gray-800 dark:text-zinc-100 truncate">
+                                {subjectDetail?.name || item.subjectName}
+                              </span>
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <span className="text-[10px] font-mono text-gray-400 dark:text-zinc-500 font-bold uppercase tracking-tight">
                                   {subjectDetail ? subjectDetail.code : "N/A"}
@@ -1302,7 +1314,9 @@ export const CurriculumMatrixPage: React.FC = () => {
 
                           <td className="px-5 py-4">
                             <div className="flex flex-col gap-1 pr-4">
-                              <span className="font-extrabold text-gray-800 dark:text-zinc-100 truncate">{item.subjectName}</span>
+                              <span className="font-extrabold text-gray-800 dark:text-zinc-100 truncate">
+                                {subjectDetail?.name || item.subjectName}
+                              </span>
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <span className="text-[10px] font-mono text-gray-400 dark:text-zinc-500 font-bold uppercase tracking-tight">
                                   {subjectDetail ? subjectDetail.code : "N/A"}
@@ -1682,7 +1696,7 @@ export const CurriculumMatrixPage: React.FC = () => {
             </p>
           </div>
           <p className="text-xs text-gray-500 dark:text-zinc-400 leading-relaxed font-semibold">
-            Apakah Anda yakin ingin melepas Mata Pelajaran <strong className="text-gray-900 dark:text-white">"{selectedItem?.subjectName}"</strong> dari matriks kurikulum?
+            Apakah Anda yakin ingin melepas Mata Pelajaran <strong className="text-gray-900 dark:text-white">"{selectedItem ? (subjects.find(s => s.id === selectedItem.subjectId)?.name || selectedItem.subjectName) : ""}"</strong> dari matriks kurikulum?
           </p>
           <div className="flex justify-end gap-3 pt-4 border-t border-gray-100 dark:border-zinc-800 mt-4">
             <button
