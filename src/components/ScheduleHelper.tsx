@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { Schedule, Class, Teacher, LessonPeriod, CurriculumMatrix, TeacherAssignment, Subject } from "../types";
 import { scheduleService, resolveTeacherForScheduleDate } from "../services/schedule.service";
-import { teacherAssignmentService } from "../services/teacherAssignment.service";
+import { teacherAssignmentService, resolveTeacherAssignmentSync } from "../services/teacherAssignment.service";
 
 // --- TYPES FOR ANALYSES ---
 export interface PreAnalysisResult {
@@ -126,13 +126,15 @@ export function PreAnalysisPanel({
   classes,
   instructionalPeriods,
   selectedYearId,
-  selectedSemesterId
+  selectedSemesterId,
+  teacherAssignments = []
 }: {
   curriculumMatrix: CurriculumMatrix[];
   classes: Class[];
   instructionalPeriods: LessonPeriod[];
   selectedYearId: string;
   selectedSemesterId: string;
+  teacherAssignments?: TeacherAssignment[];
 }) {
   const analysis = useMemo(() => {
     if (!selectedYearId || !selectedSemesterId || curriculumMatrix.length === 0 || classes.length === 0) {
@@ -174,82 +176,41 @@ export function PreAnalysisPanel({
       }
     });
 
-    // Check teacher assignments completeness and loads
+    // Check teacher assignments completeness and loads per active class (Class-Aware)
     const teacherLoads = new Map<string, { name: string; totalJp: number }>();
 
-    curriculumMatrix.forEach((m) => {
-      const hasVII = m.jp_vii > 0 && activeClasses.some(c => c.gradeLevel === "VII");
-      const hasVIII = m.jp_viii > 0 && activeClasses.some(c => c.gradeLevel === "VIII");
-      const hasIX = m.jp_ix > 0 && activeClasses.some(c => c.gradeLevel === "IX");
+    activeClasses.forEach((cls) => {
+      const clsId = cls.classId || cls.id;
+      const grade = (cls.gradeLevel || "VII") as "VII" | "VIII" | "IX";
 
-      if (hasVII || hasVIII || hasIX) {
-        if (!m.useDifferentTeachers) {
-          if (!m.teacherId || m.teacherId === "GURU_ALM_01") {
-            warnings.push(`Mata Pelajaran ${m.subjectName} belum memiliki Guru Pengampu.`);
-            checks.teachers = false;
-          } else {
-            const viiCount = activeClasses.filter(c => c.gradeLevel === "VII").length;
-            const viiiCount = activeClasses.filter(c => c.gradeLevel === "VIII").length;
-            const ixCount = activeClasses.filter(c => c.gradeLevel === "IX").length;
-            const totalTeacherJp = (m.jp_vii * viiCount) + (m.jp_viii * viiiCount) + (m.jp_ix * ixCount);
-            if (totalTeacherJp > 0) {
-              const curr = teacherLoads.get(m.teacherId) || { name: m.teacherName, totalJp: 0 };
-              curr.totalJp += totalTeacherJp;
-              teacherLoads.set(m.teacherId, curr);
-            }
-          }
+      curriculumMatrix.forEach((m) => {
+        const jp = grade === "VII" ? m.jp_vii : grade === "VIII" ? m.jp_viii : m.jp_ix;
+        if (jp <= 0) return;
+
+        // SSOT 4-Tier Class-Aware Resolver
+        const resolved = resolveTeacherAssignmentSync({
+          academicYearId: selectedYearId,
+          semesterId: selectedSemesterId,
+          subjectId: m.subjectId,
+          classId: clsId,
+          gradeLevel: grade,
+          curriculumMatrixItem: m,
+          preloadedAssignments: teacherAssignments
+        });
+
+        const tId = resolved.teacherId;
+        const tName = resolved.teacherName;
+
+        if (!tId || tId === "GURU_ALM_01" || tName === "Belum Ditentukan") {
+          warnings.push(`Mata Pelajaran ${m.subjectName} Kelas ${cls.name} belum memiliki Guru Pengampu.`);
+          checks.teachers = false;
         } else {
-          // Check for each active grade level specifically
-          if (hasVII) {
-            const tId = m.teacherId_vii || m.teacherId;
-            const tName = m.teacherName_vii || m.teacherName;
-            if (!tId || tId === "GURU_ALM_01") {
-              warnings.push(`Mata Pelajaran ${m.subjectName} Kelas VII belum memiliki Guru Pengampu.`);
-              checks.teachers = false;
-            } else {
-              const viiCount = activeClasses.filter(c => c.gradeLevel === "VII").length;
-              const totalTeacherJp = m.jp_vii * viiCount;
-              if (totalTeacherJp > 0) {
-                const curr = teacherLoads.get(tId) || { name: tName, totalJp: 0 };
-                curr.totalJp += totalTeacherJp;
-                teacherLoads.set(tId, curr);
-              }
-            }
-          }
-          if (hasVIII) {
-            const tId = m.teacherId_viii || m.teacherId;
-            const tName = m.teacherName_viii || m.teacherName;
-            if (!tId || tId === "GURU_ALM_01") {
-              warnings.push(`Mata Pelajaran ${m.subjectName} Kelas VIII belum memiliki Guru Pengampu.`);
-              checks.teachers = false;
-            } else {
-              const viiiCount = activeClasses.filter(c => c.gradeLevel === "VIII").length;
-              const totalTeacherJp = m.jp_viii * viiiCount;
-              if (totalTeacherJp > 0) {
-                const curr = teacherLoads.get(tId) || { name: tName, totalJp: 0 };
-                curr.totalJp += totalTeacherJp;
-                teacherLoads.set(tId, curr);
-              }
-            }
-          }
-          if (hasIX) {
-            const tId = m.teacherId_ix || m.teacherId;
-            const tName = m.teacherName_ix || m.teacherName;
-            if (!tId || tId === "GURU_ALM_01") {
-              warnings.push(`Mata Pelajaran ${m.subjectName} Kelas IX belum memiliki Guru Pengampu.`);
-              checks.teachers = false;
-            } else {
-              const ixCount = activeClasses.filter(c => c.gradeLevel === "IX").length;
-              const totalTeacherJp = m.jp_ix * ixCount;
-              if (totalTeacherJp > 0) {
-                const curr = teacherLoads.get(tId) || { name: tName, totalJp: 0 };
-                curr.totalJp += totalTeacherJp;
-                teacherLoads.set(tId, curr);
-              }
-            }
-          }
+          const curr = teacherLoads.get(tId) || { name: tName, totalJp: 0 };
+          curr.totalJp += jp;
+          curr.name = tName;
+          teacherLoads.set(tId, curr);
         }
-      }
+      });
     });
 
     teacherLoads.forEach((load) => {
@@ -266,7 +227,7 @@ export function PreAnalysisPanel({
       totalRequiredJp,
       slotsAvailable: activeClasses.length * numPeriods
     } as PreAnalysisResult;
-  }, [curriculumMatrix, classes, instructionalPeriods, selectedYearId, selectedSemesterId]);
+  }, [curriculumMatrix, classes, instructionalPeriods, selectedYearId, selectedSemesterId, teacherAssignments]);
 
   if (!analysis) return null;
 
@@ -773,7 +734,7 @@ export function ScheduleEditorDialog({
 
   // Resolved teacher right now for this slot
   const currentResolved = slot.matchedSchedule 
-    ? resolveTeacherForScheduleDate(slot.matchedSchedule, todayStr)
+    ? resolveTeacherForScheduleDate(slot.matchedSchedule, todayStr, teacherAssignments)
     : null;
 
   const currentTeacherName = currentResolved 

@@ -1,13 +1,23 @@
 export interface TeacherAssignment {
   id?: string;
+  academicYearId?: string;
+  semesterId?: string;
+  subjectId?: string;
+  subjectName?: string;
+  classId?: string;
+  className?: string;
+  gradeLevel?: "VII" | "VIII" | "IX";
   teacherId: string;
   teacherName: string;
-  effectiveFrom: string; // YYYY-MM-DD
+  effectiveFrom?: string | null; // YYYY-MM-DD
   effectiveUntil?: string | null; // YYYY-MM-DD or null/undefined (active indefinitely)
   createdAt?: string;
+  updatedAt?: string;
   createdBy?: string;
+  updatedBy?: string;
   createdByName?: string;
   notes?: string;
+  isActive?: boolean;
 }
 
 export interface Schedule {

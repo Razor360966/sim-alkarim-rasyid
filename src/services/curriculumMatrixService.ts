@@ -1,6 +1,7 @@
 import { 
   collection, 
   doc, 
+  getDoc,
   getDocs, 
   setDoc, 
   updateDoc, 
@@ -12,6 +13,7 @@ import {
 } from "firebase/firestore";
 import { db, handleFirestoreError, OperationType } from "../firebase/config";
 import { CurriculumMatrix } from "../types";
+import { teacherAssignmentService } from "./teacherAssignment.service";
 
 const COLLECTION_NAME = "curriculum_matrix";
 
@@ -188,6 +190,45 @@ export const curriculumMatrixService = {
         id, 
         `${userName} mengubah JP untuk mapel "${subjectName}" (${details.join(", ")}).`
       );
+
+      // TAHAP 2: Otomatisasi penugasan guru untuk rombel pada jenjang yang JP-nya diaktifkan
+      try {
+        const snap = await getDoc(docRef);
+        const matrixData = snap.data() as any;
+        const subjectId = matrixData?.subjectId;
+
+        if (subjectId) {
+          if (grades.jp_vii !== undefined && grades.jp_vii > 0) {
+            await teacherAssignmentService.ensureAssignmentsForSubjectJP({
+              subjectId,
+              subjectName,
+              gradeLevel: "VII",
+              userId,
+              userName
+            });
+          }
+          if (grades.jp_viii !== undefined && grades.jp_viii > 0) {
+            await teacherAssignmentService.ensureAssignmentsForSubjectJP({
+              subjectId,
+              subjectName,
+              gradeLevel: "VIII",
+              userId,
+              userName
+            });
+          }
+          if (grades.jp_ix !== undefined && grades.jp_ix > 0) {
+            await teacherAssignmentService.ensureAssignmentsForSubjectJP({
+              subjectId,
+              subjectName,
+              gradeLevel: "IX",
+              userId,
+              userName
+            });
+          }
+        }
+      } catch (assignError) {
+        console.warn("Auto-assignment for updated JP encountered non-fatal error:", assignError);
+      }
     } catch (error) {
       return handleFirestoreError(error, OperationType.WRITE, `${COLLECTION_NAME}/${id}`);
     }

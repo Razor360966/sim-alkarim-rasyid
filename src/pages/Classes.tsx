@@ -93,7 +93,8 @@ export const Classes: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["classes"] });
       queryClient.invalidateQueries({ queryKey: ["teachers"] });
-      toast("Kelas berhasil dibuat!", "success");
+      queryClient.invalidateQueries({ queryKey: ["teacher_assignments"] });
+      toast("Kelas berhasil dibuat dan alokasi penugasan mata pelajaran telah disiapkan!", "success");
       setIsCreateOpen(false);
       resetForm();
     },

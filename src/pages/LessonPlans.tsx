@@ -6,7 +6,8 @@ import { semesterService } from "../services/semester.service";
 import { curriculumMatrixService } from "../services/curriculumMatrixService";
 import { lessonPlanService } from "../services/lessonPlan.service";
 import { subjectService } from "../services/subjectService";
-import type { Class, Semester, CurriculumMatrix, LessonPlan, Subject } from "../types";
+import { teacherAssignmentService, resolveTeacherAssignmentSync } from "../services/teacherAssignment.service";
+import type { Class, Semester, CurriculumMatrix, LessonPlan, Subject, TeacherAssignment } from "../types";
 import { 
   FileText, 
   Plus, 
@@ -57,27 +58,30 @@ export const LessonPlans: React.FC = () => {
   const [formSemesterId, setFormSemesterId] = useState("");
   const [formLink, setFormLink] = useState("");
   const [formDescription, setFormDescription] = useState("");
+  const [teacherAssignments, setTeacherAssignments] = useState<TeacherAssignment[]>([]);
 
   const currentRole = user?.role?.toLowerCase() || "";
   const isAdminOrKurikulum = user?.roles?.some(r => ["admin", "kurikulum", "superadmin", "operator"].includes(r.toLowerCase())) || 
                              ["admin", "kurikulum", "superadmin", "operator"].includes(currentRole);
   const isGuru = (user?.roles?.includes("guru") || currentRole === "guru") && !isAdminOrKurikulum;
 
-  // Load classes, semesters, matrix, subjects
+  // Load classes, semesters, matrix, subjects, teacher assignments
   useEffect(() => {
     setLoading(true);
     Promise.all([
       classService.getClasses(),
       semesterService.getSemesters(),
       curriculumMatrixService.getCurriculumMatrix(),
-      subjectService.getSubjects()
+      subjectService.getSubjects(),
+      teacherAssignmentService.getTeacherAssignments()
     ])
-      .then(([clsList, semList, matrixList, subList]) => {
+      .then(([clsList, semList, matrixList, subList, assignList]) => {
         const activeCls = clsList.filter(c => c.status === "Aktif" && !c.isDeleted);
         setClasses(activeCls);
         setSemesters(semList);
         setCurriculumMatrix(matrixList);
         setSubjects(subList);
+        setTeacherAssignments(assignList);
 
         // Group unique academic years from semesters
         const yearsMap = new Map<string, string>();
@@ -106,21 +110,15 @@ export const LessonPlans: React.FC = () => {
   const gradeLevel = selectedClassObj?.gradeLevel || "VII";
 
   const allOfferedSubjects = curriculumMatrix.map(m => {
-    let assignedTeacherId = m.teacherId;
-    let assignedTeacherName = m.teacherName;
-
-    if (m.useDifferentTeachers) {
-      if (gradeLevel === "VII") {
-        assignedTeacherId = m.teacherId_vii || m.teacherId;
-        assignedTeacherName = m.teacherName_vii || m.teacherName;
-      } else if (gradeLevel === "VIII") {
-        assignedTeacherId = m.teacherId_viii || m.teacherId;
-        assignedTeacherName = m.teacherName_viii || m.teacherName;
-      } else if (gradeLevel === "IX") {
-        assignedTeacherId = m.teacherId_ix || m.teacherId;
-        assignedTeacherName = m.teacherName_ix || m.teacherName;
-      }
-    }
+    const resolved = resolveTeacherAssignmentSync({
+      academicYearId: selectedAcademicYearId,
+      semesterId: selectedSemesterId,
+      subjectId: m.subjectId,
+      classId: selectedClassId,
+      gradeLevel: gradeLevel,
+      curriculumMatrixItem: m,
+      preloadedAssignments: teacherAssignments
+    });
 
     const jp = gradeLevel === "VII" ? m.jp_vii : gradeLevel === "VIII" ? m.jp_viii : m.jp_ix;
     const masterSubj = subjects.find(s => s.id === m.subjectId);
@@ -128,8 +126,8 @@ export const LessonPlans: React.FC = () => {
     return {
       id: m.subjectId,
       name: masterSubj?.name || m.subjectName,
-      teacherId: assignedTeacherId,
-      teacherName: assignedTeacherName,
+      teacherId: resolved.teacherId,
+      teacherName: resolved.teacherName,
       jp: jp || 0
     };
   }).filter(s => s.jp > 0);
@@ -154,21 +152,15 @@ export const LessonPlans: React.FC = () => {
   const modalClassObj = classes.find(c => c.id === formClassId);
   const modalGradeLevel = modalClassObj?.gradeLevel || "VII";
   const modalOfferedSubjects = curriculumMatrix.map(m => {
-    let assignedTeacherId = m.teacherId;
-    let assignedTeacherName = m.teacherName;
-
-    if (m.useDifferentTeachers) {
-      if (modalGradeLevel === "VII") {
-        assignedTeacherId = m.teacherId_vii || m.teacherId;
-        assignedTeacherName = m.teacherName_vii || m.teacherName;
-      } else if (modalGradeLevel === "VIII") {
-        assignedTeacherId = m.teacherId_viii || m.teacherId;
-        assignedTeacherName = m.teacherName_viii || m.teacherName;
-      } else if (modalGradeLevel === "IX") {
-        assignedTeacherId = m.teacherId_ix || m.teacherId;
-        assignedTeacherName = m.teacherName_ix || m.teacherName;
-      }
-    }
+    const resolved = resolveTeacherAssignmentSync({
+      academicYearId: selectedAcademicYearId,
+      semesterId: formSemesterId || selectedSemesterId,
+      subjectId: m.subjectId,
+      classId: formClassId,
+      gradeLevel: modalGradeLevel,
+      curriculumMatrixItem: m,
+      preloadedAssignments: teacherAssignments
+    });
 
     const jp = modalGradeLevel === "VII" ? m.jp_vii : modalGradeLevel === "VIII" ? m.jp_viii : m.jp_ix;
     const masterSubj = subjects.find(s => s.id === m.subjectId);
@@ -176,8 +168,8 @@ export const LessonPlans: React.FC = () => {
     return {
       id: m.subjectId,
       name: masterSubj?.name || m.subjectName,
-      teacherId: assignedTeacherId,
-      teacherName: assignedTeacherName,
+      teacherId: resolved.teacherId,
+      teacherName: resolved.teacherName,
       jp: jp || 0
     };
   }).filter(s => s.jp > 0);

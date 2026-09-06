@@ -315,7 +315,9 @@ export const ERaporPrintable: React.FC<ERaporPrintableProps> = ({
                     <td className="p-2 border-r border-black text-center">{idx + 1}</td>
                     <td className="p-2 border-r border-black font-semibold">{item.subjectName}</td>
                     <td className="p-2 border-r border-black text-center font-bold text-sm">
-                      {item.finalScore !== null && item.finalScore !== undefined ? item.finalScore : "-"}
+                      {item.finalScore !== null && item.finalScore !== undefined
+                        ? item.finalScore
+                        : ((item as any).score !== null && (item as any).score !== undefined ? (item as any).score : "-")}
                     </td>
                     <td className="p-2 text-[11px] leading-relaxed">{item.ketercapaian || item.description || "-"}</td>
                   </tr>

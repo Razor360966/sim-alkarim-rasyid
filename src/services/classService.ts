@@ -13,6 +13,7 @@ import {
 import { db, handleFirestoreError, OperationType } from "../firebase/config";
 import { Class } from "../types";
 import { sortClasses } from "../utils/classSorter";
+import { teacherAssignmentService } from "./teacherAssignment.service";
 
 const COLLECTION_NAME = "classes";
 
@@ -157,6 +158,17 @@ export const classService = {
         id,
         `${userName} menambahkan kelas baru "${data.name}" (Tingkat ${data.gradeLevel}) dengan Wali Kelas "${data.homeroomTeacherName || 'Belum Ditentukan'}".`
       );
+
+      // TAHAP 2: Otomatisasi penugasan guru untuk kelas baru (Belum Ditentukan)
+      try {
+        await teacherAssignmentService.ensureAssignmentsForClass({
+          classObj: newClass,
+          userId,
+          userName
+        });
+      } catch (assignError) {
+        console.warn("Auto-assignment for new class encountered non-fatal error:", assignError);
+      }
 
       return newClass;
     } catch (error) {

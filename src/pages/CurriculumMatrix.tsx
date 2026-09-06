@@ -5,7 +5,11 @@ import { useToast } from "../contexts/ToastContext";
 import { curriculumMatrixService } from "../services/curriculumMatrixService";
 import { subjectService } from "../services/subjectService";
 import { teacherService } from "../services/teacherService";
-import { CurriculumMatrix, Subject, Teacher } from "../types";
+import { classService } from "../services/classService";
+import { academicYearService } from "../services/academicYear.service";
+import { semesterService } from "../services/semester.service";
+import { teacherAssignmentService } from "../services/teacherAssignment.service";
+import { CurriculumMatrix, Subject, Teacher, Class, AcademicYear, Semester, TeacherAssignment } from "../types";
 import { Loading } from "../components/Loading";
 import { Dialog } from "../components/Dialog";
 import { exportToExcel, exportToPDF } from "../utils/exportUtils";
@@ -23,8 +27,14 @@ import {
   TableProperties, 
   Save, 
   HelpCircle,
-  AlertTriangle
+  AlertTriangle,
+  RefreshCw,
+  Calendar,
+  History,
+  UserCheck,
+  Clock
 } from "lucide-react";
+import { getTodayDateString, getPreviousDayString } from "../services/teacherAssignment.service";
 
 // ==========================================
 // Custom Searchable Teacher Dropdown Component
@@ -159,6 +169,362 @@ const TeacherDropdown: React.FC<TeacherDropdownProps> = ({
   );
 };
 
+// ==========================================
+// Class Teacher Assignment & History Modal
+// ==========================================
+interface ClassTeacherAssignmentModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  target: {
+    item: CurriculumMatrix;
+    cls: Class;
+    gradeLevel: "VII" | "VIII" | "IX";
+    preselectedNewTeacherId?: string;
+  } | null;
+  academicYearId: string;
+  semesterId: string;
+  academicYearName?: string;
+  semesterName?: string;
+  teachers: Teacher[];
+  teacherAssignments: TeacherAssignment[];
+  onSaveSimpleAssignment: (params: {
+    item: CurriculumMatrix;
+    cls: Class;
+    teacherId: string;
+    teacherName: string;
+    effectiveFrom?: string;
+    notes?: string;
+  }) => Promise<void>;
+  onTransitionAssignment: (params: {
+    item: CurriculumMatrix;
+    cls: Class;
+    gradeLevel?: "VII" | "VIII" | "IX";
+    newTeacherId: string;
+    newTeacherName: string;
+    effectiveFrom: string;
+    notes?: string;
+  }) => Promise<void>;
+  isSubmitting?: boolean;
+}
+
+const ClassTeacherAssignmentModal: React.FC<ClassTeacherAssignmentModalProps> = ({
+  isOpen,
+  onClose,
+  target,
+  academicYearId,
+  semesterId,
+  academicYearName,
+  semesterName,
+  teachers,
+  teacherAssignments,
+  onSaveSimpleAssignment,
+  onTransitionAssignment,
+  isSubmitting = false
+}) => {
+  const [newTeacherId, setNewTeacherId] = useState("");
+  const [effectiveFrom, setEffectiveFrom] = useState(getTodayDateString());
+  const [notes, setNotes] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+
+  const targetClassId = target ? (target.cls.id || target.cls.classId) : "";
+
+  useEffect(() => {
+    if (target) {
+      setNewTeacherId(target.preselectedNewTeacherId || "");
+      setEffectiveFrom(getTodayDateString());
+      setNotes("");
+      setErrorMessage("");
+    }
+  }, [target]);
+
+  const resolved = useMemo(() => {
+    if (!target || !academicYearId || !semesterId) return null;
+    return teacherAssignmentService.resolveTeacherAssignmentSync({
+      academicYearId,
+      semesterId,
+      subjectId: target.item.subjectId,
+      classId: targetClassId,
+      gradeLevel: target.gradeLevel,
+      curriculumMatrixItem: target.item,
+      preloadedAssignments: teacherAssignments
+    });
+  }, [target, academicYearId, semesterId, targetClassId, teacherAssignments]);
+
+  const history = useMemo(() => {
+    if (!target) return [];
+    return teacherAssignments
+      .filter(a => a.subjectId === target.item.subjectId && a.classId === targetClassId)
+      .sort((a, b) => (a.effectiveFrom || "").localeCompare(b.effectiveFrom || ""));
+  }, [target, targetClassId, teacherAssignments]);
+
+  if (!target) return null;
+
+  const hasActiveTeacher = Boolean(
+    resolved?.teacherId && 
+    resolved?.teacherName && 
+    resolved.teacherName !== "Belum Ditentukan"
+  );
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage("");
+
+    if (!newTeacherId) {
+      setErrorMessage("Silakan pilih guru pengampu terlebih dahulu.");
+      return;
+    }
+
+    if (!effectiveFrom) {
+      setErrorMessage("Tanggal mulai berlaku wajib diisi.");
+      return;
+    }
+
+    const selectedTeacherObj = teachers.find(t => t.id === newTeacherId);
+    if (!selectedTeacherObj) {
+      setErrorMessage("Guru yang dipilih tidak valid.");
+      return;
+    }
+
+    try {
+      if (hasActiveTeacher) {
+        if (newTeacherId === resolved?.teacherId) {
+          setErrorMessage("Guru pengganti tidak boleh sama dengan guru yang sedang aktif saat ini.");
+          return;
+        }
+
+        await onTransitionAssignment({
+          item: target.item,
+          cls: target.cls,
+          gradeLevel: target.gradeLevel,
+          newTeacherId,
+          newTeacherName: selectedTeacherObj.name,
+          effectiveFrom,
+          notes
+        });
+      } else {
+        await onSaveSimpleAssignment({
+          item: target.item,
+          cls: target.cls,
+          teacherId: newTeacherId,
+          teacherName: selectedTeacherObj.name,
+          effectiveFrom,
+          notes
+        });
+      }
+      onClose();
+    } catch (err: any) {
+      setErrorMessage(err.message || "Gagal menyimpan penugasan guru.");
+    }
+  };
+
+  const todayStr = getTodayDateString();
+
+  return (
+    <Dialog
+      isOpen={isOpen}
+      onClose={onClose}
+      title={`Penugasan Guru — ${target.item.subjectName} (${target.cls.name})`}
+      size="lg"
+    >
+      <div className="space-y-5 font-sans">
+        <div className="flex items-center justify-between text-xs text-slate-500 dark:text-zinc-400 border-b border-gray-100 dark:border-zinc-800 pb-2">
+          <span>{academicYearName || "Tahun Ajaran Aktif"} • {semesterName || "Semester Aktif"}</span>
+          <span className="font-semibold text-blue-600 dark:text-blue-400">Jenjang Kelas {target.gradeLevel}</span>
+        </div>
+
+        {errorMessage && (
+          <div className="flex items-center gap-2 p-3 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 rounded-xl text-xs text-rose-700 dark:text-rose-300">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>{errorMessage}</span>
+          </div>
+        )}
+
+        {hasActiveTeacher ? (
+          <div className="p-3.5 bg-blue-50/70 dark:bg-blue-950/25 border border-blue-200/70 dark:border-blue-900/40 rounded-xl space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-blue-700 dark:text-blue-300 uppercase tracking-wider">
+                Guru Saat Ini:
+              </span>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300 border border-emerald-300/50">
+                Aktif Saat Ini
+              </span>
+            </div>
+            <div className="flex items-baseline gap-2">
+              <h4 className="text-sm font-extrabold text-slate-900 dark:text-zinc-50">
+                {resolved?.teacherName}
+              </h4>
+              {resolved?.assignment?.effectiveFrom && (
+                <span className="text-[11px] text-slate-500 dark:text-zinc-400">
+                  (Mulai {resolved.assignment.effectiveFrom})
+                </span>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="p-3 bg-amber-50/70 dark:bg-amber-950/25 border border-amber-200/70 dark:border-amber-900/40 rounded-xl text-xs text-amber-800 dark:text-amber-300 flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            <span>Belum ada guru pengampu yang ditugaskan untuk rombel kelas ini.</span>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-3.5 bg-slate-50/60 dark:bg-zinc-850/40 border border-slate-200/80 dark:border-zinc-800 rounded-xl p-4">
+          <h4 className="text-xs font-bold text-slate-800 dark:text-zinc-200 flex items-center gap-1.5">
+            <UserCheck className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+            <span>{hasActiveTeacher ? "Formulir Pergantian Guru" : "Formulir Penugasan Guru"}</span>
+          </h4>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="text-[11px] font-bold text-slate-700 dark:text-zinc-300 block mb-1">
+                {hasActiveTeacher ? "Ganti Menjadi:" : "Guru Pengampu:"}
+              </label>
+              <select
+                value={newTeacherId}
+                onChange={(e) => setNewTeacherId(e.target.value)}
+                className="w-full bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-750 rounded-xl p-2 text-xs text-slate-800 dark:text-zinc-100 focus:ring-1 focus:ring-blue-500 cursor-pointer"
+              >
+                <option value="">Pilih Guru...</option>
+                {teachers
+                  .filter(t => !t.isDeleted && t.status)
+                  .map(t => (
+                    <option key={t.id} value={t.id} disabled={hasActiveTeacher && t.id === resolved?.teacherId}>
+                      {t.name} {t.niy ? `(NIY: ${t.niy})` : ""} {hasActiveTeacher && t.id === resolved?.teacherId ? "— (Sedang Aktif)" : ""}
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-[11px] font-bold text-slate-700 dark:text-zinc-300 block mb-1">
+                Mulai Berlaku:
+              </label>
+              <input
+                type="date"
+                value={effectiveFrom}
+                onChange={(e) => setEffectiveFrom(e.target.value)}
+                className="w-full bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-750 rounded-xl p-2 text-xs text-slate-800 dark:text-zinc-100 focus:ring-1 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-[11px] font-bold text-slate-700 dark:text-zinc-300 block mb-1">
+              Catatan:
+            </label>
+            <input
+              type="text"
+              placeholder={hasActiveTeacher ? "Contoh: Guru A digantikan karena cuti / mutasi" : "Contoh: Penugasan awal semester"}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              className="w-full bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-750 rounded-xl p-2 text-xs text-slate-800 dark:text-zinc-100 focus:ring-1 focus:ring-blue-500"
+            />
+          </div>
+
+          <div className="flex justify-end pt-1">
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+            >
+              <Save className="h-3.5 w-3.5" />
+              <span>{isSubmitting ? "Menyimpan..." : hasActiveTeacher ? "Simpan Pergantian" : "Simpan Penugasan"}</span>
+            </button>
+          </div>
+        </form>
+
+        {/* Riwayat Penugasan (History Section) */}
+        <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-zinc-800">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-bold text-slate-800 dark:text-zinc-200 flex items-center gap-1.5">
+              <History className="h-4 w-4 text-slate-500 dark:text-zinc-400" />
+              <span>Riwayat Guru</span>
+            </h4>
+            <span className="text-[10px] text-slate-400 font-medium">
+              Total {history.length} Penugasan
+            </span>
+          </div>
+
+          {history.length === 0 ? (
+            <p className="text-xs text-slate-400 dark:text-zinc-500 italic p-3 bg-slate-50 dark:bg-zinc-850/20 rounded-xl text-center">
+              Belum ada riwayat penugasan tersimpan pada database untuk kombinasi rombel ini.
+            </p>
+          ) : (
+            <div className="space-y-2 max-h-56 overflow-y-auto scrollbar-thin pr-1">
+              {history.map((rec, idx) => {
+                const isCurrentlyActive = (
+                  rec.id === resolved?.assignment?.id ||
+                  (rec.teacherId === resolved?.teacherId && (!rec.effectiveUntil || rec.effectiveUntil >= todayStr))
+                );
+
+                return (
+                  <div
+                    key={rec.id || idx}
+                    className={`p-2.5 rounded-xl border transition-all ${
+                      isCurrentlyActive
+                        ? "bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-850/60"
+                        : "bg-white dark:bg-zinc-900 border-slate-150 dark:border-zinc-800"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-start gap-2">
+                        {isCurrentlyActive ? (
+                          <div className="p-1 rounded-full bg-emerald-500 text-white shrink-0 mt-0.5" title="Guru Aktif Saat Ini">
+                            <Check className="h-3 w-3" />
+                          </div>
+                        ) : (
+                          <div className="p-1 rounded-full bg-slate-200 dark:bg-zinc-750 text-slate-500 dark:text-zinc-400 shrink-0 mt-0.5" title="Riwayat Sebelumnya">
+                            <Clock className="h-3 w-3" />
+                          </div>
+                        )}
+                        <div>
+                          <span className={`text-xs font-bold block ${isCurrentlyActive ? "text-emerald-900 dark:text-emerald-200" : "text-slate-700 dark:text-zinc-300"}`}>
+                            {rec.teacherName}
+                          </span>
+                          <span className="text-[10px] text-slate-500 dark:text-zinc-400 font-medium block mt-0.5">
+                            {rec.effectiveFrom && rec.effectiveUntil
+                              ? `${rec.effectiveFrom} — ${rec.effectiveUntil}`
+                              : rec.effectiveFrom
+                              ? `Mulai ${rec.effectiveFrom}`
+                              : "Awal Semester"}
+                          </span>
+                          {rec.notes && (
+                            <span className="text-[10px] text-slate-400 dark:text-zinc-500 italic block mt-0.5">
+                              {rec.notes}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <span
+                        className={`text-[9px] font-bold px-2 py-0.5 rounded-md whitespace-nowrap ${
+                          isCurrentlyActive
+                            ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300"
+                            : "bg-slate-100 text-slate-600 dark:bg-zinc-800 dark:text-zinc-400"
+                        }`}
+                      >
+                        {isCurrentlyActive ? "Aktif Saat Ini" : "Riwayat"}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end pt-3 border-t border-gray-100 dark:border-zinc-800">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 border border-gray-200 dark:border-zinc-800 text-gray-600 dark:text-zinc-300 rounded-xl text-xs font-semibold hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+          >
+            Tutup
+          </button>
+        </div>
+      </div>
+    </Dialog>
+  );
+};
 
 const DEFAULT_EMPTY_ARRAY: any[] = [];
 
@@ -174,6 +540,12 @@ export const CurriculumMatrixPage: React.FC = () => {
   const [selectedItem, setSelectedItem] = useState<CurriculumMatrix | null>(null);
   const [newSubjectId, setNewSubjectId] = useState("");
   const [searchKeyword, setSearchKeyword] = useState("");
+  const [assignmentModalTarget, setAssignmentModalTarget] = useState<{
+    item: CurriculumMatrix;
+    cls: Class;
+    gradeLevel: "VII" | "VIII" | "IX";
+    preselectedNewTeacherId?: string;
+  } | null>(null);
 
   // Queries
   const { data: matrixItems = DEFAULT_EMPTY_ARRAY, isLoading: isLoadingMatrix } = useQuery({
@@ -191,10 +563,126 @@ export const CurriculumMatrixPage: React.FC = () => {
     queryFn: teacherService.getTeachers
   });
 
+  const { data: classes = DEFAULT_EMPTY_ARRAY } = useQuery({
+    queryKey: ["classes"],
+    queryFn: classService.getClasses
+  });
+
+  const { data: academicYears = DEFAULT_EMPTY_ARRAY } = useQuery({
+    queryKey: ["academic_years"],
+    queryFn: academicYearService.getAcademicYears
+  });
+
+  const { data: semesters = DEFAULT_EMPTY_ARRAY } = useQuery({
+    queryKey: ["semesters"],
+    queryFn: semesterService.getSemesters
+  });
+
+  const [selectedYearId, setSelectedYearId] = useState<string>("");
+  const [selectedSemesterId, setSelectedSemesterId] = useState<string>("");
+
+  useEffect(() => {
+    if (academicYears.length > 0 && !selectedYearId) {
+      const active = (academicYears as AcademicYear[]).find(y => y.isActive) || academicYears[0];
+      if (active) setSelectedYearId(active.id);
+    }
+  }, [academicYears, selectedYearId]);
+
+  useEffect(() => {
+    if (semesters.length > 0 && selectedYearId && !selectedSemesterId) {
+      const yearSemesters = (semesters as Semester[]).filter(s => s.academicYearId === selectedYearId);
+      const active = yearSemesters.find(s => s.isActive) || yearSemesters[0];
+      if (active) setSelectedSemesterId(active.id);
+    }
+  }, [semesters, selectedYearId, selectedSemesterId]);
+
+  const { data: teacherAssignments = DEFAULT_EMPTY_ARRAY, refetch: refetchTeacherAssignments } = useQuery({
+    queryKey: ["teacher_assignments", selectedYearId, selectedSemesterId],
+    queryFn: () => teacherAssignmentService.getTeacherAssignmentsByPeriod(selectedYearId, selectedSemesterId),
+    enabled: !!selectedYearId && !!selectedSemesterId
+  });
+
+  const [isSyncing, setIsSyncing] = useState(false);
+  const handleSyncAssignmentsFromMatrix = async () => {
+    if (!selectedYearId || !selectedSemesterId) {
+      toast("Pilih Tahun Ajaran dan Semester aktif terlebih dahulu", "error");
+      return;
+    }
+    setIsSyncing(true);
+    try {
+      const result = await teacherAssignmentService.generateAssignmentsFromCurriculumMatrix(
+        selectedYearId,
+        selectedSemesterId,
+        classes as Class[],
+        matrixItems as CurriculumMatrix[],
+        user?.uid,
+        user?.displayName || user?.email || "Admin"
+      );
+      await refetchTeacherAssignments();
+      toast(
+        `Sinkronisasi selesai! ${result.createdCount} penugasan baru dibuat ke teacher_assignments. (${result.skippedCount} sudah ada)`,
+        "success"
+      );
+    } catch (err: any) {
+      toast(err.message || "Gagal melakukan sinkronisasi penugasan", "error");
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   const isLoading = isLoadingMatrix || isLoadingSubjects || isLoadingTeachers;
 
   // Keep a local copy of matrix data for rapid and optimistic updates / rollback
   const [localMatrix, setLocalMatrix] = useState<CurriculumMatrix[]>([]);
+  const [showUnassignedDetails, setShowUnassignedDetails] = useState(false);
+
+  // Calculate unassigned assignments for active period
+  const unassignedAssignments = useMemo(() => {
+    if (!selectedYearId || !selectedSemesterId || !matrixItems || !classes) return [];
+    const list: {
+      classId: string;
+      className: string;
+      gradeLevel: string;
+      subjectId: string;
+      subjectName: string;
+      jp: number;
+    }[] = [];
+
+    const activeClasses = (classes as Class[]).filter(c => c.status === "Aktif" && !c.isDeleted);
+
+    activeClasses.forEach(cls => {
+      const grade = cls.gradeLevel;
+      const classId = cls.id || cls.classId;
+
+      (matrixItems as CurriculumMatrix[]).forEach(m => {
+        const jp = grade === "VII" ? (m.jp_vii ?? 0) : grade === "VIII" ? (m.jp_viii ?? 0) : (m.jp_ix ?? 0);
+        if (jp > 0) {
+          const resolved = teacherAssignmentService.resolveTeacherAssignmentSync({
+            academicYearId: selectedYearId,
+            semesterId: selectedSemesterId,
+            subjectId: m.subjectId,
+            classId,
+            gradeLevel: grade,
+            curriculumMatrixItem: m,
+            preloadedAssignments: (teacherAssignments as TeacherAssignment[]) || []
+          });
+
+          if (!resolved.teacherId || resolved.teacherId.trim() === "" || resolved.teacherName === "Belum Ditentukan") {
+            list.push({
+              classId,
+              className: cls.name,
+              gradeLevel: grade,
+              subjectId: m.subjectId,
+              subjectName: m.subjectName,
+              jp
+            });
+          }
+        }
+      });
+    });
+
+    return list;
+  }, [classes, matrixItems, selectedYearId, selectedSemesterId, teacherAssignments]);
 
   // Keep local state in sync when query data loads/updates
   useEffect(() => {
@@ -272,6 +760,7 @@ export const CurriculumMatrixPage: React.FC = () => {
             : item
         )
       );
+      queryClient.invalidateQueries({ queryKey: ["teacher_assignments"] });
     },
     onError: (err: any, variables) => {
       console.error(err);
@@ -408,6 +897,144 @@ export const CurriculumMatrixPage: React.FC = () => {
       if (matrixItems) {
         setLocalMatrix(matrixItems);
       }
+    }
+  });
+
+  const saveClassAssignmentMutation = useMutation({
+    mutationFn: async ({
+      item,
+      cls,
+      teacherId,
+      teacherName,
+      effectiveFrom,
+      notes
+    }: {
+      item: CurriculumMatrix;
+      cls: Class;
+      teacherId: string;
+      teacherName: string;
+      effectiveFrom?: string;
+      notes?: string;
+    }) => {
+      if (!user) throw new Error("Pengguna tidak terautentikasi!");
+      if (!selectedYearId || !selectedSemesterId) {
+        throw new Error("Tahun Ajaran dan Semester aktif tidak ditemukan!");
+      }
+
+      // 1. Direct persistence to teacher_assignments (Class + Subject + Period)
+      await teacherAssignmentService.setTeacherAssignment(
+        {
+          academicYearId: selectedYearId,
+          semesterId: selectedSemesterId,
+          subjectId: item.subjectId,
+          subjectName: item.subjectName,
+          classId: cls.id || cls.classId,
+          className: cls.name,
+          gradeLevel: cls.gradeLevel,
+          teacherId,
+          teacherName,
+          isActive: true,
+          effectiveFrom: effectiveFrom || new Date().toISOString().split("T")[0],
+          notes: notes || `Penugasan kelas ${cls.name} via Matriks Kurikulum`
+        },
+        user.uid,
+        user.displayName || user.email || "Admin"
+      );
+
+      // 2. Update curriculum_matrix grade-level snapshot for backward compatibility
+      const gradeStr = (cls.gradeLevel || "").toLowerCase();
+      const gradeKey = (gradeStr === "vii" || gradeStr === "viii" || gradeStr === "ix")
+        ? (gradeStr as "vii" | "viii" | "ix")
+        : cls.name.includes("7") ? "vii" : cls.name.includes("8") ? "viii" : "ix";
+
+      if (["vii", "viii", "ix"].includes(gradeKey)) {
+        await curriculumMatrixService.assignTeacherForGrade(
+          item.id,
+          gradeKey as "vii" | "viii" | "ix",
+          teacherId,
+          teacherName,
+          user.uid,
+          user.displayName || user.email || "Admin",
+          item.subjectName
+        );
+      }
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["teacher_assignments"] });
+      queryClient.invalidateQueries({ queryKey: ["curriculum_matrix"] });
+      toast(`Guru pengampu kelas ${variables.cls.name} berhasil ditugaskan!`, "success");
+    },
+    onError: (err: any) => {
+      console.error(err);
+      toast(err.message || "Gagal menyimpan penugasan guru kelas", "error");
+    }
+  });
+
+  const transitionTeacherAssignmentMutation = useMutation({
+    mutationFn: async ({
+      item,
+      cls,
+      gradeLevel,
+      newTeacherId,
+      newTeacherName,
+      effectiveFrom,
+      notes
+    }: {
+      item: CurriculumMatrix;
+      cls: Class;
+      gradeLevel?: "VII" | "VIII" | "IX";
+      newTeacherId: string;
+      newTeacherName: string;
+      effectiveFrom: string;
+      notes?: string;
+    }) => {
+      if (!user) throw new Error("Pengguna tidak terautentikasi!");
+      if (!selectedYearId || !selectedSemesterId) {
+        throw new Error("Tahun Ajaran dan Semester aktif tidak ditemukan!");
+      }
+
+      await teacherAssignmentService.transitionTeacherAssignment({
+        academicYearId: selectedYearId,
+        semesterId: selectedSemesterId,
+        subjectId: item.subjectId,
+        subjectName: item.subjectName,
+        classId: cls.id || cls.classId,
+        className: cls.name,
+        gradeLevel: gradeLevel || (cls.gradeLevel as any),
+        newTeacherId,
+        newTeacherName,
+        effectiveFrom,
+        notes: notes || `Pergantian guru pengampu kelas ${cls.name} berlaku ${effectiveFrom}`,
+        userId: user.uid,
+        userName: user.displayName || user.email || "Admin"
+      });
+
+      // Update curriculum_matrix grade-level snapshot for backward compatibility
+      const gradeStr = (cls.gradeLevel || "").toLowerCase();
+      const gradeKey = (gradeStr === "vii" || gradeStr === "viii" || gradeStr === "ix")
+        ? (gradeStr as "vii" | "viii" | "ix")
+        : cls.name.includes("7") ? "vii" : cls.name.includes("8") ? "viii" : "ix";
+
+      if (["vii", "viii", "ix"].includes(gradeKey)) {
+        await curriculumMatrixService.assignTeacherForGrade(
+          item.id,
+          gradeKey as "vii" | "viii" | "ix",
+          newTeacherId,
+          newTeacherName,
+          user.uid,
+          user.displayName || user.email || "Admin",
+          item.subjectName
+        );
+      }
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["teacher_assignments"] });
+      queryClient.invalidateQueries({ queryKey: ["curriculum_matrix"] });
+      toast(`Pergantian guru kelas ${variables.cls.name} ke ${variables.newTeacherName} berhasil disimpan!`, "success");
+    },
+    onError: (err: any) => {
+      console.error(err);
+      toast(err.message || "Gagal melakukan pergantian guru kelas", "error");
     }
   });
 
@@ -669,6 +1296,330 @@ export const CurriculumMatrixPage: React.FC = () => {
       prev.map(m => (m.id === id ? { ...m, useDifferentTeachers } : m))
     );
     toggleDifferentTeachersMutation.mutate({ id, useDifferentTeachers, subjectName });
+  };
+
+  const getClassesForGrade = (grade: "VII" | "VIII" | "IX") => {
+    return (classes as Class[]).filter(c => {
+      if (c.gradeLevel && c.gradeLevel.toUpperCase() === grade) return true;
+      const nameUpper = (c.name || "").toUpperCase();
+      if (grade === "VII") return nameUpper.includes("7") || nameUpper.includes("VII");
+      if (grade === "VIII") return nameUpper.includes("8") || nameUpper.includes("VIII");
+      if (grade === "IX") return nameUpper.includes("9") || nameUpper.includes("IX");
+      return false;
+    });
+  };
+
+  const renderTeacherAssignmentCell = (item: CurriculumMatrix) => {
+    const classesVii = getClassesForGrade("VII");
+    const classesViii = getClassesForGrade("VIII");
+    const classesIx = getClassesForGrade("IX");
+
+    return (
+      <div className="w-full space-y-2">
+        <div className="flex items-center gap-1.5 mb-1">
+          <input
+            type="checkbox"
+            id={`diff-teachers-${item.id}`}
+            checked={!!item.useDifferentTeachers}
+            onChange={(e) => handleDifferentTeachersToggle(item.id, e.target.checked, item.subjectName)}
+            className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+          />
+          <label
+            htmlFor={`diff-teachers-${item.id}`}
+            className="text-[10px] font-bold text-gray-500 dark:text-zinc-400 cursor-pointer select-none"
+          >
+            Guru Berbeda Tiap Rombel / Jenjang
+          </label>
+        </div>
+
+        {!item.useDifferentTeachers ? (
+          <TeacherDropdown
+            currentTeacherId={item.teacherId}
+            currentTeacherName={item.teacherName}
+            teachers={teachers}
+            onSelect={(tId, tName) => handleTeacherSelect(item.id, tId, tName, item.subjectName)}
+          />
+        ) : (
+          <div className="space-y-2 border border-dashed border-gray-200 dark:border-zinc-850 p-2 rounded-xl bg-gray-50/50 dark:bg-zinc-950/10">
+            {/* Grade VII Classes */}
+            {(item.jp_vii ?? 0) > 0 && (
+              <div className="space-y-1">
+                {classesVii.length > 0 ? (
+                  classesVii.map(cls => {
+                    const targetClassId = cls.id || cls.classId;
+                    const resolved = teacherAssignmentService.resolveTeacherAssignmentSync({
+                      academicYearId: selectedYearId,
+                      semesterId: selectedSemesterId,
+                      subjectId: item.subjectId,
+                      classId: targetClassId,
+                      gradeLevel: "VII",
+                      curriculumMatrixItem: item,
+                      preloadedAssignments: teacherAssignments as TeacherAssignment[]
+                    });
+                    const isDirect = resolved.source === "assignment";
+                    const isUnassigned = !resolved.teacherId || resolved.teacherName === "Belum Ditentukan";
+                    const classHistories = (teacherAssignments as TeacherAssignment[]).filter(
+                      a => a.subjectId === item.subjectId && a.classId === targetClassId
+                    );
+                    const hasMultiple = classHistories.length > 1;
+
+                    return (
+                      <div key={targetClassId} className="space-y-0.5">
+                        <div className="flex items-center justify-between gap-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[9px] font-black uppercase text-blue-600 dark:text-blue-400">
+                              {cls.name}
+                            </span>
+                            {isUnassigned ? (
+                              <span className="text-[8px] bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300 px-1.5 py-0.2 rounded font-bold border border-amber-200/60 dark:border-amber-800/40">
+                                Belum Ditentukan
+                              </span>
+                            ) : isDirect ? (
+                              <span className="text-[8px] bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 px-1.5 py-0.2 rounded font-bold border border-emerald-200/60 dark:border-emerald-800/40">
+                                Rombel
+                              </span>
+                            ) : (
+                              <span className="text-[8px] text-gray-400 dark:text-zinc-500 font-medium">
+                                Inherit Matriks
+                              </span>
+                            )}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setAssignmentModalTarget({ item, cls, gradeLevel: "VII" })}
+                            className={`text-[8px] font-bold px-1.5 py-0.5 rounded transition-colors flex items-center gap-0.5 cursor-pointer ${
+                              hasMultiple
+                                ? "bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800 hover:bg-blue-200"
+                                : "text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-zinc-800"
+                            }`}
+                            title="Lihat riwayat dan kelola pergantian guru"
+                          >
+                            <History className="h-2.5 w-2.5" />
+                            <span>{hasMultiple ? `${classHistories.length} Riwayat` : "Riwayat"}</span>
+                          </button>
+                        </div>
+                        <TeacherDropdown
+                          currentTeacherId={resolved.teacherId}
+                          currentTeacherName={resolved.teacherName}
+                          teachers={teachers}
+                          onSelect={(tId, tName) => {
+                            if (isUnassigned) {
+                              saveClassAssignmentMutation.mutate({ item, cls, teacherId: tId, teacherName: tName });
+                            } else if (resolved.teacherId !== tId) {
+                              setAssignmentModalTarget({
+                                item,
+                                cls,
+                                gradeLevel: "VII",
+                                preselectedNewTeacherId: tId
+                              });
+                            }
+                          }}
+                        />
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="space-y-0.5">
+                    <span className="text-[9px] font-black uppercase text-blue-600 dark:text-blue-400">Kelas VII</span>
+                    <TeacherDropdown
+                      currentTeacherId={item.teacherId_vii || ""}
+                      currentTeacherName={item.teacherName_vii || ""}
+                      teachers={teachers}
+                      onSelect={(tId, tName) => handleTeacherForGradeSelect(item.id, "vii", tId, tName, item.subjectName)}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Grade VIII Classes */}
+            {(item.jp_viii ?? 0) > 0 && (
+              <div className="space-y-1">
+                {classesViii.length > 0 ? (
+                  classesViii.map(cls => {
+                    const targetClassId = cls.id || cls.classId;
+                    const resolved = teacherAssignmentService.resolveTeacherAssignmentSync({
+                      academicYearId: selectedYearId,
+                      semesterId: selectedSemesterId,
+                      subjectId: item.subjectId,
+                      classId: targetClassId,
+                      gradeLevel: "VIII",
+                      curriculumMatrixItem: item,
+                      preloadedAssignments: teacherAssignments as TeacherAssignment[]
+                    });
+                    const isDirect = resolved.source === "assignment";
+                    const isUnassigned = !resolved.teacherId || resolved.teacherName === "Belum Ditentukan";
+                    const classHistories = (teacherAssignments as TeacherAssignment[]).filter(
+                      a => a.subjectId === item.subjectId && a.classId === targetClassId
+                    );
+                    const hasMultiple = classHistories.length > 1;
+
+                    return (
+                      <div key={targetClassId} className="space-y-0.5">
+                        <div className="flex items-center justify-between gap-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[9px] font-black uppercase text-amber-600 dark:text-amber-400">
+                              {cls.name}
+                            </span>
+                            {isUnassigned ? (
+                              <span className="text-[8px] bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300 px-1.5 py-0.2 rounded font-bold border border-amber-200/60 dark:border-amber-800/40">
+                                Belum Ditentukan
+                              </span>
+                            ) : isDirect ? (
+                              <span className="text-[8px] bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 px-1.5 py-0.2 rounded font-bold border border-emerald-200/60 dark:border-emerald-800/40">
+                                Rombel
+                              </span>
+                            ) : (
+                              <span className="text-[8px] text-gray-400 dark:text-zinc-500 font-medium">
+                                Inherit Matriks
+                              </span>
+                            )}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setAssignmentModalTarget({ item, cls, gradeLevel: "VIII" })}
+                            className={`text-[8px] font-bold px-1.5 py-0.5 rounded transition-colors flex items-center gap-0.5 cursor-pointer ${
+                              hasMultiple
+                                ? "bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800 hover:bg-blue-200"
+                                : "text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-zinc-800"
+                            }`}
+                            title="Lihat riwayat dan kelola pergantian guru"
+                          >
+                            <History className="h-2.5 w-2.5" />
+                            <span>{hasMultiple ? `${classHistories.length} Riwayat` : "Riwayat"}</span>
+                          </button>
+                        </div>
+                        <TeacherDropdown
+                          currentTeacherId={resolved.teacherId}
+                          currentTeacherName={resolved.teacherName}
+                          teachers={teachers}
+                          onSelect={(tId, tName) => {
+                            if (isUnassigned) {
+                              saveClassAssignmentMutation.mutate({ item, cls, teacherId: tId, teacherName: tName });
+                            } else if (resolved.teacherId !== tId) {
+                              setAssignmentModalTarget({
+                                item,
+                                cls,
+                                gradeLevel: "VIII",
+                                preselectedNewTeacherId: tId
+                              });
+                            }
+                          }}
+                        />
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="space-y-0.5">
+                    <span className="text-[9px] font-black uppercase text-amber-600 dark:text-amber-400">Kelas VIII</span>
+                    <TeacherDropdown
+                      currentTeacherId={item.teacherId_viii || ""}
+                      currentTeacherName={item.teacherName_viii || ""}
+                      teachers={teachers}
+                      onSelect={(tId, tName) => handleTeacherForGradeSelect(item.id, "viii", tId, tName, item.subjectName)}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Grade IX Classes */}
+            {(item.jp_ix ?? 0) > 0 && (
+              <div className="space-y-1">
+                {classesIx.length > 0 ? (
+                  classesIx.map(cls => {
+                    const targetClassId = cls.id || cls.classId;
+                    const resolved = teacherAssignmentService.resolveTeacherAssignmentSync({
+                      academicYearId: selectedYearId,
+                      semesterId: selectedSemesterId,
+                      subjectId: item.subjectId,
+                      classId: targetClassId,
+                      gradeLevel: "IX",
+                      curriculumMatrixItem: item,
+                      preloadedAssignments: teacherAssignments as TeacherAssignment[]
+                    });
+                    const isDirect = resolved.source === "assignment";
+                    const isUnassigned = !resolved.teacherId || resolved.teacherName === "Belum Ditentukan";
+                    const classHistories = (teacherAssignments as TeacherAssignment[]).filter(
+                      a => a.subjectId === item.subjectId && a.classId === targetClassId
+                    );
+                    const hasMultiple = classHistories.length > 1;
+
+                    return (
+                      <div key={targetClassId} className="space-y-0.5">
+                        <div className="flex items-center justify-between gap-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[9px] font-black uppercase text-purple-600 dark:text-purple-400">
+                              {cls.name}
+                            </span>
+                            {isUnassigned ? (
+                              <span className="text-[8px] bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300 px-1.5 py-0.2 rounded font-bold border border-amber-200/60 dark:border-amber-800/40">
+                                Belum Ditentukan
+                              </span>
+                            ) : isDirect ? (
+                              <span className="text-[8px] bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 px-1.5 py-0.2 rounded font-bold border border-emerald-200/60 dark:border-emerald-800/40">
+                                Rombel
+                              </span>
+                            ) : (
+                              <span className="text-[8px] text-gray-400 dark:text-zinc-500 font-medium">
+                                Inherit Matriks
+                              </span>
+                            )}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setAssignmentModalTarget({ item, cls, gradeLevel: "IX" })}
+                            className={`text-[8px] font-bold px-1.5 py-0.5 rounded transition-colors flex items-center gap-0.5 cursor-pointer ${
+                              hasMultiple
+                                ? "bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800 hover:bg-blue-200"
+                                : "text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-zinc-800"
+                            }`}
+                            title="Lihat riwayat dan kelola pergantian guru"
+                          >
+                            <History className="h-2.5 w-2.5" />
+                            <span>{hasMultiple ? `${classHistories.length} Riwayat` : "Riwayat"}</span>
+                          </button>
+                        </div>
+                        <TeacherDropdown
+                          currentTeacherId={resolved.teacherId}
+                          currentTeacherName={resolved.teacherName}
+                          teachers={teachers}
+                          onSelect={(tId, tName) => {
+                            if (isUnassigned) {
+                              saveClassAssignmentMutation.mutate({ item, cls, teacherId: tId, teacherName: tName });
+                            } else if (resolved.teacherId !== tId) {
+                              setAssignmentModalTarget({
+                                item,
+                                cls,
+                                gradeLevel: "IX",
+                                preselectedNewTeacherId: tId
+                              });
+                            }
+                          }}
+                        />
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="space-y-0.5">
+                    <span className="text-[9px] font-black uppercase text-purple-600 dark:text-purple-400">Kelas IX</span>
+                    <TeacherDropdown
+                      currentTeacherId={item.teacherId_ix || ""}
+                      currentTeacherName={item.teacherName_ix || ""}
+                      teachers={teachers}
+                      onSelect={(tId, tName) => handleTeacherForGradeSelect(item.id, "ix", tId, tName, item.subjectName)}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
   };
 
   // Delete Confirm Action
@@ -952,27 +1903,126 @@ export const CurriculumMatrixPage: React.FC = () => {
           </p>
         </div>
         
-        {/* Export Buttons */}
-        <div className="flex items-center gap-2 border border-gray-200 dark:border-zinc-800 rounded-xl px-2 py-1.5 bg-white dark:bg-zinc-900 shadow-xs">
+        {/* Action Controls & Export */}
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* Period Indicator */}
+          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50/80 dark:bg-blue-950/30 border border-blue-200/80 dark:border-blue-900/50 rounded-xl text-xs font-bold text-blue-700 dark:text-blue-300 shadow-xs">
+            <Calendar className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+            <span>
+              {academicYears.find(y => y.id === selectedYearId)?.name || "Tahun Ajaran"} • {semesters.find(s => s.id === selectedSemesterId)?.name || "Semester"}
+            </span>
+          </div>
+
+          {/* Sync to Rombel Assignments Button */}
           <button
-            onClick={handleExportExcel}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-gray-600 dark:text-zinc-300 hover:text-emerald-600 dark:hover:text-emerald-400 rounded-lg transition-colors cursor-pointer"
-            title="Ekspor ke Excel"
+            type="button"
+            disabled={isSyncing || !selectedYearId || !selectedSemesterId}
+            onClick={handleSyncAssignmentsFromMatrix}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 text-slate-700 dark:text-zinc-200 hover:border-blue-500 hover:text-blue-600 dark:hover:text-blue-400 rounded-xl shadow-xs transition-all cursor-pointer disabled:opacity-50"
+            title="Sinkronkan penugasan rombel (teacher_assignments) dari data matriks ini"
           >
-            <TableProperties className="h-4 w-4" />
-            <span>Excel</span>
+            <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? "animate-spin text-blue-600" : ""}`} />
+            <span>{isSyncing ? "Menyinkronkan..." : "Sinkronkan ke Rombel"}</span>
           </button>
-          <div className="w-[1px] h-4 bg-gray-200 dark:bg-zinc-800" />
-          <button
-            onClick={handleExportPDF}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-gray-600 dark:text-zinc-300 hover:text-rose-600 dark:hover:text-rose-400 rounded-lg transition-colors cursor-pointer"
-            title="Ekspor ke PDF"
-          >
-            <FileDown className="h-4 w-4" />
-            <span>PDF</span>
-          </button>
+
+          {/* Export Buttons */}
+          <div className="flex items-center gap-2 border border-gray-200 dark:border-zinc-800 rounded-xl px-2 py-1.5 bg-white dark:bg-zinc-900 shadow-xs">
+            <button
+              onClick={handleExportExcel}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-gray-600 dark:text-zinc-300 hover:text-emerald-600 dark:hover:text-emerald-400 rounded-lg transition-colors cursor-pointer"
+              title="Ekspor ke Excel"
+            >
+              <TableProperties className="h-4 w-4" />
+              <span>Excel</span>
+            </button>
+            <div className="w-[1px] h-4 bg-gray-200 dark:bg-zinc-800" />
+            <button
+              onClick={handleExportPDF}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-gray-600 dark:text-zinc-300 hover:text-rose-600 dark:hover:text-rose-400 rounded-lg transition-colors cursor-pointer"
+              title="Ekspor ke PDF"
+            >
+              <FileDown className="h-4 w-4" />
+              <span>PDF</span>
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* NOTIFIKASI ASSIGNMENT BELUM DITENTUKAN */}
+      {unassignedAssignments.length > 0 && (
+        <div className="bg-amber-50/90 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-850/50 rounded-2xl p-4 shadow-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-300 rounded-xl shrink-0 mt-0.5">
+                <AlertTriangle className="h-4 w-4" />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-amber-950 dark:text-amber-200">
+                  Ada {unassignedAssignments.length} Penugasan Guru Belum Ditentukan
+                </h4>
+                <p className="text-[11px] text-amber-800/90 dark:text-amber-300/80 mt-0.5 font-medium">
+                  Rombel dan mata pelajaran berikut memerlukan penugasan guru pengampu pada tabel di bawah agar jadwal dan jurnal dapat dibuat secara optimal.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowUnassignedDetails(!showUnassignedDetails)}
+                className="px-3 py-1.5 text-xs font-bold text-amber-900 dark:text-amber-200 bg-amber-100/80 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-850 rounded-xl transition-colors cursor-pointer"
+              >
+                {showUnassignedDetails ? "Sembunyikan Rincian" : `Lihat Rincian (${unassignedAssignments.length})`}
+              </button>
+              <button
+                type="button"
+                disabled={isSyncing}
+                onClick={handleSyncAssignmentsFromMatrix}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                title="Pastikan dokumen penugasan rombel tersedia di database"
+              >
+                <RefreshCw className={`h-3 w-3 ${isSyncing ? "animate-spin" : ""}`} />
+                <span>Sinkronkan Rombel</span>
+              </button>
+            </div>
+          </div>
+
+          {showUnassignedDetails && (
+            <div className="mt-3 pt-3 border-t border-amber-200/60 dark:border-amber-850/40 overflow-x-auto max-h-56 scrollbar-thin">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="text-[10px] uppercase font-bold text-amber-900/70 dark:text-amber-300/70 border-b border-amber-200/40">
+                    <th className="pb-1.5 px-2">Kelas</th>
+                    <th className="pb-1.5 px-2">Mata Pelajaran</th>
+                    <th className="pb-1.5 px-2 text-center">JP</th>
+                    <th className="pb-1.5 px-2">Status Guru</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-amber-200/30 font-medium">
+                  {unassignedAssignments.map((item, idx) => (
+                    <tr key={`${item.classId}_${item.subjectId}_${idx}`} className="hover:bg-amber-100/40 dark:hover:bg-amber-900/20">
+                      <td className="py-1.5 px-2 font-bold text-amber-950 dark:text-amber-100">
+                        {item.className}
+                      </td>
+                      <td className="py-1.5 px-2 text-amber-900 dark:text-amber-200">
+                        {item.subjectName}
+                      </td>
+                      <td className="py-1.5 px-2 text-center font-bold text-amber-900 dark:text-amber-200">
+                        {item.jp} JP
+                      </td>
+                      <td className="py-1.5 px-2">
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300 border border-amber-300/50">
+                          Belum Ditentukan
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* UNIFIED MATRIX TABLE */}
       <div className="bg-white dark:bg-zinc-900 rounded-3xl border border-gray-100 dark:border-zinc-800 shadow-sm overflow-hidden">
@@ -1172,68 +2222,7 @@ export const CurriculumMatrixPage: React.FC = () => {
                           </td>
 
                           <td className="px-5 py-4">
-                            <div className="w-full space-y-2">
-                              <div className="flex items-center gap-1.5 mb-1">
-                                <input
-                                  type="checkbox"
-                                  id={`diff-teachers-${item.id}`}
-                                  checked={!!item.useDifferentTeachers}
-                                  onChange={(e) => handleDifferentTeachersToggle(item.id, e.target.checked, item.subjectName)}
-                                  className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                                />
-                                <label
-                                  htmlFor={`diff-teachers-${item.id}`}
-                                  className="text-[10px] font-bold text-gray-500 dark:text-zinc-400 cursor-pointer select-none"
-                                >
-                                  Guru Berbeda Tiap Jenjang
-                                </label>
-                              </div>
-
-                              {!item.useDifferentTeachers ? (
-                                <TeacherDropdown
-                                  currentTeacherId={item.teacherId}
-                                  currentTeacherName={item.teacherName}
-                                  teachers={teachers}
-                                  onSelect={(tId, tName) => handleTeacherSelect(item.id, tId, tName, item.subjectName)}
-                                />
-                              ) : (
-                                <div className="space-y-1.5 border border-dashed border-gray-200 dark:border-zinc-850 p-2 rounded-xl bg-gray-50/50 dark:bg-zinc-950/10">
-                                  {(item.jp_vii ?? 0) > 0 && (
-                                    <div className="space-y-0.5">
-                                      <span className="text-[9px] font-black uppercase text-blue-600 dark:text-blue-400">Kelas VII</span>
-                                      <TeacherDropdown
-                                        currentTeacherId={item.teacherId_vii || ""}
-                                        currentTeacherName={item.teacherName_vii || ""}
-                                        teachers={teachers}
-                                        onSelect={(tId, tName) => handleTeacherForGradeSelect(item.id, "vii", tId, tName, item.subjectName)}
-                                      />
-                                    </div>
-                                  )}
-                                  {(item.jp_viii ?? 0) > 0 && (
-                                    <div className="space-y-0.5">
-                                      <span className="text-[9px] font-black uppercase text-amber-600 dark:text-amber-400">Kelas VIII</span>
-                                      <TeacherDropdown
-                                        currentTeacherId={item.teacherId_viii || ""}
-                                        currentTeacherName={item.teacherName_viii || ""}
-                                        teachers={teachers}
-                                        onSelect={(tId, tName) => handleTeacherForGradeSelect(item.id, "viii", tId, tName, item.subjectName)}
-                                      />
-                                    </div>
-                                  )}
-                                  {(item.jp_ix ?? 0) > 0 && (
-                                    <div className="space-y-0.5">
-                                      <span className="text-[9px] font-black uppercase text-purple-600 dark:text-purple-400">Kelas IX</span>
-                                      <TeacherDropdown
-                                        currentTeacherId={item.teacherId_ix || ""}
-                                        currentTeacherName={item.teacherName_ix || ""}
-                                        teachers={teachers}
-                                        onSelect={(tId, tName) => handleTeacherForGradeSelect(item.id, "ix", tId, tName, item.subjectName)}
-                                      />
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
+                            {renderTeacherAssignmentCell(item)}
                           </td>
 
                           <td className="px-4 py-4 text-center">
@@ -1410,68 +2399,7 @@ export const CurriculumMatrixPage: React.FC = () => {
                           </td>
 
                           <td className="px-5 py-4">
-                            <div className="w-full space-y-2">
-                              <div className="flex items-center gap-1.5 mb-1">
-                                <input
-                                  type="checkbox"
-                                  id={`diff-teachers-${item.id}`}
-                                  checked={!!item.useDifferentTeachers}
-                                  onChange={(e) => handleDifferentTeachersToggle(item.id, e.target.checked, item.subjectName)}
-                                  className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                                />
-                                <label
-                                  htmlFor={`diff-teachers-${item.id}`}
-                                  className="text-[10px] font-bold text-gray-500 dark:text-zinc-400 cursor-pointer select-none"
-                                >
-                                  Guru Berbeda Tiap Jenjang
-                                </label>
-                              </div>
-
-                              {!item.useDifferentTeachers ? (
-                                <TeacherDropdown
-                                  currentTeacherId={item.teacherId}
-                                  currentTeacherName={item.teacherName}
-                                  teachers={teachers}
-                                  onSelect={(tId, tName) => handleTeacherSelect(item.id, tId, tName, item.subjectName)}
-                                />
-                              ) : (
-                                <div className="space-y-1.5 border border-dashed border-gray-200 dark:border-zinc-850 p-2 rounded-xl bg-gray-50/50 dark:bg-zinc-950/10">
-                                  {(item.jp_vii ?? 0) > 0 && (
-                                    <div className="space-y-0.5">
-                                      <span className="text-[9px] font-black uppercase text-blue-600 dark:text-blue-400">Kelas VII</span>
-                                      <TeacherDropdown
-                                        currentTeacherId={item.teacherId_vii || ""}
-                                        currentTeacherName={item.teacherName_vii || ""}
-                                        teachers={teachers}
-                                        onSelect={(tId, tName) => handleTeacherForGradeSelect(item.id, "vii", tId, tName, item.subjectName)}
-                                      />
-                                    </div>
-                                  )}
-                                  {(item.jp_viii ?? 0) > 0 && (
-                                    <div className="space-y-0.5">
-                                      <span className="text-[9px] font-black uppercase text-amber-600 dark:text-amber-400">Kelas VIII</span>
-                                      <TeacherDropdown
-                                        currentTeacherId={item.teacherId_viii || ""}
-                                        currentTeacherName={item.teacherName_viii || ""}
-                                        teachers={teachers}
-                                        onSelect={(tId, tName) => handleTeacherForGradeSelect(item.id, "viii", tId, tName, item.subjectName)}
-                                      />
-                                    </div>
-                                  )}
-                                  {(item.jp_ix ?? 0) > 0 && (
-                                    <div className="space-y-0.5">
-                                      <span className="text-[9px] font-black uppercase text-purple-600 dark:text-purple-400">Kelas IX</span>
-                                      <TeacherDropdown
-                                        currentTeacherId={item.teacherId_ix || ""}
-                                        currentTeacherName={item.teacherName_ix || ""}
-                                        teachers={teachers}
-                                        onSelect={(tId, tName) => handleTeacherForGradeSelect(item.id, "ix", tId, tName, item.subjectName)}
-                                      />
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
+                            {renderTeacherAssignmentCell(item)}
                           </td>
 
                           <td className="px-4 py-4 text-center">
@@ -1676,6 +2604,26 @@ export const CurriculumMatrixPage: React.FC = () => {
           <p>4. Mata pelajaran yang belum terisi guru pengampu akan menampilkan indikasi peringatan warna kuning (⚠️).</p>
         </div>
       </div>
+
+      {/* Class Teacher Assignment & History Modal */}
+      <ClassTeacherAssignmentModal
+        isOpen={Boolean(assignmentModalTarget)}
+        onClose={() => setAssignmentModalTarget(null)}
+        target={assignmentModalTarget}
+        academicYearId={selectedYearId}
+        semesterId={selectedSemesterId}
+        academicYearName={academicYears.find(y => y.id === selectedYearId)?.name}
+        semesterName={semesters.find(s => s.id === selectedSemesterId)?.name}
+        teachers={teachers}
+        teacherAssignments={teacherAssignments as TeacherAssignment[]}
+        onSaveSimpleAssignment={async ({ item, cls, teacherId, teacherName, effectiveFrom, notes }) => {
+          await saveClassAssignmentMutation.mutateAsync({ item, cls, teacherId, teacherName, effectiveFrom, notes });
+        }}
+        onTransitionAssignment={async ({ item, cls, gradeLevel, newTeacherId, newTeacherName, effectiveFrom, notes }) => {
+          await transitionTeacherAssignmentMutation.mutateAsync({ item, cls, gradeLevel, newTeacherId, newTeacherName, effectiveFrom, notes });
+        }}
+        isSubmitting={saveClassAssignmentMutation.isPending || transitionTeacherAssignmentMutation.isPending}
+      />
 
       {/* Delete/Remove Confirmation Dialog */}
       <Dialog

@@ -39,14 +39,35 @@ export function getPreviousDay(dateStr: string): string {
 /**
  * Resolves the active teacher for a schedule slot on a specific date YYYY-MM-DD
  * based on effective dates (effectiveFrom and effectiveUntil).
- * Fallback to schedule.teacherId / schedule.teacherName for backward compatibility.
+ * Prioritizes SSOT teacher_assignments collection when preloaded assignments are provided.
+ * Fallback to embedded schedule.teacherAssignments and schedule.teacherId / schedule.teacherName for backward compatibility.
  */
 export function resolveTeacherForScheduleDate(
   schedule: Schedule,
-  dateStr: string
+  dateStr: string,
+  preloadedTeacherAssignments?: TeacherAssignment[]
 ): { teacherId: string; teacherName: string; assignment?: TeacherAssignment } {
   if (!schedule) {
     return { teacherId: "", teacherName: "" };
+  }
+
+  // 1. Check SSOT (teacher_assignments collection) if preloaded
+  if (preloadedTeacherAssignments && preloadedTeacherAssignments.length > 0 && schedule.subjectId && schedule.classId) {
+    const resolved = teacherAssignmentService.resolveTeacherAssignmentSync({
+      academicYearId: schedule.academicYearId,
+      semesterId: schedule.semesterId,
+      subjectId: schedule.subjectId,
+      classId: schedule.classId,
+      date: dateStr,
+      preloadedAssignments: preloadedTeacherAssignments
+    });
+    if (resolved.source === "assignment" && resolved.teacherId && resolved.teacherName !== "Belum Ditentukan") {
+      return {
+        teacherId: resolved.teacherId,
+        teacherName: resolved.teacherName,
+        assignment: resolved.assignment
+      };
+    }
   }
 
   const assignments = schedule.teacherAssignments;
@@ -529,6 +550,35 @@ export const scheduleService = {
       }
 
       await batch.commit();
+
+      // Sync transition to SSOT teacher_assignments collection
+      const processedPairs = new Set<string>();
+      for (const sched of targetSchedules) {
+        if (sched.academicYearId && sched.semesterId && sched.subjectId && sched.classId) {
+          const pairKey = `${sched.academicYearId}_${sched.semesterId}_${sched.subjectId}_${sched.classId}`;
+          if (!processedPairs.has(pairKey)) {
+            processedPairs.add(pairKey);
+            try {
+              await teacherAssignmentService.transitionTeacherAssignment({
+                academicYearId: sched.academicYearId,
+                semesterId: sched.semesterId,
+                subjectId: sched.subjectId,
+                subjectName: sched.subjectName,
+                classId: sched.classId,
+                className: sched.className,
+                newTeacherId,
+                newTeacherName,
+                effectiveFrom,
+                notes: notes || "Pergantian guru pengampu jadwal di tengah periode",
+                userId: operatorId,
+                userName: operatorName
+              });
+            } catch (syncErr) {
+              console.warn(`Could not sync transitionTeacherAssignment for schedule pair ${pairKey}:`, syncErr);
+            }
+          }
+        }
+      }
 
       await logScheduleActivity(
         operatorId,

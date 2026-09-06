@@ -23,6 +23,7 @@ import { musrifJournalService } from "../services/musrifJournalService";
 import { realTeachingHoursService } from "../services/realTeachingHours.service";
 import { teacherTeachingAttendanceService } from "../services/teacherTeachingAttendance.service";
 import { teacherDisciplineService } from "../services/teacherDiscipline.service";
+import { teacherAssignmentService, resolveTeacherAssignmentSync } from "../services/teacherAssignment.service";
 import { WakasisDashboard } from "../components/dashboard/WakasisDashboard";
 import { WakasarprasDashboard } from "../components/dashboard/WakasarprasDashboard";
 import { ExecutiveComplianceDashboard } from "../components/dashboard/ExecutiveComplianceDashboard";
@@ -351,6 +352,12 @@ export const Dashboard: React.FC = () => {
   const activeAcademicYearObj = academicYears.find(y => y.isActive) || academicYears[0];
   const activeSemesterObj = semesters.find(s => s.isActive || s.academicYearId === activeAcademicYearObj?.id) || semesters[0];
 
+  const { data: allTeacherAssignments = [] } = useQuery({
+    queryKey: ["teacher_assignments", activeAcademicYearObj?.id, activeSemesterObj?.id],
+    queryFn: () => teacherAssignmentService.getTeacherAssignmentsByPeriod(activeAcademicYearObj?.id || "", activeSemesterObj?.id || ""),
+    enabled: !!activeAcademicYearObj?.id && !!activeSemesterObj?.id
+  });
+
   const { data: realTeachingAnalysis } = useQuery({
     queryKey: ["realTeachingAnalysis", activeAcademicYearObj?.id, activeSemesterObj?.id],
     queryFn: () => {
@@ -617,31 +624,42 @@ export const Dashboard: React.FC = () => {
       .sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
   }, [allSchedules, allLessonPeriods, teacherId, todayDayName, myTeacherJournals]);
 
-  // Calculate teacher planning progress indicators
+  // Calculate teacher planning progress indicators based on actual class-aware assignments
   const teacherAssignments = React.useMemo(() => {
     if (!teacherId) return [];
-    const list: { subjectId: string; subjectName: string; classId: string; className: string }[] = [];
+    const list: { subjectId: string; subjectName: string; classId: string; className: string; jp: number }[] = [];
+    const activeClasses = classes.filter(c => c.status === "Aktif" && !c.isDeleted);
     
-    curriculumMatrix.forEach((m: any) => {
-      const isTeacherVii = (m.useDifferentTeachers ? m.teacherId_vii === teacherId : m.teacherId === teacherId) && m.jp_vii > 0;
-      const isTeacherViii = (m.useDifferentTeachers ? m.teacherId_viii === teacherId : m.teacherId === teacherId) && m.jp_viii > 0;
-      const isTeacherIx = (m.useDifferentTeachers ? m.teacherId_ix === teacherId : m.teacherId === teacherId) && m.jp_ix > 0;
+    activeClasses.forEach((c) => {
+      const grade = (c.gradeLevel || "VII") as "VII" | "VIII" | "IX";
+      curriculumMatrix.forEach((m: any) => {
+        const jp = grade === "VII" ? m.jp_vii : grade === "VIII" ? m.jp_viii : m.jp_ix;
+        if (jp <= 0) return;
 
-      classes.forEach((c) => {
-        if (c.status === "Aktif" && !c.isDeleted) {
-          if (c.gradeLevel === "VII" && isTeacherVii) {
-            list.push({ subjectId: m.subjectId, subjectName: m.subjectName, classId: c.id, className: c.name });
-          } else if (c.gradeLevel === "VIII" && isTeacherViii) {
-            list.push({ subjectId: m.subjectId, subjectName: m.subjectName, classId: c.id, className: c.name });
-          } else if (c.gradeLevel === "IX" && isTeacherIx) {
-            list.push({ subjectId: m.subjectId, subjectName: m.subjectName, classId: c.id, className: c.name });
-          }
+        const resolved = resolveTeacherAssignmentSync({
+          academicYearId: activeAcademicYearObj?.id,
+          semesterId: activeSemesterObj?.id,
+          subjectId: m.subjectId,
+          classId: c.id,
+          gradeLevel: grade,
+          curriculumMatrixItem: m,
+          preloadedAssignments: allTeacherAssignments
+        });
+
+        if (resolved.teacherId === teacherId) {
+          list.push({
+            subjectId: m.subjectId,
+            subjectName: m.subjectName,
+            classId: c.id,
+            className: c.name,
+            jp
+          });
         }
       });
     });
 
     return list;
-  }, [curriculumMatrix, classes, teacherId]);
+  }, [curriculumMatrix, classes, teacherId, allTeacherAssignments, activeAcademicYearObj?.id, activeSemesterObj?.id]);
 
   const teacherProgress = React.useMemo(() => {
     if (teacherAssignments.length === 0) {
@@ -682,25 +700,38 @@ export const Dashboard: React.FC = () => {
 
   // Pre-calculate statistics/monitoring lists for all active teachers
   const teachersPlanningData = React.useMemo(() => {
+    const activeClasses = classes.filter(c => c.status === "Aktif" && !c.isDeleted);
+
     return teachers
       .filter(t => t.status && !t.isDeleted)
       .map((t) => {
-        // Find this teacher's assignments
-        const assignments: { subjectId: string; subjectName: string; classId: string; className: string }[] = [];
-        curriculumMatrix.forEach((m: any) => {
-          const isTeacherVii = (m.useDifferentTeachers ? m.teacherId_vii === t.id : m.teacherId === t.id) && m.jp_vii > 0;
-          const isTeacherViii = (m.useDifferentTeachers ? m.teacherId_viii === t.id : m.teacherId === t.id) && m.jp_viii > 0;
-          const isTeacherIx = (m.useDifferentTeachers ? m.teacherId_ix === t.id : m.teacherId === t.id) && m.jp_ix > 0;
+        // Find this teacher's class-aware assignments
+        const assignments: { subjectId: string; subjectName: string; classId: string; className: string; jp: number }[] = [];
 
-          classes.forEach((c) => {
-            if (c.status === "Aktif" && !c.isDeleted) {
-              if (c.gradeLevel === "VII" && isTeacherVii) {
-                assignments.push({ subjectId: m.subjectId, subjectName: m.subjectName, classId: c.id, className: c.name });
-              } else if (c.gradeLevel === "VIII" && isTeacherViii) {
-                assignments.push({ subjectId: m.subjectId, subjectName: m.subjectName, classId: c.id, className: c.name });
-              } else if (c.gradeLevel === "IX" && isTeacherIx) {
-                assignments.push({ subjectId: m.subjectId, subjectName: m.subjectName, classId: c.id, className: c.name });
-              }
+        activeClasses.forEach((c) => {
+          const grade = (c.gradeLevel || "VII") as "VII" | "VIII" | "IX";
+          curriculumMatrix.forEach((m: any) => {
+            const jp = grade === "VII" ? m.jp_vii : grade === "VIII" ? m.jp_viii : m.jp_ix;
+            if (jp <= 0) return;
+
+            const resolved = resolveTeacherAssignmentSync({
+              academicYearId: activeAcademicYearObj?.id,
+              semesterId: activeSemesterObj?.id,
+              subjectId: m.subjectId,
+              classId: c.id,
+              gradeLevel: grade,
+              curriculumMatrixItem: m,
+              preloadedAssignments: allTeacherAssignments
+            });
+
+            if (resolved.teacherId === t.id) {
+              assignments.push({
+                subjectId: m.subjectId,
+                subjectName: m.subjectName,
+                classId: c.id,
+                className: c.name,
+                jp
+              });
             }
           });
         });
@@ -715,18 +746,7 @@ export const Dashboard: React.FC = () => {
         }
 
         if (totalJp === 0) {
-          // Fallback to calculated from curriculum matrix sum
-          curriculumMatrix.forEach((m: any) => {
-            if (m.useDifferentTeachers) {
-              if (m.teacherId_vii === t.id && m.jp_vii > 0) totalJp += m.jp_vii;
-              if (m.teacherId_viii === t.id && m.jp_viii > 0) totalJp += m.jp_viii;
-              if (m.teacherId_ix === t.id && m.jp_ix > 0) totalJp += m.jp_ix;
-            } else {
-              if (m.teacherId === t.id) {
-                totalJp += (m.jp_vii || 0) + (m.jp_viii || 0) + (m.jp_ix || 0);
-              }
-            }
-          });
+          totalJp = assignments.reduce((sum, a) => sum + (a.jp || 0), 0);
         }
 
         let protaCount = 0;
@@ -793,7 +813,7 @@ export const Dashboard: React.FC = () => {
           performanceColor
         };
       });
-  }, [teachers, classes, curriculumMatrix, allAnnualPrograms, allSemesterPrograms, allLessonPlans, allTeachingJournals]);
+  }, [teachers, classes, curriculumMatrix, allTeacherAssignments, activeAcademicYearObj?.id, activeSemesterObj?.id, allAnnualPrograms, allSemesterPrograms, allLessonPlans, allTeachingJournals]);
 
   // --- COMMAND CENTER MEMOIZED ACTIONABLE STATS ---
   const unfilledJournalsToday = React.useMemo(() => {

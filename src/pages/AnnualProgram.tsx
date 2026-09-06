@@ -52,6 +52,7 @@ export const AnnualProgram: React.FC = () => {
   const [semesters, setSemesters] = useState<Semester[]>([]);
   const [curriculumMatrix, setCurriculumMatrix] = useState<CurriculumMatrix[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [teacherAssignments, setTeacherAssignments] = useState<TeacherAssignment[]>([]);
 
   // Selection States
   const [selectedClassId, setSelectedClassId] = useState<string>("");
@@ -97,14 +98,16 @@ export const AnnualProgram: React.FC = () => {
       classService.getClasses(),
       semesterService.getSemesters(),
       curriculumMatrixService.getCurriculumMatrix(),
-      subjectService.getSubjects()
+      subjectService.getSubjects(),
+      teacherAssignmentService.getTeacherAssignments()
     ])
-      .then(([clsList, semList, matrixList, subList]) => {
+      .then(([clsList, semList, matrixList, subList, assignList]) => {
         const activeCls = clsList.filter(c => c.status === "Aktif" && !c.isDeleted);
         setClasses(activeCls);
         setSemesters(semList);
         setCurriculumMatrix(matrixList);
         setSubjects(subList);
+        setTeacherAssignments(assignList);
 
         // Group unique academic years from semesters
         const yearsMap = new Map<string, string>();
@@ -135,21 +138,14 @@ export const AnnualProgram: React.FC = () => {
   const gradeLevel = selectedClassObj?.gradeLevel || "VII";
 
   const allOfferedSubjects = curriculumMatrix.map(m => {
-    let assignedTeacherId = m.teacherId;
-    let assignedTeacherName = m.teacherName;
-
-    if (m.useDifferentTeachers) {
-      if (gradeLevel === "VII") {
-        assignedTeacherId = m.teacherId_vii || m.teacherId;
-        assignedTeacherName = m.teacherName_vii || m.teacherName;
-      } else if (gradeLevel === "VIII") {
-        assignedTeacherId = m.teacherId_viii || m.teacherId;
-        assignedTeacherName = m.teacherName_viii || m.teacherName;
-      } else if (gradeLevel === "IX") {
-        assignedTeacherId = m.teacherId_ix || m.teacherId;
-        assignedTeacherName = m.teacherName_ix || m.teacherName;
-      }
-    }
+    const resolved = resolveTeacherAssignmentSync({
+      academicYearId: selectedAcademicYearId,
+      subjectId: m.subjectId,
+      classId: selectedClassId,
+      gradeLevel: gradeLevel,
+      curriculumMatrixItem: m,
+      preloadedAssignments: teacherAssignments
+    });
 
     const jp = gradeLevel === "VII" ? m.jp_vii : gradeLevel === "VIII" ? m.jp_viii : m.jp_ix;
     const masterSubj = subjects.find(s => s.id === m.subjectId);
@@ -157,8 +153,8 @@ export const AnnualProgram: React.FC = () => {
     return {
       id: m.subjectId,
       name: masterSubj?.name || m.subjectName,
-      teacherId: assignedTeacherId,
-      teacherName: assignedTeacherName,
+      teacherId: resolved.teacherId,
+      teacherName: resolved.teacherName,
       jp: jp || 0
     };
   }).filter(s => s.jp > 0);

@@ -6,8 +6,9 @@ import { semesterService } from "../services/semester.service";
 import { classService } from "../services/classService";
 import { subjectService } from "../services/subjectService";
 import { scheduleService } from "../services/schedule.service";
+import { teacherAssignmentService } from "../services/teacherAssignment.service";
 import { studentService } from "../services/studentService";
-import { eRaporService } from "../services/eRapor.service";
+import { eRaporService, calculatePondokAssessmentResult } from "../services/eRapor.service";
 import { extracurricularService } from "../services/extracurricular.service";
 import { AcademicYear, Semester, Class, Subject, Student } from "../types";
 import { isStudentActive } from "../utils/studentHelper";
@@ -18,6 +19,7 @@ import {
   ERaporSettingsConfig,
   ERaporClassVerification,
   ERaporPondokAssessment,
+  ERaporPondokScheme,
   ERaporExtracurricular,
   ERaporExtracurricularAssessment
 } from "../types/eRapor.types";
@@ -35,7 +37,13 @@ import {
   Sparkles,
   Info,
   Award,
-  Layers
+  Layers,
+  Sliders,
+  Settings2,
+  AlertTriangle,
+  Check,
+  X,
+  ChevronDown
 } from "lucide-react";
 
 import {
@@ -86,15 +94,63 @@ export default function ERaporTeacherInput() {
   const isTeacherRole = user?.role === "guru";
   const isClassLocked = verification?.status === "LOCKED" || verification?.status === "TERVERIFIKASI";
 
-  // Selected Subject Details
+  // Selected Subject & Class Details
   const selectedSubject = useMemo(() => {
     return subjects.find((s) => s.id === selectedSubjectId);
   }, [subjects, selectedSubjectId]);
+
+  const targetClass = useMemo(() => {
+    return classes.find((c) => c.id === selectedClassId);
+  }, [classes, selectedClassId]);
 
   const isPondokSubject = useMemo(() => {
     if (!selectedSubject) return false;
     return getSubjectGroupType(selectedSubject) === "KEPESANTRENAN";
   }, [selectedSubject]);
+
+  // Authorization check via teacher_assignments SSOT
+  const isTeacherAuthorizedForSubject = useMemo(() => {
+    if (!isTeacherRole) return true;
+    if (inputMode !== "MAPEL") return true;
+    if (!selectedSubjectId) return false;
+    return subjects.some((s) => s.id === selectedSubjectId);
+  }, [isTeacherRole, inputMode, selectedSubjectId, subjects]);
+
+  const isInputDisabled = isClassLocked || !settings.isOpen || !isTeacherAuthorizedForSubject;
+
+  // Pondok Scheme Configuration States
+  const [pondokScheme, setPondokScheme] = useState<ERaporPondokScheme | null>(null);
+  const [showSchemeEditor, setShowSchemeEditor] = useState<boolean>(false);
+  const [isSavingScheme, setIsSavingScheme] = useState<boolean>(false);
+  const [schemeForm, setSchemeForm] = useState<{
+    hasDaily: boolean;
+    dailyCount: number;
+    hasUts: boolean;
+    hasSemester: boolean;
+    weights: {
+      daily: number;
+      uts: number;
+      semester: number;
+    };
+  }>({
+    hasDaily: true,
+    dailyCount: 3,
+    hasUts: true,
+    hasSemester: true,
+    weights: {
+      daily: 40,
+      uts: 30,
+      semester: 30
+    }
+  });
+
+  // Modal confirmation when reducing PH count while data exists
+  const [phReduceWarning, setPhReduceWarning] = useState<{
+    isOpen: boolean;
+    oldCount: number;
+    newCount: number;
+    pendingForm: typeof schemeForm;
+  } | null>(null);
 
   // 1. Initial Master Data Fetching
   useEffect(() => {
@@ -132,9 +188,35 @@ export default function ERaporTeacherInput() {
       try {
         const allClasses = await classService.getClasses();
         if (isTeacherRole && user?.uid) {
-          const allScheds = await scheduleService.getSchedules(selectedAcademicYearId, selectedSemesterId);
-          const teacherScheds = allScheds.filter((s) => s.teacherId === user.uid);
-          const classIds = new Set(teacherScheds.map((s) => s.classId));
+          const currentTeacherId = user?.teacherId || user?.uid || user?.userId;
+          const [allScheds, periodAssignments] = await Promise.all([
+            scheduleService.getSchedules(selectedAcademicYearId, selectedSemesterId),
+            teacherAssignmentService.getTeacherAssignmentsByPeriod(selectedAcademicYearId, selectedSemesterId)
+          ]);
+
+          const classIds = new Set<string>();
+
+          // Priority 1: Classes where teacher has active assignment via teacher_assignments SSOT
+          periodAssignments.forEach((a) => {
+            if (a.classId) {
+              const res = teacherAssignmentService.resolveTeacherAssignmentSync({
+                academicYearId: selectedAcademicYearId,
+                semesterId: selectedSemesterId,
+                subjectId: a.subjectId,
+                classId: a.classId,
+                preloadedAssignments: periodAssignments
+              });
+              if (res.source === "assignment" && (res.teacherId === currentTeacherId || res.teacherId === user.uid)) {
+                classIds.add(a.classId);
+              }
+            }
+          });
+
+          // Priority 2: Fallback to schedule records if no assignment found in teacher_assignments
+          allScheds
+            .filter((s) => s.teacherId === currentTeacherId || s.teacherId === user.uid)
+            .forEach((s) => classIds.add(s.classId));
+
           const filtered = allClasses.filter((c) => classIds.has(c.id!) || c.homeroomTeacherId === user.uid);
           setClasses(filtered.length > 0 ? filtered : allClasses);
           if (filtered.length > 0) setSelectedClassId(filtered[0].id!);
@@ -147,7 +229,7 @@ export default function ERaporTeacherInput() {
       }
     }
     loadClasses();
-  }, [selectedAcademicYearId, selectedSemesterId, isTeacherRole, user?.uid]);
+  }, [selectedAcademicYearId, selectedSemesterId, isTeacherRole, user?.uid, user?.teacherId]);
 
   // 3. Fetch Subjects based on Selected Class & Teacher
   useEffect(() => {
@@ -156,15 +238,47 @@ export default function ERaporTeacherInput() {
       try {
         const allSubjects = await subjectService.getSubjects();
         const reportableSubjects = allSubjects.filter((s) => isSubjectReportVisible(s));
-        const allScheds = await scheduleService.getSchedules(selectedAcademicYearId, selectedSemesterId);
+        const [allScheds, periodAssignments] = await Promise.all([
+          scheduleService.getSchedules(selectedAcademicYearId, selectedSemesterId),
+          teacherAssignmentService.getTeacherAssignmentsByPeriod(selectedAcademicYearId, selectedSemesterId)
+        ]);
         const scheds = allScheds.filter((s) => s.classId === selectedClassId);
         let validSubjIds = new Set<string>();
 
         const currentTeacherId = user?.teacherId || user?.uid || user?.userId;
         if (isTeacherRole && currentTeacherId) {
+          // Priority 1: Check teacher_assignments SSOT
+          reportableSubjects.forEach((sub) => {
+            const resolved = teacherAssignmentService.resolveTeacherAssignmentSync({
+              academicYearId: selectedAcademicYearId,
+              semesterId: selectedSemesterId,
+              subjectId: sub.id!,
+              classId: selectedClassId,
+              preloadedAssignments: periodAssignments
+            });
+            if (
+              resolved.source === "assignment" &&
+              (resolved.teacherId === currentTeacherId || resolved.teacherId === user?.uid)
+            ) {
+              validSubjIds.add(sub.id!);
+            }
+          });
+
+          // Priority 2: Fallback to schedule records if subject not explicitly resolved to another teacher in assignments
           scheds
             .filter((s) => s.teacherId === currentTeacherId || s.teacherId === user?.uid || s.teacherId === user?.teacherId)
-            .forEach((s) => validSubjIds.add(s.subjectId));
+            .forEach((s) => {
+              const resolved = teacherAssignmentService.resolveTeacherAssignmentSync({
+                academicYearId: selectedAcademicYearId,
+                semesterId: selectedSemesterId,
+                subjectId: s.subjectId,
+                classId: selectedClassId,
+                preloadedAssignments: periodAssignments
+              });
+              if (resolved.source !== "assignment" || resolved.teacherId === currentTeacherId || resolved.teacherId === user?.uid) {
+                validSubjIds.add(s.subjectId);
+              }
+            });
         } else {
           scheds.forEach((s) => validSubjIds.add(s.subjectId));
         }
@@ -179,7 +293,7 @@ export default function ERaporTeacherInput() {
       }
     }
     loadSubjects();
-  }, [selectedClassId, selectedAcademicYearId, selectedSemesterId, isTeacherRole, user?.uid]);
+  }, [selectedClassId, selectedAcademicYearId, selectedSemesterId, isTeacherRole, user?.uid, user?.teacherId]);
 
   // 4. Fetch Grid Data based on Mode and Selection
   useEffect(() => {
@@ -199,7 +313,37 @@ export default function ERaporTeacherInput() {
           if (!selectedSubjectId) return;
 
           if (isPondokSubject) {
-            // Load Pondok Assessments
+            // 1. Load Pondok Scheme
+            const loadedScheme = await eRaporService.getPondokScheme(
+              selectedAcademicYearId,
+              selectedSemesterId,
+              selectedClassId,
+              selectedSubjectId
+            );
+            setPondokScheme(loadedScheme);
+
+            if (loadedScheme) {
+              setSchemeForm({
+                hasDaily: loadedScheme.hasDaily,
+                dailyCount: loadedScheme.dailyCount,
+                hasUts: loadedScheme.hasUts,
+                hasSemester: loadedScheme.hasSemester,
+                weights: { ...loadedScheme.weights }
+              });
+              setShowSchemeEditor(false);
+            } else {
+              // Default template when no scheme has been configured yet
+              setSchemeForm({
+                hasDaily: true,
+                dailyCount: 3,
+                hasUts: true,
+                hasSemester: true,
+                weights: { daily: 40, uts: 30, semester: 30 }
+              });
+              setShowSchemeEditor(true);
+            }
+
+            // 2. Load Pondok Assessments
             const pondokList = await eRaporService.getPondokAssessmentsForClassSubject(
               selectedAcademicYearId,
               selectedSemesterId,
@@ -211,7 +355,11 @@ export default function ERaporTeacherInput() {
             loadedStudents.forEach((st) => {
               const existing = pondokList.find((p) => p.studentId === st.id);
               if (existing) {
-                map.set(st.id!, { ...existing });
+                map.set(st.id!, {
+                  ...existing,
+                  finalScore: existing.finalScore ?? existing.score ?? null,
+                  score: existing.score ?? existing.finalScore ?? null
+                });
               } else {
                 map.set(st.id!, {
                   academicYearId: selectedAcademicYearId,
@@ -220,7 +368,12 @@ export default function ERaporTeacherInput() {
                   subjectId: selectedSubjectId,
                   studentId: st.id!,
                   studentName: st.name || "Santri",
+                  studentNis: st.nis || "",
                   teacherId: user?.uid || "",
+                  dailyScores: loadedScheme?.hasDaily ? Array(loadedScheme.dailyCount).fill(null) : [],
+                  dailyAverage: null,
+                  utsScore: null,
+                  semesterScore: null,
                   score: null,
                   finalScore: null,
                   ketercapaian: "",
@@ -352,8 +505,8 @@ export default function ERaporTeacherInput() {
     tpIndex: number | null,
     valueStr: string
   ) => {
-    if (isClassLocked || !settings.isOpen) {
-      toast("Nilai tidak dapat diubah karena kelas dikunci atau periode ditutup.", "error");
+    if (isInputDisabled) {
+      toast("Nilai tidak dapat diubah karena kelas dikunci, periode ditutup, atau Anda bukan guru pengampu aktif.", "error");
       return;
     }
 
@@ -402,11 +555,252 @@ export default function ERaporTeacherInput() {
     setHasUnsavedChanges(true);
   };
 
-  // Handle Pondok Score/Ketercapaian Changes
-  const handlePondokChange = (
+  // Scheme Weights Calculation & Validation
+  const totalActiveWeight = useMemo(() => {
+    let sum = 0;
+    if (schemeForm.hasDaily) sum += Number(schemeForm.weights.daily) || 0;
+    if (schemeForm.hasUts) sum += Number(schemeForm.weights.uts) || 0;
+    if (schemeForm.hasSemester) sum += Number(schemeForm.weights.semester) || 0;
+    return sum;
+  }, [schemeForm]);
+
+  const isSchemeWeightValid = useMemo(() => {
+    const atLeastOne = schemeForm.hasDaily || schemeForm.hasUts || schemeForm.hasSemester;
+    if (!atLeastOne) return false;
+    if (schemeForm.hasDaily && (schemeForm.dailyCount < 1 || schemeForm.dailyCount > 10)) {
+      return false;
+    }
+    return totalActiveWeight === 100;
+  }, [schemeForm, totalActiveWeight]);
+
+  // Save Pondok Scheme Function
+  const doSaveScheme = async (formToSave: typeof schemeForm) => {
+    setIsSavingScheme(true);
+    try {
+      const saved = await eRaporService.savePondokScheme(
+        {
+          academicYearId: selectedAcademicYearId,
+          semesterId: selectedSemesterId,
+          classId: selectedClassId,
+          subjectId: selectedSubjectId,
+          teacherId: user?.uid || "",
+          hasDaily: formToSave.hasDaily,
+          dailyCount: formToSave.hasDaily ? formToSave.dailyCount : 0,
+          dailyLabels: formToSave.hasDaily
+            ? Array.from({ length: formToSave.dailyCount }, (_, i) => `PH ${i + 1}`)
+            : [],
+          hasUts: formToSave.hasUts,
+          hasSemester: formToSave.hasSemester,
+          weights: {
+            daily: formToSave.hasDaily ? Number(formToSave.weights.daily) || 0 : 0,
+            uts: formToSave.hasUts ? Number(formToSave.weights.uts) || 0 : 0,
+            semester: formToSave.hasSemester ? Number(formToSave.weights.semester) || 0 : 0
+          }
+        },
+        user?.uid || "",
+        user?.name || "Guru"
+      );
+
+      setPondokScheme(saved);
+      setShowSchemeEditor(false);
+      toast("Skema Penilaian Pondok berhasil disimpan!", "success");
+
+      // Recalculate in-memory assessments using the updated scheme
+      setPondokAssessmentsMap((prev) => {
+        const newMap = new Map<string, ERaporPondokAssessment>(prev);
+        newMap.forEach((ass: ERaporPondokAssessment, stId: string) => {
+          const rawScores = ass.dailyScores ? [...ass.dailyScores] : [];
+          try {
+            const calc = calculatePondokAssessmentResult({
+              scheme: saved,
+              dailyScores: rawScores,
+              utsScore: ass.utsScore,
+              semesterScore: ass.semesterScore
+            });
+            newMap.set(stId, {
+              ...ass,
+              dailyAverage: calc.dailyAverage,
+              finalScore: calc.finalScore,
+              score: calc.finalScore,
+              status:
+                calc.isComplete && Boolean(ass.ketercapaian && ass.ketercapaian.trim())
+                  ? "LENGKAP"
+                  : "BELUM_LENGKAP",
+              schemeSnapshot: {
+                hasDaily: saved.hasDaily,
+                dailyCount: saved.dailyCount,
+                hasUts: saved.hasUts,
+                hasSemester: saved.hasSemester,
+                weights: { ...saved.weights }
+              }
+            });
+          } catch (e) {
+            console.error("Recalculation error after scheme save:", e);
+          }
+        });
+        return newMap;
+      });
+      setHasUnsavedChanges(true);
+    } catch (err: any) {
+      console.error("Error saving pondok scheme:", err);
+      toast(err?.message || "Gagal menyimpan skema penilaian pondok.", "error");
+    } finally {
+      setIsSavingScheme(false);
+    }
+  };
+
+  // Initiate Scheme Save with Warnings if PH reduced
+  const handleInitiateSaveScheme = async () => {
+    if (isInputDisabled) {
+      toast("Skema tidak dapat diubah karena kelas dikunci, periode ditutup, atau Anda bukan guru pengampu aktif.", "error");
+      return;
+    }
+
+    if (!isSchemeWeightValid) {
+      toast("Total bobot komponen aktif harus tepat 100%.", "error");
+      return;
+    }
+
+    if (
+      pondokScheme &&
+      pondokScheme.hasDaily &&
+      schemeForm.hasDaily &&
+      schemeForm.dailyCount < pondokScheme.dailyCount
+    ) {
+      const hasScoresInHigher = (Array.from(pondokAssessmentsMap.values()) as ERaporPondokAssessment[]).some((ass) => {
+        if (!ass.dailyScores) return false;
+        for (let i = schemeForm.dailyCount; i < pondokScheme.dailyCount; i++) {
+          if (ass.dailyScores[i] !== null && ass.dailyScores[i] !== undefined) {
+            return true;
+          }
+        }
+        return false;
+      });
+
+      if (hasScoresInHigher) {
+        setPhReduceWarning({
+          isOpen: true,
+          oldCount: pondokScheme.dailyCount,
+          newCount: schemeForm.dailyCount,
+          pendingForm: { ...schemeForm }
+        });
+        return;
+      }
+    }
+
+    await doSaveScheme(schemeForm);
+  };
+
+  // Handle Pondok Dynamic Score Input (PH, UTS, Semesteran)
+  const handlePondokScoreChange = (
     studentId: string,
-    field: "finalScore" | "ketercapaian" | "notes",
-    val: any
+    field: "daily" | "uts" | "semester",
+    phIndex: number,
+    rawVal: string
+  ) => {
+    if (isInputDisabled) {
+      toast("Nilai tidak dapat diubah karena kelas dikunci, periode ditutup, atau Anda bukan guru pengampu aktif.", "error");
+      return;
+    }
+
+    if (!pondokScheme) {
+      toast("Harap simpan skema penilaian terlebih dahulu.", "error");
+      return;
+    }
+
+    let parsedVal: number | null = null;
+    const trimmed = rawVal.trim();
+    if (trimmed !== "") {
+      const num = Number(trimmed);
+      if (isNaN(num) || num < 0 || num > 100) {
+        toast("Nilai harus berada pada rentang 0–100.", "error");
+        return;
+      }
+      parsedVal = num;
+    }
+
+    setPondokAssessmentsMap((prev) => {
+      const newMap = new Map<string, ERaporPondokAssessment>(prev);
+      const current = newMap.get(studentId);
+      if (!current) return prev;
+
+      const updated: ERaporPondokAssessment = { ...current };
+      let nextDailyScores = updated.dailyScores ? [...updated.dailyScores] : [];
+      let nextUtsScore = updated.utsScore ?? null;
+      let nextSemesterScore = updated.semesterScore ?? null;
+
+      if (field === "daily") {
+        while (nextDailyScores.length < pondokScheme.dailyCount) {
+          nextDailyScores.push(null);
+        }
+        nextDailyScores[phIndex] = parsedVal;
+      } else if (field === "uts") {
+        nextUtsScore = parsedVal;
+      } else if (field === "semester") {
+        nextSemesterScore = parsedVal;
+      }
+
+      try {
+        const calcResult = calculatePondokAssessmentResult({
+          scheme: pondokScheme,
+          dailyScores: nextDailyScores,
+          utsScore: nextUtsScore,
+          semesterScore: nextSemesterScore
+        });
+
+        updated.dailyScores = nextDailyScores;
+        updated.dailyAverage = calcResult.dailyAverage;
+        updated.utsScore = nextUtsScore;
+        updated.semesterScore = nextSemesterScore;
+        updated.finalScore = calcResult.finalScore;
+        updated.score = calcResult.finalScore;
+
+        updated.status =
+          calcResult.isComplete && Boolean(updated.ketercapaian && updated.ketercapaian.trim().length > 0)
+            ? "LENGKAP"
+            : "BELUM_LENGKAP";
+
+        // Auto suggestion for ketercapaian if currently empty or default
+        if (
+          calcResult.finalScore !== null &&
+          (!updated.ketercapaian ||
+            updated.ketercapaian.includes("diniyah") ||
+            updated.ketercapaian.includes("kepondokan"))
+        ) {
+          if (calcResult.finalScore >= 85) {
+            updated.ketercapaian = "Sangat baik dan konsisten dalam menguasai materi kepondokan/diniyah.";
+          } else if (calcResult.finalScore >= 75) {
+            updated.ketercapaian = "Baik dalam pemahaman materi kepondokan/diniyah dan aktif berpartisipasi.";
+          } else if (calcResult.finalScore >= 65) {
+            updated.ketercapaian = "Cukup baik dalam pemahaman materi kepondokan/diniyah, perlu ketelitian.";
+          } else {
+            updated.ketercapaian = "Perlu bimbingan dan pengulangan intensif dalam materi kepondokan/diniyah.";
+          }
+        }
+
+        updated.schemeSnapshot = {
+          hasDaily: pondokScheme.hasDaily,
+          dailyCount: pondokScheme.dailyCount,
+          hasUts: pondokScheme.hasUts,
+          hasSemester: pondokScheme.hasSemester,
+          weights: { ...pondokScheme.weights }
+        };
+      } catch (calcErr: any) {
+        console.error("Pondok score calculation error:", calcErr);
+      }
+
+      newMap.set(studentId, updated);
+      return newMap;
+    });
+
+    setHasUnsavedChanges(true);
+  };
+
+  // Handle Pondok Text Fields (ketercapaian & notes)
+  const handlePondokTextChange = (
+    studentId: string,
+    field: "ketercapaian" | "notes",
+    val: string
   ) => {
     if (isClassLocked || !settings.isOpen) {
       toast("Nilai tidak dapat diubah karena kelas dikunci.", "error");
@@ -414,34 +808,35 @@ export default function ERaporTeacherInput() {
     }
 
     setPondokAssessmentsMap((prev) => {
-      const newMap = new Map(prev);
-      const current = newMap.get(studentId) as ERaporPondokAssessment | undefined;
+      const newMap = new Map<string, ERaporPondokAssessment>(prev);
+      const current = newMap.get(studentId);
       if (!current) return prev;
 
-      const updated = { ...current };
+      const updated: ERaporPondokAssessment = { ...current, [field]: val };
 
-      if (field === "finalScore") {
-        let valNum: number | null = null;
-        if (String(val).trim() !== "") {
-          const parsed = parseFloat(val);
-          if (!isNaN(parsed)) valNum = Math.min(100, Math.max(0, parsed));
+      if (field === "ketercapaian") {
+        let isCalcComplete = false;
+        if (pondokScheme) {
+          try {
+            const calcResult = calculatePondokAssessmentResult({
+              scheme: pondokScheme,
+              dailyScores: updated.dailyScores,
+              utsScore: updated.utsScore,
+              semesterScore: updated.semesterScore
+            });
+            isCalcComplete = calcResult.isComplete;
+          } catch {
+            isCalcComplete = false;
+          }
+        } else {
+          isCalcComplete = updated.finalScore !== null && updated.finalScore !== undefined;
         }
-        updated.finalScore = valNum;
 
-        // Auto suggestion for ketercapaian if currently empty or auto-generated
-        if (valNum !== null && (!updated.ketercapaian || updated.ketercapaian.includes("diniyah"))) {
-          if (valNum >= 85) updated.ketercapaian = "Sangat baik dan konsisten dalam menguasai materi kepondokan/diniyah.";
-          else if (valNum >= 75) updated.ketercapaian = "Baik dalam pemahaman materi kepondokan/diniyah dan aktif berpartisipasi.";
-          else if (valNum >= 65) updated.ketercapaian = "Cukup baik dalam pemahaman materi kepondokan/diniyah, perlu ketelitian.";
-          else updated.ketercapaian = "Perlu bimbingan dan pengulangan intensif dalam materi kepondokan/diniyah.";
-        }
-      } else if (field === "ketercapaian") {
-        updated.ketercapaian = val;
-      } else if (field === "notes") {
-        updated.notes = val;
+        updated.status =
+          isCalcComplete && Boolean(val && val.trim().length > 0)
+            ? "LENGKAP"
+            : "BELUM_LENGKAP";
       }
-
-      updated.status = updated.finalScore !== null && updated.ketercapaian ? "LENGKAP" : "BELUM_LENGKAP";
 
       newMap.set(studentId, updated);
       return newMap;
@@ -481,11 +876,32 @@ export default function ERaporTeacherInput() {
       return;
     }
 
+    if (!isTeacherAuthorizedForSubject) {
+      toast("Anda tidak memiliki kewenangan penugasan (teacher_assignments) untuk mata pelajaran ini.", "error");
+      return;
+    }
+
     setIsSaving(true);
     try {
       if (inputMode === "MAPEL") {
         if (isPondokSubject) {
-          const list = Array.from(pondokAssessmentsMap.values());
+          if (!pondokScheme) {
+            toast("Harap simpan skema penilaian pondok terlebih dahulu.", "error");
+            setIsSaving(false);
+            return;
+          }
+          const list = (Array.from(pondokAssessmentsMap.values()) as ERaporPondokAssessment[]).map((ass) => ({
+            ...ass,
+            score: ass.finalScore ?? null,
+            finalScore: ass.finalScore ?? null,
+            schemeSnapshot: {
+              hasDaily: pondokScheme.hasDaily,
+              dailyCount: pondokScheme.dailyCount,
+              hasUts: pondokScheme.hasUts,
+              hasSemester: pondokScheme.hasSemester,
+              weights: { ...pondokScheme.weights }
+            }
+          }));
           await eRaporService.saveBatchPondokAssessments(list, user?.uid || "", user?.name || "Guru");
           toast("Seluruh nilai Rapor Pondok berhasil disimpan!", "success");
         } else {
@@ -500,9 +916,9 @@ export default function ERaporTeacherInput() {
       }
 
       setHasUnsavedChanges(false);
-    } catch (e) {
+    } catch (e: any) {
       console.error("Error saving e-Rapor assessments:", e);
-      toast("Gagal menyimpan nilai. Silakan coba lagi.", "error");
+      toast(e?.message || "Gagal menyimpan nilai. Silakan coba lagi.", "error");
     } finally {
       setIsSaving(false);
     }
@@ -638,9 +1054,9 @@ export default function ERaporTeacherInput() {
 
           <button
             onClick={handleSaveAll}
-            disabled={isSaving || isClassLocked || !hasUnsavedChanges}
+            disabled={isSaving || isClassLocked || !hasUnsavedChanges || !isTeacherAuthorizedForSubject}
             className={`px-4 py-2 text-xs font-semibold rounded-xl transition-all flex items-center gap-2 shadow-sm ${
-              hasUnsavedChanges && !isClassLocked
+              hasUnsavedChanges && !isClassLocked && isTeacherAuthorizedForSubject
                 ? "bg-emerald-600 hover:bg-emerald-700 text-white animate-pulse"
                 : "bg-slate-200 dark:bg-zinc-800 text-slate-400 cursor-not-allowed"
             }`}
@@ -650,6 +1066,19 @@ export default function ERaporTeacherInput() {
           </button>
         </div>
       </div>
+
+      {/* Teacher Assignment Authorization Banner */}
+      {!isTeacherAuthorizedForSubject && isTeacherRole && inputMode === "MAPEL" && (
+        <div className="bg-rose-500/10 border border-rose-500/30 text-rose-800 dark:text-rose-200 p-4 rounded-xl flex items-center gap-3">
+          <AlertTriangle className="w-5 h-5 text-rose-600 flex-shrink-0" />
+          <div className="text-xs">
+            <span className="font-bold">Akses Terbatas: Bukan Guru Pengampu Aktif</span>
+            <p className="text-rose-700 dark:text-rose-300">
+              Anda tidak terdaftar sebagai guru pengampu aktif untuk mata pelajaran ini pada penugasan guru (teacher_assignments). Halaman ini ditampilkan dalam mode hanya-baca (Read-Only).
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Lock Banner */}
       {isClassLocked && (
@@ -843,90 +1272,537 @@ export default function ERaporTeacherInput() {
           </div>
         ) : inputMode === "MAPEL" && isPondokSubject ? (
           /* ==================== 1. RAPOR PONDOK MATRIX ==================== */
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-amber-50/80 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900 text-slate-700 dark:text-amber-200">
-                  <th className="p-3 w-10 text-center font-bold">No</th>
-                  <th className="p-3 min-w-[200px] font-bold">Nama Santri / NIS</th>
-                  <th className="p-3 w-28 text-center font-bold">Nilai Akhir (0-100)</th>
-                  <th className="p-3 font-bold">Ketercapaian Kompetensi Santri (Rapor Pondok)</th>
-                  <th className="p-3 min-w-[150px] font-bold">Catatan Guru</th>
-                  <th className="p-3 w-28 text-center font-bold">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 dark:divide-zinc-800">
-                {students.map((st, sIdx) => {
-                  const pAss = pondokAssessmentsMap.get(st.id!) || {
-                    finalScore: null,
-                    ketercapaian: "",
-                    notes: "",
-                    status: "BELUM_LENGKAP"
-                  };
+          <div className="space-y-0">
+            {/* Scheme Configuration / Summary Panel */}
+            <div className="p-4 sm:p-5 bg-slate-50/70 dark:bg-zinc-800/40 border-b border-slate-200 dark:border-zinc-800 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="p-1.5 bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 rounded-lg">
+                      <Sliders className="w-4 h-4" />
+                    </span>
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-zinc-200">
+                      Skema Komponen Penilaian Mapel Pondok
+                    </h3>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-zinc-400 mt-1">
+                    {selectedSubject?.name} • Rombel {targetClass?.name || targetClass?.gradeLevel || "-"}
+                  </p>
+                </div>
 
-                  return (
-                    <tr key={st.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-800/40 transition-colors">
-                      <td className="p-3 text-center text-slate-400 font-medium">{sIdx + 1}</td>
-                      <td className="p-3">
-                        <div className="font-bold text-slate-800 dark:text-zinc-100">{st.name}</div>
-                        <div className="text-[10px] text-slate-400">NIS: {st.nis || "-"}</div>
-                      </td>
+                {pondokScheme && !showSchemeEditor && (
+                  <button
+                    type="button"
+                    onClick={() => setShowSchemeEditor(true)}
+                    disabled={isClassLocked || !settings.isOpen}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white transition-colors shadow-xs"
+                  >
+                    <Settings2 className="w-3.5 h-3.5" /> Ubah Skema
+                  </button>
+                )}
+              </div>
 
-                      {/* Nilai Akhir */}
-                      <td className="p-2 text-center">
+              {/* Summary of Active Scheme */}
+              {pondokScheme && !showSchemeEditor ? (
+                <div className="flex flex-wrap items-center gap-3 pt-1 text-xs">
+                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700/70 shadow-xs">
+                    <span className="text-slate-500 dark:text-zinc-400 font-medium">Komponen:</span>
+                    <div className="flex items-center gap-1.5">
+                      {pondokScheme.hasDaily && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-semibold text-[11px]">
+                          <Check className="w-3 h-3" /> PH ({pondokScheme.dailyCount})
+                        </span>
+                      )}
+                      {pondokScheme.hasUts && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-semibold text-[11px]">
+                          <Check className="w-3 h-3" /> UTS
+                        </span>
+                      )}
+                      {pondokScheme.hasSemester && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-semibold text-[11px]">
+                          <Check className="w-3 h-3" /> Semesteran
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700/70 shadow-xs">
+                    <span className="text-slate-500 dark:text-zinc-400 font-medium">Bobot Aktif:</span>
+                    <span className="font-bold text-slate-800 dark:text-zinc-100">
+                      {[
+                        pondokScheme.hasDaily ? `PH ${pondokScheme.weights.daily}%` : null,
+                        pondokScheme.hasUts ? `UTS ${pondokScheme.weights.uts}%` : null,
+                        pondokScheme.hasSemester ? `Semesteran ${pondokScheme.weights.semester}%` : null
+                      ]
+                        .filter(Boolean)
+                        .join(" • ")}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                /* Scheme Configuration Form */
+                <div className="p-4 bg-white dark:bg-zinc-900 rounded-xl border border-amber-200 dark:border-amber-900/60 space-y-4 shadow-xs">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-zinc-800 pb-3">
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-800 dark:text-zinc-100">
+                        Konfigurasi Komponen & Bobot Penilaian
+                      </h4>
+                      <p className="text-[11px] text-slate-500 dark:text-zinc-400">
+                        Aktifkan komponen yang digunakan lalu tentukan bobot masing-masing. Total bobot komponen aktif harus tepat 100%.
+                      </p>
+                    </div>
+                    <div>
+                      {isSchemeWeightValid ? (
+                        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300">
+                          <Check className="w-3.5 h-3.5" /> Total Bobot: {totalActiveWeight}% (Valid)
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300">
+                          <AlertTriangle className="w-3.5 h-3.5" /> Total Bobot: {totalActiveWeight}% (Harus 100%)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 3 Component Cards */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {/* 1. Penilaian Harian (PH) */}
+                    <div
+                      className={`p-3.5 rounded-xl border transition-colors ${
+                        schemeForm.hasDaily
+                          ? "bg-amber-50/40 dark:bg-amber-950/20 border-amber-300 dark:border-amber-800"
+                          : "bg-slate-50 dark:bg-zinc-800/40 border-slate-200 dark:border-zinc-700/60 opacity-60"
+                      }`}
+                    >
+                      <label className="flex items-center gap-2.5 cursor-pointer font-bold text-xs text-slate-800 dark:text-zinc-200">
                         <input
-                          type="number"
-                          min="0"
-                          max="100"
-                          disabled={isClassLocked || !settings.isOpen}
-                          value={pAss.finalScore !== null && pAss.finalScore !== undefined ? pAss.finalScore : ""}
-                          onChange={(e) => handlePondokChange(st.id!, "finalScore", e.target.value)}
-                          placeholder="0-100"
-                          className="w-20 h-9 text-center text-xs font-black rounded-lg border bg-white dark:bg-zinc-900 border-amber-300 dark:border-amber-700 text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-amber-500"
+                          type="checkbox"
+                          checked={schemeForm.hasDaily}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setSchemeForm((prev) => ({
+                              ...prev,
+                              hasDaily: checked,
+                              weights: {
+                                ...prev.weights,
+                                daily: checked ? (prev.weights.daily > 0 ? prev.weights.daily : 40) : 0
+                              }
+                            }));
+                          }}
+                          className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-slate-300"
                         />
-                      </td>
+                        Penilaian Harian (PH)
+                      </label>
 
-                      {/* Ketercapaian Deskripsi */}
-                      <td className="p-2">
-                        <textarea
-                          rows={2}
-                          disabled={isClassLocked || !settings.isOpen}
-                          value={pAss.ketercapaian || ""}
-                          onChange={(e) => handlePondokChange(st.id!, "ketercapaian", e.target.value)}
-                          placeholder="Deskripsi pencapaian kompetensi materi diniyah/pondok..."
-                          className="w-full text-xs p-2 rounded-lg border bg-slate-50 dark:bg-zinc-800/80 border-slate-200 dark:border-zinc-700"
+                      {schemeForm.hasDaily && (
+                        <div className="mt-3 space-y-2.5 pt-2 border-t border-amber-200/60 dark:border-amber-900/40 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-slate-600 dark:text-zinc-300 font-medium text-[11px]">
+                              Jumlah PH (1–10):
+                            </span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={10}
+                              value={schemeForm.dailyCount}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value) || 1;
+                                const clamped = Math.max(1, Math.min(10, val));
+                                setSchemeForm((prev) => ({ ...prev, dailyCount: clamped }));
+                              }}
+                              className="w-16 h-8 text-center text-xs font-bold rounded-lg border bg-white dark:bg-zinc-900 border-slate-300 dark:border-zinc-700 text-slate-800 dark:text-zinc-100"
+                            />
+                          </div>
+
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-slate-600 dark:text-zinc-300 font-medium text-[11px]">
+                              Bobot PH (%):
+                            </span>
+                            <input
+                              type="number"
+                              min={0}
+                              max={100}
+                              value={schemeForm.weights.daily}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value) || 0;
+                                setSchemeForm((prev) => ({
+                                  ...prev,
+                                  weights: { ...prev.weights, daily: Math.max(0, Math.min(100, val)) }
+                                }));
+                              }}
+                              className="w-16 h-8 text-center text-xs font-bold rounded-lg border bg-white dark:bg-zinc-900 border-slate-300 dark:border-zinc-700 text-slate-800 dark:text-zinc-100"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 2. Ujian Tengah Semester (UTS) */}
+                    <div
+                      className={`p-3.5 rounded-xl border transition-colors ${
+                        schemeForm.hasUts
+                          ? "bg-amber-50/40 dark:bg-amber-950/20 border-amber-300 dark:border-amber-800"
+                          : "bg-slate-50 dark:bg-zinc-800/40 border-slate-200 dark:border-zinc-700/60 opacity-60"
+                      }`}
+                    >
+                      <label className="flex items-center gap-2.5 cursor-pointer font-bold text-xs text-slate-800 dark:text-zinc-200">
+                        <input
+                          type="checkbox"
+                          checked={schemeForm.hasUts}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setSchemeForm((prev) => ({
+                              ...prev,
+                              hasUts: checked,
+                              weights: {
+                                ...prev.weights,
+                                uts: checked ? (prev.weights.uts > 0 ? prev.weights.uts : 30) : 0
+                              }
+                            }));
+                          }}
+                          className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-slate-300"
                         />
-                      </td>
+                        Ujian Tengah Semester (UTS)
+                      </label>
+
+                      {schemeForm.hasUts && (
+                        <div className="mt-3 space-y-2.5 pt-2 border-t border-amber-200/60 dark:border-amber-900/40 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-slate-600 dark:text-zinc-300 font-medium text-[11px]">
+                              Bobot UTS (%):
+                            </span>
+                            <input
+                              type="number"
+                              min={0}
+                              max={100}
+                              value={schemeForm.weights.uts}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value) || 0;
+                                setSchemeForm((prev) => ({
+                                  ...prev,
+                                  weights: { ...prev.weights, uts: Math.max(0, Math.min(100, val)) }
+                                }));
+                              }}
+                              className="w-16 h-8 text-center text-xs font-bold rounded-lg border bg-white dark:bg-zinc-900 border-slate-300 dark:border-zinc-700 text-slate-800 dark:text-zinc-100"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 3. Semesteran / UAS */}
+                    <div
+                      className={`p-3.5 rounded-xl border transition-colors ${
+                        schemeForm.hasSemester
+                          ? "bg-amber-50/40 dark:bg-amber-950/20 border-amber-300 dark:border-amber-800"
+                          : "bg-slate-50 dark:bg-zinc-800/40 border-slate-200 dark:border-zinc-700/60 opacity-60"
+                      }`}
+                    >
+                      <label className="flex items-center gap-2.5 cursor-pointer font-bold text-xs text-slate-800 dark:text-zinc-200">
+                        <input
+                          type="checkbox"
+                          checked={schemeForm.hasSemester}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setSchemeForm((prev) => ({
+                              ...prev,
+                              hasSemester: checked,
+                              weights: {
+                                ...prev.weights,
+                                semester: checked ? (prev.weights.semester > 0 ? prev.weights.semester : 30) : 0
+                              }
+                            }));
+                          }}
+                          className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-slate-300"
+                        />
+                        Semesteran / UAS
+                      </label>
+
+                      {schemeForm.hasSemester && (
+                        <div className="mt-3 space-y-2.5 pt-2 border-t border-amber-200/60 dark:border-amber-900/40 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-slate-600 dark:text-zinc-300 font-medium text-[11px]">
+                              Bobot Semesteran (%):
+                            </span>
+                            <input
+                              type="number"
+                              min={0}
+                              max={100}
+                              value={schemeForm.weights.semester}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value) || 0;
+                                setSchemeForm((prev) => ({
+                                  ...prev,
+                                  weights: { ...prev.weights, semester: Math.max(0, Math.min(100, val)) }
+                                }));
+                              }}
+                              className="w-16 h-8 text-center text-xs font-bold rounded-lg border bg-white dark:bg-zinc-900 border-slate-300 dark:border-zinc-700 text-slate-800 dark:text-zinc-100"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Warning message if editing */}
+                  {pondokScheme && (
+                    <div className="flex items-start gap-2 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-xl text-[11px] text-amber-800 dark:text-amber-300">
+                      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                      <span>
+                        <strong>Perhatian:</strong> Perubahan skema akan memengaruhi perhitungan nilai yang belum disimpan. Nilai yang sudah tersimpan tidak akan dihapus.
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Action buttons */}
+                  <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-zinc-800">
+                    {pondokScheme && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSchemeForm({
+                            hasDaily: pondokScheme.hasDaily,
+                            dailyCount: pondokScheme.dailyCount,
+                            hasUts: pondokScheme.hasUts,
+                            hasSemester: pondokScheme.hasSemester,
+                            weights: { ...pondokScheme.weights }
+                          });
+                          setShowSchemeEditor(false);
+                        }}
+                        className="px-3.5 py-2 text-xs font-semibold rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-300 transition-colors"
+                      >
+                        Batal
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleInitiateSaveScheme}
+                      disabled={!isSchemeWeightValid || isSavingScheme || isClassLocked || !settings.isOpen}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white transition-colors shadow-xs"
+                    >
+                      {isSavingScheme ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Menyimpan Skema...
+                        </>
+                      ) : (
+                        <>
+                          <Save className="w-3.5 h-3.5" /> Simpan Skema
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Assessment Table Matrix or Empty State */}
+            {!pondokScheme ? (
+              <div className="p-12 text-center text-slate-500 dark:text-zinc-400 space-y-2">
+                <Sliders className="w-8 h-8 mx-auto text-amber-500 mb-2" />
+                <p className="text-sm font-semibold text-slate-800 dark:text-zinc-200">
+                  Skema Penilaian Belum Dikonfigurasi
+                </p>
+                <p className="text-xs text-slate-400 max-w-md mx-auto">
+                  Harap tentukan komponen penilaian dan simpan skema di atas terlebih dahulu untuk mulai menginput nilai santri.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-amber-50/80 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900 text-slate-700 dark:text-amber-200">
+                      <th className="p-3 w-10 text-center font-bold">No</th>
+                      <th className="p-3 min-w-[200px] font-bold">Nama Santri / NIS</th>
+
+                      {/* Dynamic PH columns */}
+                      {pondokScheme.hasDaily &&
+                        Array.from({ length: pondokScheme.dailyCount }, (_, i) => (
+                          <th key={`th-ph-${i}`} className="p-3 w-20 text-center font-bold">
+                            PH {i + 1}
+                          </th>
+                        ))}
+
+                      {/* Rata-rata PH column */}
+                      {pondokScheme.hasDaily && (
+                        <th className="p-3 w-24 text-center font-bold bg-amber-100/50 dark:bg-amber-900/30">
+                          Rata-rata PH
+                        </th>
+                      )}
+
+                      {/* UTS column */}
+                      {pondokScheme.hasUts && (
+                        <th className="p-3 w-20 text-center font-bold">
+                          UTS
+                        </th>
+                      )}
+
+                      {/* Semesteran column */}
+                      {pondokScheme.hasSemester && (
+                        <th className="p-3 w-24 text-center font-bold">
+                          Semesteran
+                        </th>
+                      )}
+
+                      {/* Nilai Akhir (Calculated Read-Only) */}
+                      <th className="p-3 w-24 text-center font-bold bg-amber-100/70 dark:bg-amber-900/50 text-amber-950 dark:text-amber-100">
+                        Nilai Akhir
+                      </th>
+
+                      {/* Ketercapaian */}
+                      <th className="p-3 font-bold min-w-[240px]">
+                        Ketercapaian Kompetensi Santri (Rapor Pondok)
+                      </th>
 
                       {/* Catatan Guru */}
-                      <td className="p-2">
-                        <input
-                          type="text"
-                          disabled={isClassLocked || !settings.isOpen}
-                          value={pAss.notes || ""}
-                          onChange={(e) => handlePondokChange(st.id!, "notes", e.target.value)}
-                          placeholder="Catatan opsional..."
-                          className="w-full text-xs p-2 rounded-lg border bg-slate-50 dark:bg-zinc-800/80 border-slate-200 dark:border-zinc-700"
-                        />
-                      </td>
+                      <th className="p-3 min-w-[150px] font-bold">Catatan Guru</th>
 
                       {/* Status */}
-                      <td className="p-3 text-center">
-                        {pAss.status === "LENGKAP" ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
-                            <CheckCircle2 className="w-3 h-3" /> Lengkap
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
-                            <AlertCircle className="w-3 h-3" /> Belum
-                          </span>
-                        )}
-                      </td>
+                      <th className="p-3 w-28 text-center font-bold">Status</th>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-zinc-800">
+                    {students.map((st, sIdx) => {
+                      const pAss = pondokAssessmentsMap.get(st.id!) || {
+                        academicYearId: selectedAcademicYearId,
+                        semesterId: selectedSemesterId,
+                        classId: selectedClassId,
+                        subjectId: selectedSubjectId,
+                        studentId: st.id!,
+                        studentName: st.name || "Santri",
+                        studentNis: st.nis || "",
+                        teacherId: user?.uid || "",
+                        dailyScores: [],
+                        dailyAverage: null,
+                        utsScore: null,
+                        semesterScore: null,
+                        score: null,
+                        finalScore: null,
+                        ketercapaian: "",
+                        notes: "",
+                        status: "BELUM_LENGKAP"
+                      };
+
+                      return (
+                        <tr key={st.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-800/40 transition-colors">
+                          <td className="p-3 text-center text-slate-400 font-medium">{sIdx + 1}</td>
+                          <td className="p-3">
+                            <div className="font-bold text-slate-800 dark:text-zinc-100">{st.name}</div>
+                            <div className="text-[10px] text-slate-400">NIS: {st.nis || "-"}</div>
+                          </td>
+
+                          {/* Dynamic PH input cells */}
+                          {pondokScheme.hasDaily &&
+                            Array.from({ length: pondokScheme.dailyCount }, (_, i) => {
+                              const scoreVal = pAss.dailyScores?.[i];
+                              return (
+                                <td key={`td-ph-${st.id}-${i}`} className="p-2 text-center">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max="100"
+                                    disabled={isClassLocked || !settings.isOpen}
+                                    value={scoreVal !== null && scoreVal !== undefined ? scoreVal : ""}
+                                    onChange={(e) => handlePondokScoreChange(st.id!, "daily", i, e.target.value)}
+                                    placeholder="0-100"
+                                    className="w-16 h-8 text-center text-xs font-semibold rounded-lg border bg-white dark:bg-zinc-900 border-slate-300 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-amber-500"
+                                  />
+                                </td>
+                              );
+                            })}
+
+                          {/* Rata-rata PH display */}
+                          {pondokScheme.hasDaily && (
+                            <td className="p-2 text-center bg-slate-50/40 dark:bg-zinc-800/20">
+                              <span className="inline-block px-2 py-1 text-xs font-bold text-slate-700 dark:text-zinc-300">
+                                {pAss.dailyAverage !== null && pAss.dailyAverage !== undefined
+                                  ? pAss.dailyAverage
+                                  : "-"}
+                              </span>
+                            </td>
+                          )}
+
+                          {/* UTS input cell */}
+                          {pondokScheme.hasUts && (
+                            <td className="p-2 text-center">
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                disabled={isClassLocked || !settings.isOpen}
+                                value={pAss.utsScore !== null && pAss.utsScore !== undefined ? pAss.utsScore : ""}
+                                onChange={(e) => handlePondokScoreChange(st.id!, "uts", 0, e.target.value)}
+                                placeholder="0-100"
+                                className="w-16 h-8 text-center text-xs font-semibold rounded-lg border bg-white dark:bg-zinc-900 border-slate-300 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-amber-500"
+                              />
+                            </td>
+                          )}
+
+                          {/* Semesteran input cell */}
+                          {pondokScheme.hasSemester && (
+                            <td className="p-2 text-center">
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                disabled={isClassLocked || !settings.isOpen}
+                                value={pAss.semesterScore !== null && pAss.semesterScore !== undefined ? pAss.semesterScore : ""}
+                                onChange={(e) => handlePondokScoreChange(st.id!, "semester", 0, e.target.value)}
+                                placeholder="0-100"
+                                className="w-16 h-8 text-center text-xs font-semibold rounded-lg border bg-white dark:bg-zinc-900 border-slate-300 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-amber-500"
+                              />
+                            </td>
+                          )}
+
+                          {/* Nilai Akhir (Calculated Read-Only) */}
+                          <td className="p-2 text-center bg-amber-50/40 dark:bg-amber-950/20">
+                            <div className="w-16 mx-auto py-1.5 px-2 text-center text-xs font-black rounded-lg border border-amber-300/80 dark:border-amber-700/80 bg-white dark:bg-zinc-900 text-amber-700 dark:text-amber-400">
+                              {pAss.finalScore !== null && pAss.finalScore !== undefined ? pAss.finalScore : "-"}
+                            </div>
+                          </td>
+
+                          {/* Ketercapaian Deskripsi */}
+                          <td className="p-2">
+                            <textarea
+                              rows={2}
+                              disabled={isClassLocked || !settings.isOpen}
+                              value={pAss.ketercapaian || ""}
+                              onChange={(e) => handlePondokTextChange(st.id!, "ketercapaian", e.target.value)}
+                              placeholder="Deskripsi pencapaian kompetensi materi diniyah/pondok..."
+                              className="w-full text-xs p-2 rounded-lg border bg-slate-50 dark:bg-zinc-800/80 border-slate-200 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-amber-500"
+                            />
+                          </td>
+
+                          {/* Catatan Guru */}
+                          <td className="p-2">
+                            <input
+                              type="text"
+                              disabled={isClassLocked || !settings.isOpen}
+                              value={pAss.notes || ""}
+                              onChange={(e) => handlePondokTextChange(st.id!, "notes", e.target.value)}
+                              placeholder="Catatan opsional..."
+                              className="w-full text-xs p-2 rounded-lg border bg-slate-50 dark:bg-zinc-800/80 border-slate-200 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 focus:ring-2 focus:ring-amber-500"
+                            />
+                          </td>
+
+                          {/* Status */}
+                          <td className="p-3 text-center">
+                            {pAss.status === "LENGKAP" ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                                <CheckCircle2 className="w-3 h-3" /> Lengkap
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                                <AlertCircle className="w-3 h-3" /> Belum
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         ) : inputMode === "MAPEL" ? (
           /* ==================== 2. RAPOR UMUM MATRIX ==================== */
@@ -1214,6 +2090,60 @@ export default function ERaporTeacherInput() {
                 className="px-4 py-2 text-xs font-semibold rounded-xl bg-amber-600 hover:bg-amber-700 text-white"
               >
                 Kirim Permintaan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Warning Modal when Reducing PH Count */}
+      {phReduceWarning && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-zinc-900 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-zinc-800 space-y-4">
+            <div className="flex items-center gap-3 text-amber-600 dark:text-amber-400">
+              <div className="p-2.5 bg-amber-100 dark:bg-amber-950/60 rounded-xl">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-zinc-100">
+                  Konfirmasi Pengurangan Jumlah PH
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-zinc-400">
+                  Perubahan Komponen Penilaian Harian
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-xl text-xs text-amber-900 dark:text-amber-200 leading-relaxed">
+              Jumlah PH akan dikurangi dari <strong>{phReduceWarning.oldCount}</strong> menjadi <strong>{phReduceWarning.newCount}</strong>. Nilai PH yang sudah tersimpan di atas PH {phReduceWarning.newCount} tidak akan digunakan dalam skema baru. Lanjutkan?
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (pondokScheme) {
+                    setSchemeForm((prev) => ({
+                      ...prev,
+                      dailyCount: pondokScheme.dailyCount
+                    }));
+                  }
+                  setPhReduceWarning(null);
+                }}
+                className="px-4 py-2 text-xs font-semibold rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-300 transition-colors"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const form = phReduceWarning.pendingForm;
+                  setPhReduceWarning(null);
+                  await doSaveScheme(form);
+                }}
+                className="px-4 py-2 text-xs font-bold rounded-xl bg-amber-600 hover:bg-amber-700 text-white transition-colors shadow-xs"
+              >
+                Lanjutkan
               </button>
             </div>
           </div>

@@ -17,6 +17,7 @@ import {
   ERaporAssessment,
   ERaporAssessmentTpItem,
   ERaporPondokAssessment,
+  ERaporPondokScheme,
   ERaporExtracurricular,
   ERaporExtracurricularAssessment,
   ERaporClassVerification,
@@ -46,12 +47,220 @@ import { getSubjectGroupType, isSubjectReportVisible } from "../utils/subjectHel
 const COLLECTION_TPS = "e_rapor_tps";
 const COLLECTION_ASSESSMENTS = "e_rapor_assessments";
 const COLLECTION_PONDOK_ASSESSMENTS = "e_rapor_pondok_assessments";
+export const COLLECTION_PONDOK_SCHEMES = "e_rapor_pondok_schemes";
 const COLLECTION_EXTRACURRICULAR_ASSESSMENTS = "e_rapor_extracurricular_assessments";
 const COLLECTION_VERIFICATIONS = "e_rapor_class_verifications";
 const COLLECTION_GRADE_REQUESTS = "e_rapor_grade_change_requests";
 const COLLECTION_AUDIT_LOGS = "e_rapor_audit_logs";
 const COLLECTION_HISTORICAL_ASSESSMENTS = "e_rapor_historical_assessments";
 const COLLECTION_HISTORICAL_AUDIT_LOGS = "e_rapor_historical_audit_logs";
+
+export function buildPondokSchemeDocId(
+  academicYearId: string,
+  semesterId: string,
+  classId: string,
+  subjectId: string
+): string {
+  return `${academicYearId}_${semesterId}_${classId}_${subjectId}`.replace(/[\/\s]+/g, "_");
+}
+
+export function validatePondokScheme(scheme: Partial<ERaporPondokScheme>): void {
+  if (!scheme.academicYearId || !scheme.academicYearId.trim()) {
+    throw new Error("academicYearId wajib diisi.");
+  }
+  if (!scheme.semesterId || !scheme.semesterId.trim()) {
+    throw new Error("semesterId wajib diisi.");
+  }
+  if (!scheme.classId || !scheme.classId.trim()) {
+    throw new Error("classId wajib diisi.");
+  }
+  if (!scheme.subjectId || !scheme.subjectId.trim()) {
+    throw new Error("subjectId wajib diisi.");
+  }
+  if (!scheme.teacherId || !scheme.teacherId.trim()) {
+    throw new Error("teacherId wajib diisi.");
+  }
+
+  const hasDaily = Boolean(scheme.hasDaily);
+  const hasUts = Boolean(scheme.hasUts);
+  const hasSemester = Boolean(scheme.hasSemester);
+
+  if (!hasDaily && !hasUts && !hasSemester) {
+    throw new Error("Minimal satu komponen penilaian (Harian, UTS, atau Semesteran) harus diaktifkan.");
+  }
+
+  const weights = scheme.weights || { daily: 0, uts: 0, semester: 0 };
+  const dailyWeight = Number(weights.daily || 0);
+  const utsWeight = Number(weights.uts || 0);
+  const semesterWeight = Number(weights.semester || 0);
+
+  // Validasi Penilaian Harian
+  if (hasDaily) {
+    const dailyCount = Number(scheme.dailyCount);
+    if (!dailyCount || isNaN(dailyCount) || dailyCount < 1 || dailyCount > 10) {
+      throw new Error("Jumlah Penilaian Harian (PH) harus antara 1 sampai 10.");
+    }
+    if (dailyWeight <= 0) {
+      throw new Error("Bobot Penilaian Harian harus lebih besar dari 0% jika komponen Harian diaktifkan.");
+    }
+  } else {
+    if (dailyWeight > 0) {
+      throw new Error("Bobot Penilaian Harian harus 0% karena komponen Harian dinonaktifkan.");
+    }
+  }
+
+  // Validasi UTS
+  if (hasUts) {
+    if (utsWeight <= 0) {
+      throw new Error("Bobot UTS harus lebih besar dari 0% jika komponen UTS diaktifkan.");
+    }
+  } else {
+    if (utsWeight > 0) {
+      throw new Error("Bobot UTS harus 0% karena komponen UTS dinonaktifkan.");
+    }
+  }
+
+  // Validasi Semesteran
+  if (hasSemester) {
+    if (semesterWeight <= 0) {
+      throw new Error("Bobot Semesteran harus lebih besar dari 0% jika komponen Semesteran diaktifkan.");
+    }
+  } else {
+    if (semesterWeight > 0) {
+      throw new Error("Bobot Semesteran harus 0% karena komponen Semesteran dinonaktifkan.");
+    }
+  }
+
+  // Validasi Total Bobot Komponen Aktif wajib tepat 100% (tanpa auto-normalisasi)
+  const totalActiveWeight = (hasDaily ? dailyWeight : 0) + (hasUts ? utsWeight : 0) + (hasSemester ? semesterWeight : 0);
+  if (totalActiveWeight !== 100) {
+    throw new Error(`Total bobot komponen aktif harus tepat 100% (saat ini: ${totalActiveWeight}%).`);
+  }
+}
+
+export interface PondokCalculationInput {
+  scheme: {
+    hasDaily: boolean;
+    dailyCount: number;
+    hasUts: boolean;
+    hasSemester: boolean;
+    weights: {
+      daily: number;
+      uts: number;
+      semester: number;
+    };
+  };
+  dailyScores?: (number | null)[];
+  utsScore?: number | null;
+  semesterScore?: number | null;
+}
+
+export interface PondokCalculationResult {
+  dailyAverage: number | null;
+  finalScore: number | null;
+  isComplete: boolean;
+}
+
+/**
+ * Pure calculation function for flexible Pondok evaluation scheme (Tahap 5A).
+ * Does not perform any Firestore or side-effect operations.
+ */
+export function calculatePondokAssessmentResult(
+  input: PondokCalculationInput
+): PondokCalculationResult {
+  const { scheme, dailyScores, utsScore, semesterScore } = input;
+
+  const validateScore = (val: number | null | undefined, label: string) => {
+    if (val !== null && val !== undefined) {
+      if (isNaN(val) || val < 0 || val > 100) {
+        throw new Error(`Nilai ${label} tidak valid (${val}). Nilai harus berada pada rentang 0–100.`);
+      }
+    }
+  };
+
+  if (dailyScores && Array.isArray(dailyScores)) {
+    dailyScores.forEach((s, idx) => validateScore(s, `PH ${idx + 1}`));
+  }
+  validateScore(utsScore, "UTS");
+  validateScore(semesterScore, "Semesteran");
+
+  // 1. Hitung Rata-Rata PH (dailyAverage) & kelengkapan PH
+  let dailyAverage: number | null = null;
+  let dailyComplete = true;
+
+  if (scheme.hasDaily && scheme.dailyCount > 0) {
+    const validScores: number[] = [];
+    const expectedCount = Math.min(10, Math.max(1, scheme.dailyCount));
+
+    for (let i = 0; i < expectedCount; i++) {
+      const s = dailyScores ? dailyScores[i] : undefined;
+      if (s !== null && s !== undefined && !isNaN(s)) {
+        validScores.push(Number(s));
+      } else {
+        dailyComplete = false;
+      }
+    }
+
+    if (validScores.length > 0) {
+      const sum = validScores.reduce((acc, curr) => acc + curr, 0);
+      const avg = sum / validScores.length;
+      dailyAverage = Math.round(avg * 100) / 100;
+    } else {
+      dailyAverage = null;
+    }
+  } else {
+    dailyAverage = null;
+    dailyComplete = true;
+  }
+
+  // 2. Cek kelengkapan UTS
+  let utsComplete = true;
+  const isUtsFilled = utsScore !== null && utsScore !== undefined && !isNaN(utsScore);
+  if (scheme.hasUts) {
+    utsComplete = isUtsFilled;
+  }
+
+  // 3. Cek kelengkapan Semesteran
+  let semesterComplete = true;
+  const isSemesterFilled = semesterScore !== null && semesterScore !== undefined && !isNaN(semesterScore);
+  if (scheme.hasSemester) {
+    semesterComplete = isSemesterFilled;
+  }
+
+  // Status kelengkapan keseluruhan
+  const hasAtLeastOneActive = scheme.hasDaily || scheme.hasUts || scheme.hasSemester;
+  const isComplete = hasAtLeastOneActive && dailyComplete && utsComplete && semesterComplete;
+
+  // 4. Hitung Nilai Akhir (finalScore) hanya dari komponen aktif
+  let finalScore: number | null = null;
+  const hasDailyFilled = scheme.hasDaily && dailyAverage !== null;
+
+  if (!hasDailyFilled && !isUtsFilled && !isSemesterFilled) {
+    finalScore = null;
+  } else {
+    const wDaily = scheme.hasDaily ? scheme.weights.daily : 0;
+    const wUts = scheme.hasUts ? scheme.weights.uts : 0;
+    const wSem = scheme.hasSemester ? scheme.weights.semester : 0;
+    const totalActiveWeight = wDaily + wUts + wSem;
+
+    if (totalActiveWeight <= 0) {
+      finalScore = null;
+    } else {
+      const vDaily = hasDailyFilled ? (dailyAverage as number) : 0;
+      const vUts = isUtsFilled ? Number(utsScore) : 0;
+      const vSem = isSemesterFilled ? Number(semesterScore) : 0;
+
+      const weightedSum = (vDaily * wDaily) + (vUts * wUts) + (vSem * wSem);
+      finalScore = Math.round(weightedSum / totalActiveWeight);
+    }
+  }
+
+  return {
+    dailyAverage,
+    finalScore,
+    isComplete
+  };
+}
 
 export function classifySubjectType(data: any): "UMUM" | "PONDOK" {
   if (!data) return "UMUM";
@@ -406,6 +615,17 @@ export const eRaporService = {
     currentUserName: string,
     settings: ERaporSettingsConfig
   ): Promise<void> {
+    if (!assessments || assessments.length === 0) return;
+
+    // Defense-in-depth: Check if class is verified or locked
+    const first = assessments[0];
+    if (first.academicYearId && first.semesterId && first.classId) {
+      const verif = await this.getClassVerification(first.academicYearId, first.semesterId, first.classId);
+      if (verif && (verif.status === "LOCKED" || verif.status === "TERVERIFIKASI")) {
+        throw new Error("Rapor kelas ini telah dikunci/diverifikasi oleh Wali Kelas. Perubahan nilai tidak diizinkan.");
+      }
+    }
+
     const batch = writeBatch(db);
     const nowStr = new Date().toISOString();
 
@@ -465,6 +685,85 @@ export const eRaporService = {
   // ----------------------------------------------------
   // 4. RAPOR PONDOK ASSESSMENTS ENGINE
   // ----------------------------------------------------
+  async getPondokScheme(
+    academicYearId: string,
+    semesterId: string,
+    classId: string,
+    subjectId: string
+  ): Promise<ERaporPondokScheme | null> {
+    try {
+      const docId = buildPondokSchemeDocId(academicYearId, semesterId, classId, subjectId);
+      const docRef = doc(db, COLLECTION_PONDOK_SCHEMES, docId);
+      const snap = await getDoc(docRef);
+      if (!snap.exists()) return null;
+      return { id: snap.id, ...snap.data() } as ERaporPondokScheme;
+    } catch (error) {
+      console.error("Error fetching Pondok scheme:", error);
+      return null;
+    }
+  },
+
+  async savePondokScheme(
+    schemeData: Omit<ERaporPondokScheme, "id" | "createdAt" | "updatedAt"> & { id?: string },
+    currentUserId: string = "system",
+    currentUserName: string = "Guru"
+  ): Promise<ERaporPondokScheme> {
+    validatePondokScheme(schemeData);
+
+    // Defense-in-depth: Check if class is verified or locked
+    const verif = await this.getClassVerification(
+      schemeData.academicYearId,
+      schemeData.semesterId,
+      schemeData.classId
+    );
+    if (verif && (verif.status === "LOCKED" || verif.status === "TERVERIFIKASI")) {
+      throw new Error("Rapor kelas ini telah dikunci/diverifikasi oleh Wali Kelas. Perubahan skema tidak diizinkan.");
+    }
+
+    const docId = buildPondokSchemeDocId(
+      schemeData.academicYearId,
+      schemeData.semesterId,
+      schemeData.classId,
+      schemeData.subjectId
+    );
+    const docRef = doc(db, COLLECTION_PONDOK_SCHEMES, docId);
+    const existingSnap = await getDoc(docRef);
+    const nowStr = new Date().toISOString();
+
+    const createdAt = existingSnap.exists()
+      ? (existingSnap.data().createdAt || nowStr)
+      : nowStr;
+    const createdBy = existingSnap.exists()
+      ? (existingSnap.data().createdBy || currentUserName)
+      : currentUserName;
+
+    const payload: ERaporPondokScheme = {
+      id: docId,
+      academicYearId: schemeData.academicYearId,
+      semesterId: schemeData.semesterId,
+      classId: schemeData.classId,
+      subjectId: schemeData.subjectId,
+      teacherId: schemeData.teacherId,
+      hasDaily: Boolean(schemeData.hasDaily),
+      dailyCount: schemeData.hasDaily ? Number(schemeData.dailyCount) : 0,
+      dailyLabels: schemeData.dailyLabels || (schemeData.hasDaily ? Array.from({ length: Number(schemeData.dailyCount) }, (_, i) => `PH ${i + 1}`) : []),
+      hasUts: Boolean(schemeData.hasUts),
+      hasSemester: Boolean(schemeData.hasSemester),
+      weights: {
+        daily: schemeData.hasDaily ? Number(schemeData.weights?.daily || 0) : 0,
+        uts: schemeData.hasUts ? Number(schemeData.weights?.uts || 0) : 0,
+        semester: schemeData.hasSemester ? Number(schemeData.weights?.semester || 0) : 0,
+      },
+      createdAt,
+      updatedAt: nowStr,
+      createdBy,
+      updatedBy: currentUserName,
+    };
+
+    await setDoc(docRef, payload, { merge: true });
+    return payload;
+  },
+
   async getPondokAssessmentsForClassSubject(
     academicYearId: string,
     semesterId: string,
@@ -497,6 +796,17 @@ export const eRaporService = {
     currentUserId: string,
     currentUserName: string
   ): Promise<void> {
+    if (!assessments || assessments.length === 0) return;
+
+    // Defense-in-depth: Check if class is verified or locked
+    const first = assessments[0];
+    if (first.academicYearId && first.semesterId && first.classId) {
+      const verif = await this.getClassVerification(first.academicYearId, first.semesterId, first.classId);
+      if (verif && (verif.status === "LOCKED" || verif.status === "TERVERIFIKASI")) {
+        throw new Error("Rapor kelas ini telah dikunci/diverifikasi oleh Wali Kelas. Perubahan nilai tidak diizinkan.");
+      }
+    }
+
     const batch = writeBatch(db);
     const nowStr = new Date().toISOString();
 
@@ -508,11 +818,14 @@ export const eRaporService = {
       const docId = `${item.academicYearId}_${item.semesterId}_${item.classId}_${item.subjectId}_${item.studentId}`;
       const docRef = doc(db, COLLECTION_PONDOK_ASSESSMENTS, docId);
 
-      const scoreNum = (item.score !== null && item.score !== undefined && !isNaN(item.score))
-        ? Math.min(100, Math.max(0, Number(item.score)))
+      const rawScore = item.finalScore ?? item.score;
+      const scoreNum = (rawScore !== null && rawScore !== undefined && !isNaN(rawScore))
+        ? Math.min(100, Math.max(0, Number(rawScore)))
         : null;
 
-      const isComplete = scoreNum !== null && Boolean(item.ketercapaian && item.ketercapaian.trim().length > 0);
+      const isComplete = item.status === "LENGKAP" || (
+        scoreNum !== null && Boolean(item.ketercapaian && item.ketercapaian.trim().length > 0)
+      );
 
       const payload: ERaporPondokAssessment = {
         academicYearId: item.academicYearId,
@@ -525,12 +838,19 @@ export const eRaporService = {
         studentNis: item.studentNis || "",
         teacherId: item.teacherId || currentUserId,
         score: scoreNum,
+        finalScore: scoreNum,
         ketercapaian: item.ketercapaian || "",
         notes: item.notes || "",
         status: isComplete ? "LENGKAP" : "BELUM_LENGKAP",
         updatedAt: nowStr,
         updatedBy: currentUserName
       };
+
+      if (item.dailyScores !== undefined) payload.dailyScores = item.dailyScores;
+      if (item.dailyAverage !== undefined) payload.dailyAverage = item.dailyAverage;
+      if (item.utsScore !== undefined) payload.utsScore = item.utsScore;
+      if (item.semesterScore !== undefined) payload.semesterScore = item.semesterScore;
+      if (item.schemeSnapshot !== undefined) payload.schemeSnapshot = item.schemeSnapshot;
 
       batch.set(docRef, payload, { merge: true });
     }
@@ -1102,6 +1422,7 @@ export const eRaporService = {
     }[];
     pondokSubjects: {
       subjectName: string;
+      finalScore: number | null;
       score: number | null;
       ketercapaian: string;
     }[];
@@ -1178,14 +1499,17 @@ export const eRaporService = {
         const pSnap = await getDoc(doc(db, COLLECTION_PONDOK_ASSESSMENTS, docId));
         if (pSnap.exists()) {
           const data = pSnap.data() as ERaporPondokAssessment;
+          const scoreVal = data.finalScore ?? data.score ?? null;
           pondokSubjects.push({
             subjectName: meta.subjectName,
-            score: data.score,
+            finalScore: scoreVal,
+            score: scoreVal,
             ketercapaian: data.ketercapaian || "Telah menyelesaikan modul pembelajaran pondok."
           });
         } else {
           pondokSubjects.push({
             subjectName: meta.subjectName,
+            finalScore: null,
             score: null,
             ketercapaian: "Belum ada penilaian."
           });
@@ -1475,7 +1799,7 @@ export const eRaporService = {
 
     pondokAssSnap.forEach(d => {
       const data = d.data() as ERaporPondokAssessment;
-      const score = data.score ?? data.finalScore ?? null;
+      const score = data.finalScore ?? data.score ?? null;
       if (score !== null && score !== undefined) {
         eRaporMap.set(`${data.academicYearId}_${data.semesterId}_${data.subjectId}_${data.studentId}`, score);
       }

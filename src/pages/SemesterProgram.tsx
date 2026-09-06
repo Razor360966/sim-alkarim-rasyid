@@ -7,6 +7,8 @@ import { curriculumPlanningService } from "../services/curriculumPlanning.servic
 import { realTeachingHoursService } from "../services/realTeachingHours.service";
 import { lessonPlanService } from "../services/lessonPlan.service";
 import { teachingJournalService } from "../services/teachingJournalService";
+import { subjectService } from "../services/subjectService";
+import { teacherAssignmentService, resolveTeacherAssignmentSync } from "../services/teacherAssignment.service";
 import { useToast } from "../contexts/ToastContext";
 import { useAuth } from "../contexts/AuthContext";
 import { useQueryClient } from "@tanstack/react-query";
@@ -14,6 +16,8 @@ import type {
   Semester, 
   Class, 
   CurriculumMatrix, 
+  Subject,
+  TeacherAssignment,
   AnnualProgram as AnnualProgramData, 
   SemesterProgram as SemesterProgramData, 
   PromesAllocation, 
@@ -105,6 +109,7 @@ export const SemesterProgram: React.FC = () => {
   const [classes, setClasses] = useState<Class[]>([]);
   const [semesters, setSemesters] = useState<Semester[]>([]);
   const [curriculumMatrix, setCurriculumMatrix] = useState<CurriculumMatrix[]>([]);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
 
   // Selection States
   const [selectedAcademicYearId, setSelectedAcademicYearId] = useState<string>("");
@@ -125,6 +130,7 @@ export const SemesterProgram: React.FC = () => {
   const [realDateDetails, setRealDateDetails] = useState<TeachingDateDetail[]>([]);
   const [lessonPlans, setLessonPlans] = useState<LessonPlan[]>([]);
   const [journals, setJournals] = useState<TeachingJournal[]>([]);
+  const [teacherAssignments, setTeacherAssignments] = useState<TeacherAssignment[]>([]);
 
   // Active Program Semester (Promes), Source Prota, and Meetings list
   const [promes, setPromes] = useState<SemesterProgramData | null>(null);
@@ -161,19 +167,23 @@ export const SemesterProgram: React.FC = () => {
   const [newAdjustDate, setNewAdjustDate] = useState<string>("");
   const [adjustReason, setAdjustReason] = useState<string>("");
 
-  // Load classes, semesters, curriculum matrix
+  // Load classes, semesters, curriculum matrix, subjects, teacher assignments
   useEffect(() => {
     setLoading(true);
     Promise.all([
       classService.getClasses(),
       semesterService.getSemesters(),
-      curriculumMatrixService.getCurriculumMatrix()
+      curriculumMatrixService.getCurriculumMatrix(),
+      subjectService.getSubjects(),
+      teacherAssignmentService.getTeacherAssignments()
     ])
-      .then(([clsList, semList, matrixList]) => {
+      .then(([clsList, semList, matrixList, subList, assignList]) => {
         const activeCls = clsList.filter(c => c.status === "Aktif" && !c.isDeleted);
         setClasses(activeCls);
         setSemesters(semList);
         setCurriculumMatrix(matrixList);
+        setSubjects(subList);
+        setTeacherAssignments(assignList);
 
         const activeSem = semList.find(s => s.isActive);
         if (activeSem) {
@@ -199,34 +209,29 @@ export const SemesterProgram: React.FC = () => {
     () =>
       curriculumMatrix
         .map((m) => {
-          let assignedTeacherId = m.teacherId;
-          let assignedTeacherName = m.teacherName;
-
-          if (m.useDifferentTeachers) {
-            if (gradeLevel === "VII") {
-              assignedTeacherId = m.teacherId_vii || m.teacherId;
-              assignedTeacherName = m.teacherName_vii || m.teacherName;
-            } else if (gradeLevel === "VIII") {
-              assignedTeacherId = m.teacherId_viii || m.teacherId;
-              assignedTeacherName = m.teacherName_viii || m.teacherName;
-            } else if (gradeLevel === "IX") {
-              assignedTeacherId = m.teacherId_ix || m.teacherId;
-              assignedTeacherName = m.teacherName_ix || m.teacherName;
-            }
-          }
+          const resolved = resolveTeacherAssignmentSync({
+            academicYearId: selectedAcademicYearId,
+            semesterId: selectedSemesterId,
+            subjectId: m.subjectId,
+            classId: selectedClassId,
+            gradeLevel: gradeLevel,
+            curriculumMatrixItem: m,
+            preloadedAssignments: teacherAssignments
+          });
 
           const jp = gradeLevel === "VII" ? m.jp_vii : gradeLevel === "VIII" ? m.jp_viii : m.jp_ix;
+          const masterSubj = subjects.find(s => s.id === m.subjectId);
 
           return {
             id: m.subjectId,
-            name: m.subjectName,
-            teacherId: assignedTeacherId,
-            teacherName: assignedTeacherName,
+            name: masterSubj?.name || m.subjectName,
+            teacherId: resolved.teacherId,
+            teacherName: resolved.teacherName,
             jp: jp || 0
           };
         })
         .filter((s) => s.jp > 0),
-    [curriculumMatrix, gradeLevel]
+    [curriculumMatrix, gradeLevel, subjects, selectedAcademicYearId, selectedSemesterId, selectedClassId, teacherAssignments]
   );
 
   const currentRole = user?.role?.toLowerCase() || "";

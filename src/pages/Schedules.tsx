@@ -34,7 +34,7 @@ import { teacherService } from "../services/teacherService";
 import { lessonPeriodService } from "../services/lessonPeriod.service";
 import { schoolSettingsService } from "../services/schoolSettings.service";
 import { subjectService } from "../services/subjectService";
-import { teacherAssignmentService } from "../services/teacherAssignment.service";
+import { teacherAssignmentService, resolveTeacherAssignmentSync } from "../services/teacherAssignment.service";
 import { Schedule, Class, Teacher, LessonPeriod, LessonPeriodType, CurriculumMatrix, Subject, TeacherAssignment } from "../types";
 import { useToast } from "../contexts/ToastContext";
 import * as XLSX from "xlsx";
@@ -803,30 +803,61 @@ export default function Schedules() {
           status = "empty";
           subjectName = "";
         } else {
-          const matrixItem = curriculumMatrix.find(m => m.subjectName.toLowerCase().trim() === subjectName.toLowerCase());
-          
-          if (!matrixItem) {
+          let explicitTeacherStr: string | null = null;
+          let matchedMatrixItem = curriculumMatrix.find(m => m.subjectName.toLowerCase().trim() === subjectName.toLowerCase());
+
+          // Check if cell format contains "Mapel - Nama Guru" or "Mapel / Nama Guru"
+          if (!matchedMatrixItem && (subjectName.includes(" - ") || subjectName.includes(" / "))) {
+            const separator = subjectName.includes(" - ") ? " - " : " / ";
+            const parts = subjectName.split(separator);
+            const subPart = parts[0].trim();
+            const teacherPart = parts.slice(1).join(separator).trim();
+            const tryMatrix = curriculumMatrix.find(m => m.subjectName.toLowerCase().trim() === subPart.toLowerCase());
+            if (tryMatrix) {
+              matchedMatrixItem = tryMatrix;
+              explicitTeacherStr = teacherPart;
+            }
+          }
+
+          if (!matchedMatrixItem) {
             status = "error";
             slotErrors.push(`Mata Pelajaran "${subjectName}" tidak dikenal.`);
             errorsList.push(`Baris ${rowIdx + 1}, Kelas ${classNameKey}: Mapel "${subjectName}" tidak terdaftar di Struktur Kurikulum.`);
           } else {
-            subjectId = matrixItem.subjectId;
-            subjectName = matrixItem.subjectName; // normalize casing
+            subjectId = matchedMatrixItem.subjectId;
+            subjectName = matchedMatrixItem.subjectName; // normalize casing
             
+            const targetClassId = targetClass ? (targetClass.classId || targetClass.id) : "";
             const grade = targetClass?.gradeLevel; // "VII" / "VIII" / "IX"
-            teacherId = matrixItem.teacherId || null;
-            teacherName = matrixItem.teacherName || null;
-            
-            if (matrixItem.useDifferentTeachers && grade) {
-              if (grade === "VII") {
-                teacherId = matrixItem.teacherId_vii || matrixItem.teacherId || null;
-                teacherName = matrixItem.teacherName_vii || matrixItem.teacherName || null;
-              } else if (grade === "VIII") {
-                teacherId = matrixItem.teacherId_viii || matrixItem.teacherId || null;
-                teacherName = matrixItem.teacherName_viii || matrixItem.teacherName || null;
-              } else if (grade === "IX") {
-                teacherId = matrixItem.teacherId_ix || matrixItem.teacherId || null;
-                teacherName = matrixItem.teacherName_ix || matrixItem.teacherName || null;
+
+            // Class-aware SSOT 4-tier resolver: teacher_assignments -> matrix_grade -> matrix_global -> fallback
+            const resolved = resolveTeacherAssignmentSync({
+              academicYearId: selectedYearId,
+              semesterId: selectedSemesterId,
+              subjectId: matchedMatrixItem.subjectId,
+              classId: targetClassId,
+              gradeLevel: grade,
+              curriculumMatrixItem: matchedMatrixItem,
+              preloadedAssignments: teacherAssignments as TeacherAssignment[]
+            });
+
+            teacherId = resolved.teacherId || null;
+            teacherName = (resolved.teacherName && resolved.teacherName !== "Belum Ditentukan") ? resolved.teacherName : null;
+
+            // If Excel specified an explicit teacher name, validate against assignment
+            if (explicitTeacherStr) {
+              const explicitTeacher = teachers.find(t => 
+                t.name.toLowerCase().trim() === explicitTeacherStr!.toLowerCase().trim() ||
+                explicitTeacherStr!.toLowerCase().trim().includes(t.name.toLowerCase().trim())
+              );
+              if (explicitTeacher) {
+                // If there was an active assignment for this class that disagrees with Excel
+                if (resolved.source === "assignment" && resolved.teacherId && resolved.teacherId !== explicitTeacher.id) {
+                  slotErrors.push(`Konflik penugasan: Di Excel tertulis "${explicitTeacher.name}", namun di penugasan rombel aktif adalah "${resolved.teacherName}". Menggunakan penugasan rombel.`);
+                } else if (!teacherId) {
+                  teacherId = explicitTeacher.id;
+                  teacherName = explicitTeacher.name;
+                }
               }
             }
             
@@ -1931,6 +1962,7 @@ export default function Schedules() {
         instructionalPeriods={instructionalPeriods}
         selectedYearId={selectedYearId}
         selectedSemesterId={selectedSemesterId}
+        teacherAssignments={teacherAssignments as TeacherAssignment[]}
       />
 
       {/* POST-SCHEDULING FINAL ANALYSIS & STATUS PENJADWALAN */}
