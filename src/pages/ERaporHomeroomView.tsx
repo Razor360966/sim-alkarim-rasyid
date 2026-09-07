@@ -19,6 +19,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   Lock,
+  Unlock,
   Printer,
   RefreshCw,
   Search,
@@ -206,6 +207,40 @@ export default function ERaporHomeroomView() {
     } catch (e) {
       console.error("Error verifying class:", e);
       toast("Gagal mengubah status verifikasi kelas.", "error");
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  // Unlock / Reopen class back to DRAFT
+  const handleUnlockClass = async () => {
+    if (!window.confirm("Apakah Anda yakin ingin membuka status verifikasi kelas ini kembali menjadi DRAFT? Guru mata pelajaran akan dapat mengubah nilai kembali.")) {
+      return;
+    }
+    setIsVerifying(true);
+    try {
+      const res = await eRaporService.unlockClassVerification(
+        selectedAcademicYearId,
+        selectedSemesterId,
+        selectedClassId,
+        user?.uid || "",
+        user?.name || "Wali Kelas",
+        `Dibuka kembali oleh ${user?.name || "Wali Kelas"} pada ${new Date().toLocaleDateString("id-ID")}`
+      );
+      if (res.success) {
+        toast(res.message, "success");
+        const ver = await eRaporService.getClassVerification(
+          selectedAcademicYearId,
+          selectedSemesterId,
+          selectedClassId
+        );
+        setVerification(ver);
+      } else {
+        toast(res.message, "error");
+      }
+    } catch (e) {
+      console.error("Error unlocking class:", e);
+      toast("Gagal membuka status verifikasi kelas.", "error");
     } finally {
       setIsVerifying(false);
     }
@@ -515,6 +550,16 @@ export default function ERaporHomeroomView() {
               >
                 <Lock className="w-4 h-4" /> Terbitkan & Kunci Rapor
               </button>
+
+              {(verification?.status === "TERVERIFIKASI" || verification?.status === "LOCKED") && (
+                <button
+                  onClick={handleUnlockClass}
+                  disabled={isVerifying}
+                  className="px-4 py-2 text-xs font-semibold rounded-xl bg-amber-600 hover:bg-amber-700 text-white transition-all flex items-center gap-2"
+                >
+                  <Unlock className="w-4 h-4" /> Buka Kunci (Kembali ke Draft)
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -644,7 +689,8 @@ export default function ERaporHomeroomView() {
                   academicYear={printData.academicYear}
                   semester={printData.semester}
                   subjectsWithScores={printData.subjectsWithScores}
-                  umumSubjects={printData.umumSubjects}
+                  umumSubjects={printData.umumSubjects || printData.generalSubjects}
+                  generalSubjects={printData.generalSubjects}
                   pondokSubjects={printData.pondokSubjects}
                   extracurriculars={printData.extracurriculars}
                   verification={printData.verification}

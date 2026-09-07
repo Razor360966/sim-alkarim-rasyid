@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
@@ -111,10 +111,23 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
     ))
   );
 
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab") as "input" | "validasi" | "rekap" | "absensi_halaqah" | "rekap_halaqah" | null;
+
   // Default date = today's YYYY-MM-DD
   const todayStr = getTodayDateStr();
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
-  const [activeTab, setActiveTab] = useState<"input" | "validasi" | "rekap" | "absensi_halaqah" | "rekap_halaqah">("input");
+  const [activeTab, setActiveTab] = useState<"input" | "validasi" | "rekap" | "absensi_halaqah" | "rekap_halaqah">(
+    tabParam && ["input", "validasi", "rekap", "absensi_halaqah", "rekap_halaqah"].includes(tabParam)
+      ? tabParam
+      : "input"
+  );
+
+  useEffect(() => {
+    if (tabParam && ["input", "validasi", "rekap", "absensi_halaqah", "rekap_halaqah"].includes(tabParam)) {
+      setActiveTab(tabParam);
+    }
+  }, [tabParam]);
 
   // Validation State
   const [validationSearchQuery, setValidationSearchQuery] = useState<string>("");

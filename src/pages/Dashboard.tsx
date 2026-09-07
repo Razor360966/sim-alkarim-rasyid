@@ -26,6 +26,7 @@ import { teacherDisciplineService } from "../services/teacherDiscipline.service"
 import { teacherAssignmentService, resolveTeacherAssignmentSync } from "../services/teacherAssignment.service";
 import { WakasisDashboard } from "../components/dashboard/WakasisDashboard";
 import { WakasarprasDashboard } from "../components/dashboard/WakasarprasDashboard";
+import { HeadmasterSimplifiedDashboard } from "../components/dashboard/HeadmasterSimplifiedDashboard";
 import { ExecutiveComplianceDashboard } from "../components/dashboard/ExecutiveComplianceDashboard";
 import { ExecutiveTeachingAnalyticsWidget } from "../components/ExecutiveTeachingAnalyticsWidget";
 import { ExecutiveMutabaahWidget } from "../components/ExecutiveMutabaahWidget";
@@ -2099,7 +2100,14 @@ export const Dashboard: React.FC = () => {
   }
 
   // ==========================================
-  // 4. ADMIN, KEPALA SEKOLAH & KETUA YAYASAN VIEW (EXECUTIVE DASHBOARD)
+  // 4. KEPALA SEKOLAH SPECIFIC SIMPLIFIED VIEW
+  // ==========================================
+  if (viewingRole === "kepala_sekolah" || viewingRole === "kepala sekolah") {
+    return wrapWithSwitcher(<HeadmasterSimplifiedDashboard />);
+  }
+
+  // ==========================================
+  // 5. ADMIN & KETUA YAYASAN VIEW (EXECUTIVE DASHBOARD)
   // ==========================================
 
   return wrapWithSwitcher(

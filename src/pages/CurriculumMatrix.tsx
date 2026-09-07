@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from "react";
+import React, { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
@@ -648,9 +648,37 @@ export const CurriculumMatrixPage: React.FC = () => {
       jp: number;
     }[] = [];
 
-    const activeClasses = (classes as Class[]).filter(c => c.status === "Aktif" && !c.isDeleted);
+    const selectedYearObj = (academicYears as AcademicYear[]).find(
+      y => y.id === selectedYearId || y.academicYearId === selectedYearId
+    );
+    const selectedYearName = (selectedYearObj?.name || selectedYearObj?.year || "").trim();
 
+    // 1. Filter classes: must be active, not deleted, and match selected academic year
+    const activeClasses = (classes as Class[]).filter(c => {
+      if (c.status !== "Aktif" || c.isDeleted === true) return false;
+
+      if (selectedYearId) {
+        const matchesYear =
+          c.academicYearId === selectedYearId ||
+          (selectedYearObj && c.academicYearId === selectedYearObj.academicYearId) ||
+          (selectedYearName && c.academicYear && c.academicYear.trim().toLowerCase() === selectedYearName.toLowerCase()) ||
+          (selectedYearName && c.academicYearId && c.academicYearId.trim().toLowerCase() === selectedYearName.toLowerCase());
+
+        if (!matchesYear) return false;
+      }
+      return true;
+    });
+
+    // 2. Deduplicate by classId
+    const uniqueActiveClasses = new Map<string, Class>();
     activeClasses.forEach(cls => {
+      const classId = cls.id || cls.classId;
+      if (classId && !uniqueActiveClasses.has(classId)) {
+        uniqueActiveClasses.set(classId, cls);
+      }
+    });
+
+    Array.from(uniqueActiveClasses.values()).forEach(cls => {
       const grade = cls.gradeLevel;
       const classId = cls.id || cls.classId;
 
@@ -682,7 +710,7 @@ export const CurriculumMatrixPage: React.FC = () => {
     });
 
     return list;
-  }, [classes, matrixItems, selectedYearId, selectedSemesterId, teacherAssignments]);
+  }, [classes, matrixItems, selectedYearId, selectedSemesterId, teacherAssignments, academicYears]);
 
   // Keep local state in sync when query data loads/updates
   useEffect(() => {
@@ -1298,15 +1326,62 @@ export const CurriculumMatrixPage: React.FC = () => {
     toggleDifferentTeachersMutation.mutate({ id, useDifferentTeachers, subjectName });
   };
 
-  const getClassesForGrade = (grade: "VII" | "VIII" | "IX") => {
-    return (classes as Class[]).filter(c => {
-      if (c.gradeLevel && c.gradeLevel.toUpperCase() === grade) return true;
-      const nameUpper = (c.name || "").toUpperCase();
-      if (grade === "VII") return nameUpper.includes("7") || nameUpper.includes("VII");
-      if (grade === "VIII") return nameUpper.includes("8") || nameUpper.includes("VIII");
-      if (grade === "IX") return nameUpper.includes("9") || nameUpper.includes("IX");
-      return false;
+  const getClassesForGrade = (grade: "VII" | "VIII" | "IX"): Class[] => {
+    if (!classes || !Array.isArray(classes)) return [];
+
+    const selectedYearObj = (academicYears as AcademicYear[]).find(
+      y => y.id === selectedYearId || y.academicYearId === selectedYearId
+    );
+    const selectedYearName = (selectedYearObj?.name || selectedYearObj?.year || "").trim();
+    const targetArabic = grade === "VII" ? "7" : grade === "VIII" ? "8" : "9";
+
+    // 1. Filter: Status Aktif, isDeleted !== true, Year filter, and Grade filter
+    const filtered = (classes as Class[]).filter(c => {
+      // Status filter: only active and non-deleted
+      if (c.status !== "Aktif" || c.isDeleted === true) {
+        return false;
+      }
+
+      // Academic Year filter: only classes belonging to selected academic year
+      if (selectedYearId) {
+        const matchesYear =
+          c.academicYearId === selectedYearId ||
+          (selectedYearObj && c.academicYearId === selectedYearObj.academicYearId) ||
+          (selectedYearName && c.academicYear && c.academicYear.trim().toLowerCase() === selectedYearName.toLowerCase()) ||
+          (selectedYearName && c.academicYearId && c.academicYearId.trim().toLowerCase() === selectedYearName.toLowerCase());
+
+        if (!matchesYear) {
+          return false;
+        }
+      }
+
+      // Grade level filter (primary source: gradeLevel / grade, avoid loose name includes)
+      const cGrade = (c.gradeLevel || "").trim().toUpperCase();
+      const legacyGrade = (c.grade || "").trim().toUpperCase();
+
+      if (cGrade) {
+        return cGrade === grade || cGrade === targetArabic;
+      }
+      if (legacyGrade) {
+        return legacyGrade === grade || legacyGrade === targetArabic;
+      }
+
+      // Safe fallback if gradeLevel is missing (word boundary matching)
+      const nameTrim = (c.name || "").trim().toUpperCase();
+      const regex = new RegExp(`(^|\\b|\\s|_|-)(KELAS\\s+)?(${grade}|${targetArabic})($|\\b|\\s|[A-Z]|_|-|\\.)`, "i");
+      return regex.test(nameTrim);
     });
+
+    // 2. Client-side deduplication by document ID (classId / id)
+    const uniqueClasses = new Map<string, Class>();
+    filtered.forEach(cls => {
+      const classId = cls.id || cls.classId;
+      if (classId && !uniqueClasses.has(classId)) {
+        uniqueClasses.set(classId, cls);
+      }
+    });
+
+    return Array.from(uniqueClasses.values());
   };
 
   const renderTeacherAssignmentCell = (item: CurriculumMatrix) => {

@@ -86,6 +86,44 @@ export const HalaqahAttendanceRecapSection: React.FC<Props> = ({
   // Modal Drilldown
   const [detailTeacher, setDetailTeacher] = useState<{ teacherId: string; teacherName: string } | null>(null);
 
+  // Quick range helpers
+  const setRangeWeekly = () => {
+    const now = new Date();
+    const day = now.getDay();
+    const diffToMon = now.getDate() - (day === 0 ? 6 : day - 1);
+    const monday = new Date(now.getFullYear(), now.getMonth(), diffToMon);
+    const saturday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 5);
+
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const mStr = `${monday.getFullYear()}-${pad(monday.getMonth() + 1)}-${pad(monday.getDate())}`;
+    const sStr = `${saturday.getFullYear()}-${pad(saturday.getMonth() + 1)}-${pad(saturday.getDate())}`;
+    setStartDate(mStr);
+    setEndDate(sStr);
+  };
+
+  const setRangeMonthly = () => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    setStartDate(`${y}-${m}-01`);
+    setEndDate(todayStr);
+  };
+
+  const setRangeSemester = () => {
+    const activeSem = semesters.find(s => s.id === selectedSemesterId);
+    if (activeSem?.startDate && activeSem?.endDate) {
+      setStartDate(activeSem.startDate);
+      setEndDate(activeSem.endDate);
+    } else {
+      const now = new Date();
+      const sixMonthsAgo = new Date();
+      sixMonthsAgo.setMonth(now.getMonth() - 5);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      setStartDate(`${sixMonthsAgo.getFullYear()}-${pad(sixMonthsAgo.getMonth() + 1)}-01`);
+      setEndDate(todayStr);
+    }
+  };
+
   // Master Data Queries
   const { data: groups = [] } = useQuery({
     queryKey: ["halaqahGroups"],
@@ -322,6 +360,19 @@ export const HalaqahAttendanceRecapSection: React.FC<Props> = ({
         </div>
       </div>
 
+      {/* Context Separation Notice */}
+      <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/60 rounded-2xl p-4 flex items-start gap-3 text-xs text-amber-900 dark:text-amber-200 shadow-xs">
+        <BookOpen className="w-5 h-5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+        <div className="space-y-1">
+          <h4 className="font-bold text-amber-950 dark:text-amber-100">
+            Konteks Khusus: Presensi Guru Pembimbing Halaqoh (Tahfidz / Al-Qur'an / Musrif)
+          </h4>
+          <p className="text-slate-600 dark:text-zinc-300 leading-relaxed">
+            Kegiatan Halaqoh merupakan agenda rutin pembinaan Al-Qur'an pondok dan <strong>terpisah sepenuhnya</strong> dari kegiatan belajar mengajar (KBM) mata pelajaran reguler sekolah. Keterlambatan dan ketidakhadiran dihitung untuk pembinaan kedisiplinan serta tidak mengurangi Jam Pelajaran (JP) mengajar guru sekolah.
+          </p>
+        </div>
+      </div>
+
       {/* KPI Stats Cards (Expected vs Actual) */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <div className="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-slate-200 dark:border-zinc-800 shadow-sm space-y-1">
@@ -421,6 +472,34 @@ export const HalaqahAttendanceRecapSection: React.FC<Props> = ({
           </div>
         </div>
 
+        {/* Quick Range Presets */}
+        <div className="flex flex-wrap items-center gap-2 pt-1 pb-1">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1">
+            Preset Waktu:
+          </span>
+          <button
+            onClick={setRangeWeekly}
+            className="px-2.5 py-1 text-xs font-semibold bg-slate-100 dark:bg-zinc-800 hover:bg-emerald-50 hover:text-emerald-700 dark:hover:bg-emerald-950/40 text-slate-700 dark:text-zinc-300 rounded-lg transition-all cursor-pointer"
+          >
+            Pekan Ini (Mingguan)
+          </button>
+          <button
+            onClick={setRangeMonthly}
+            className="px-2.5 py-1 text-xs font-semibold bg-slate-100 dark:bg-zinc-800 hover:bg-emerald-50 hover:text-emerald-700 dark:hover:bg-emerald-950/40 text-slate-700 dark:text-zinc-300 rounded-lg transition-all cursor-pointer"
+          >
+            Bulan Ini (Bulanan)
+          </button>
+          <button
+            onClick={setRangeSemester}
+            className="px-2.5 py-1 text-xs font-semibold bg-slate-100 dark:bg-zinc-800 hover:bg-emerald-50 hover:text-emerald-700 dark:hover:bg-emerald-950/40 text-slate-700 dark:text-zinc-300 rounded-lg transition-all cursor-pointer"
+          >
+            Semester Ini
+          </button>
+          <span className="text-[10px] text-slate-400 ml-auto hidden sm:inline">
+            Rentang: <strong className="text-slate-600 dark:text-zinc-300">{startDate}</strong> s.d. <strong className="text-slate-600 dark:text-zinc-300">{endDate}</strong>
+          </span>
+        </div>
+
         {/* Filter inputs */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
           <div>
@@ -513,20 +592,22 @@ export const HalaqahAttendanceRecapSection: React.FC<Props> = ({
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 dark:bg-zinc-800/80 text-slate-500 dark:text-zinc-400 font-bold uppercase tracking-wider border-b border-slate-200 dark:border-zinc-800">
                 <tr>
-                  <th className="px-4 py-3">Tanggal / Hari</th>
-                  <th className="px-4 py-3">Guru Pembimbing</th>
-                  <th className="px-4 py-3">Group Halaqah</th>
-                  <th className="px-4 py-3">Jadwal Mulai - Selesai</th>
-                  <th className="px-4 py-3">Check-In</th>
-                  <th className="px-4 py-3">Check-Out</th>
-                  <th className="px-4 py-3">Durasi</th>
-                  <th className="px-4 py-3">Status Kehadiran</th>
+                  <th className="px-3 py-3 text-center w-10">No</th>
+                  <th className="px-4 py-3">Hari / Tanggal</th>
+                  <th className="px-4 py-3">Waktu Presensi (Check-in)</th>
+                  <th className="px-4 py-3">Jam Mulai Resmi</th>
+                  <th className="px-4 py-3">Keterlambatan (menit)</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Waktu Selesai (Check-out)</th>
+                  <th className="px-4 py-3">Durasi Membimbing</th>
+                  <th className="px-4 py-3">Kelompok Halaqoh</th>
+                  <th className="px-4 py-3">Nama Guru / Pembimbing</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-zinc-800">
                 {filteredDailyRecords.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center text-slate-400">
+                    <td colSpan={10} className="px-4 py-8 text-center text-slate-400">
                       Tidak ada data absensi halaqah yang sesuai dengan filter.
                     </td>
                   </tr>
@@ -534,37 +615,39 @@ export const HalaqahAttendanceRecapSection: React.FC<Props> = ({
                   filteredDailyRecords.map((r, idx) => {
                     const isMissing = r.isExpectedMissing;
                     const isCompleted = !!r.checkOutTime;
+                    const delayM = r.delayMinutes || 0;
+                    const isLateThreshold = delayM >= 15;
 
                     return (
                       <tr key={r.id || idx} className="hover:bg-slate-50/80 dark:hover:bg-zinc-800/50 transition-colors">
+                        <td className="px-3 py-3 text-center text-slate-400 font-semibold">{idx + 1}</td>
                         <td className="px-4 py-3 font-semibold text-slate-800 dark:text-zinc-200">
-                          <div>{r.date}</div>
-                          <span className="text-[10px] text-slate-400 font-normal">{r.dayName}</span>
-                        </td>
-                        <td className="px-4 py-3 font-bold text-slate-900 dark:text-zinc-100">
-                          {r.teacherName}
-                        </td>
-                        <td className="px-4 py-3 font-medium text-emerald-700 dark:text-emerald-400">
-                          {r.groupName}
-                        </td>
-                        <td className="px-4 py-3 text-slate-600 dark:text-zinc-300 font-mono">
-                          {r.startTime || "06:00"} - {r.endTime || "07:30"} WIB
+                          <div>{r.dayName || "-"}</div>
+                          <span className="text-[11px] text-slate-500 font-normal">{r.date}</span>
                         </td>
                         <td className="px-4 py-3 font-mono font-bold text-slate-800 dark:text-zinc-200">
                           {r.checkInTime || "-"}
                         </td>
-                        <td className="px-4 py-3 font-mono font-bold text-slate-800 dark:text-zinc-200">
-                          {r.checkOutTime || "-"}
+                        <td className="px-4 py-3 text-slate-600 dark:text-zinc-300 font-mono">
+                          {r.startTime || "07:10"} WIB
                         </td>
-                        <td className="px-4 py-3 text-slate-600 dark:text-zinc-300 font-semibold">
-                          {r.duration ? `${r.duration} mnt` : "-"}
+                        <td className="px-4 py-3">
+                          {isMissing ? (
+                            <span className="text-slate-400">-</span>
+                          ) : delayM > 0 ? (
+                            <span className={`font-bold ${isLateThreshold ? "text-rose-600" : "text-amber-600"}`}>
+                              {delayM} menit
+                            </span>
+                          ) : (
+                            <span className="text-emerald-600 font-semibold">0 menit (Tepat Waktu)</span>
+                          )}
                         </td>
                         <td className="px-4 py-3">
                           <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold ${
-                            isMissing
+                            isMissing || isLateThreshold
                               ? "bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800"
                               : isCompleted
-                                ? r.status === "Terlambat"
+                                ? delayM > 0
                                   ? "bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-800"
                                   : "bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800"
                                 : "bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-800 animate-pulse"
@@ -574,18 +657,42 @@ export const HalaqahAttendanceRecapSection: React.FC<Props> = ({
                                 <UserX className="w-3 h-3" />
                                 Tidak Hadir (Kosong)
                               </>
-                            ) : isCompleted ? (
+                            ) : isLateThreshold ? (
                               <>
-                                <CheckCircle2 className="w-3 h-3" />
-                                {r.status || "Hadir / Selesai"}
+                                <AlertTriangle className="w-3 h-3" />
+                                Tidak Hadir (Terlambat ≥15m)
                               </>
+                            ) : isCompleted ? (
+                              delayM > 0 ? (
+                                <>
+                                  <Clock className="w-3 h-3" />
+                                  Hadir (Terlambat)
+                                </>
+                              ) : (
+                                <>
+                                  <CheckCircle2 className="w-3 h-3" />
+                                  Hadir (Tepat Waktu)
+                                </>
+                              )
                             ) : (
                               <>
                                 <Clock className="w-3 h-3" />
-                                Belum Check-out
+                                Sedang Membimbing
                               </>
                             )}
                           </span>
+                        </td>
+                        <td className="px-4 py-3 font-mono text-slate-800 dark:text-zinc-200">
+                          {r.checkOutTime || "-"}
+                        </td>
+                        <td className="px-4 py-3 text-slate-600 dark:text-zinc-300 font-semibold">
+                          {r.duration ? `${r.duration} menit` : "-"}
+                        </td>
+                        <td className="px-4 py-3 font-medium text-emerald-700 dark:text-emerald-400">
+                          {r.groupName}
+                        </td>
+                        <td className="px-4 py-3 font-bold text-slate-900 dark:text-zinc-100">
+                          {r.teacherName}
                         </td>
                       </tr>
                     );

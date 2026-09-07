@@ -18,12 +18,15 @@ export const authService = {
     // Fetch profile
     const profile = await this.getUserProfile(user.uid);
     if (!profile) {
-      // Create default profile if not exists
+      // Create default profile if not exists (Least Privilege: defaults to operator, admin reserved for superadmin)
+      const isSuperAdmin = (user.email || email).toLowerCase() === "razor6155@gmail.com";
+      const assignedRole = isSuperAdmin ? "admin" : "operator";
       const newProfile: UserProfile = {
         uid: user.uid,
         email: user.email || email,
         displayName: user.displayName || email.split("@")[0],
-        role: "admin", // default role
+        role: assignedRole,
+        roles: [assignedRole],
         createdAt: new Date().toISOString()
       };
       await this.saveUserProfile(newProfile);

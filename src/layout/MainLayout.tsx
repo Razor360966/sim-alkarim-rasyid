@@ -178,6 +178,7 @@ export const MainLayout: React.FC = () => {
     { name: "QR Simulation (Sandbox)", path: "/teaching-qr-simulation", icon: FlaskConical, roles: ["admin", "wakil kepala sekolah", "operator"], group: "Monitoring Pembelajaran" },
     { name: "Absensi Siswa / Santri", path: "/student-attendance", icon: Users, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Monitoring Pembelajaran" },
     { name: "Absensi Mengajar Guru", path: "/teacher-teaching-attendance", icon: ClipboardList, roles: ["admin", "wakil kepala sekolah", "kepala sekolah", "pimpinan", "ketua yayasan", "operator"], group: "Monitoring Pembelajaran" },
+    { name: "Rekap Guru Halaqoh", path: "/teacher-teaching-attendance?tab=rekap_halaqah", icon: Award, roles: ["admin", "wakil kepala sekolah", "kepala sekolah", "pimpinan", "ketua yayasan", "operator"], group: "Monitoring Pembelajaran" },
     { name: "Kedisiplinan Guru", path: "/teacher-discipline", icon: Shield, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Monitoring Pembelajaran" },
 
     // Perencanaan Pembelajaran

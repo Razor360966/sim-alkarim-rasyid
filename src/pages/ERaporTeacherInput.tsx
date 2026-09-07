@@ -1294,7 +1294,7 @@ export default function ERaporTeacherInput() {
                   <button
                     type="button"
                     onClick={() => setShowSchemeEditor(true)}
-                    disabled={isClassLocked || !settings.isOpen}
+                    disabled={isInputDisabled}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white transition-colors shadow-xs"
                   >
                     <Settings2 className="w-3.5 h-3.5" /> Ubah Skema
@@ -1577,7 +1577,7 @@ export default function ERaporTeacherInput() {
                     <button
                       type="button"
                       onClick={handleInitiateSaveScheme}
-                      disabled={!isSchemeWeightValid || isSavingScheme || isClassLocked || !settings.isOpen}
+                      disabled={!isSchemeWeightValid || isSavingScheme || isInputDisabled}
                       className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white transition-colors shadow-xs"
                     >
                       {isSavingScheme ? (
@@ -1700,7 +1700,7 @@ export default function ERaporTeacherInput() {
                                     type="number"
                                     min="0"
                                     max="100"
-                                    disabled={isClassLocked || !settings.isOpen}
+                                    disabled={isInputDisabled}
                                     value={scoreVal !== null && scoreVal !== undefined ? scoreVal : ""}
                                     onChange={(e) => handlePondokScoreChange(st.id!, "daily", i, e.target.value)}
                                     placeholder="0-100"
@@ -1728,7 +1728,7 @@ export default function ERaporTeacherInput() {
                                 type="number"
                                 min="0"
                                 max="100"
-                                disabled={isClassLocked || !settings.isOpen}
+                                disabled={isInputDisabled}
                                 value={pAss.utsScore !== null && pAss.utsScore !== undefined ? pAss.utsScore : ""}
                                 onChange={(e) => handlePondokScoreChange(st.id!, "uts", 0, e.target.value)}
                                 placeholder="0-100"
@@ -1744,7 +1744,7 @@ export default function ERaporTeacherInput() {
                                 type="number"
                                 min="0"
                                 max="100"
-                                disabled={isClassLocked || !settings.isOpen}
+                                disabled={isInputDisabled}
                                 value={pAss.semesterScore !== null && pAss.semesterScore !== undefined ? pAss.semesterScore : ""}
                                 onChange={(e) => handlePondokScoreChange(st.id!, "semester", 0, e.target.value)}
                                 placeholder="0-100"
@@ -1764,7 +1764,7 @@ export default function ERaporTeacherInput() {
                           <td className="p-2">
                             <textarea
                               rows={2}
-                              disabled={isClassLocked || !settings.isOpen}
+                              disabled={isInputDisabled}
                               value={pAss.ketercapaian || ""}
                               onChange={(e) => handlePondokTextChange(st.id!, "ketercapaian", e.target.value)}
                               placeholder="Deskripsi pencapaian kompetensi materi diniyah/pondok..."
@@ -1776,7 +1776,7 @@ export default function ERaporTeacherInput() {
                           <td className="p-2">
                             <input
                               type="text"
-                              disabled={isClassLocked || !settings.isOpen}
+                              disabled={isInputDisabled}
                               value={pAss.notes || ""}
                               onChange={(e) => handlePondokTextChange(st.id!, "notes", e.target.value)}
                               placeholder="Catatan opsional..."
@@ -1855,7 +1855,7 @@ export default function ERaporTeacherInput() {
                               type="number"
                               min="0"
                               max="100"
-                              disabled={isClassLocked || !settings.isOpen}
+                              disabled={isInputDisabled}
                               value={scoreVal}
                               onChange={(e) => handleScoreChange(st.id!, "tp", tpIdx, e.target.value)}
                               placeholder="-"
@@ -1880,7 +1880,7 @@ export default function ERaporTeacherInput() {
                           type="number"
                           min="0"
                           max="100"
-                          disabled={isClassLocked || !settings.isOpen}
+                          disabled={isInputDisabled}
                           value={ass.utsScore !== null && ass.utsScore !== undefined ? ass.utsScore : ""}
                           onChange={(e) => handleScoreChange(st.id!, "uts", null, e.target.value)}
                           placeholder="-"
@@ -1898,7 +1898,7 @@ export default function ERaporTeacherInput() {
                           type="number"
                           min="0"
                           max="100"
-                          disabled={isClassLocked || !settings.isOpen}
+                          disabled={isInputDisabled}
                           value={ass.sasScore !== null && ass.sasScore !== undefined ? ass.sasScore : ""}
                           onChange={(e) => handleScoreChange(st.id!, "sas", null, e.target.value)}
                           placeholder="-"
@@ -1965,7 +1965,7 @@ export default function ERaporTeacherInput() {
                       {/* Status Keikutsertaan */}
                       <td className="p-2">
                         <select
-                          disabled={isClassLocked || !settings.isOpen}
+                          disabled={isInputDisabled}
                           value={eAss.participationStatus}
                           onChange={(e) => handleEkskulChange(st.id!, "participationStatus", e.target.value)}
                           className="w-full text-xs p-2 rounded-lg border bg-white dark:bg-zinc-900 border-slate-200 dark:border-zinc-700 font-semibold"
@@ -1981,7 +1981,7 @@ export default function ERaporTeacherInput() {
                       <td className="p-2">
                         <textarea
                           rows={2}
-                          disabled={isClassLocked || !settings.isOpen}
+                          disabled={isInputDisabled}
                           value={eAss.progress}
                           onChange={(e) => handleEkskulChange(st.id!, "progress", e.target.value)}
                           placeholder="Catatan perkembangan keterampilan dan sikap siswa dalam ekstrakurikuler..."
@@ -1993,7 +1993,7 @@ export default function ERaporTeacherInput() {
                       <td className="p-2">
                         <input
                           type="text"
-                          disabled={isClassLocked || !settings.isOpen}
+                          disabled={isInputDisabled}
                           value={eAss.notes || ""}
                           onChange={(e) => handleEkskulChange(st.id!, "notes", e.target.value)}
                           placeholder="Catatan tambahan..."

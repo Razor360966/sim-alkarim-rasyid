@@ -1,58 +1,179 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Master Jabatans Rules
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isSuperAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == "razor6155@gmail.com"
+      );
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdminOrOperator() {
+      return isAuthenticated() && (
+        isSuperAdmin() ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
+          getUserData().role in ['admin', 'operator', 'kepala sekolah', 'wakil kepala sekolah', 'tata usaha'] ||
+          getUserData().roles.hasAny(['admin', 'operator', 'kepala sekolah', 'wakil kepala sekolah', 'tata usaha'])
+        ))
+      );
+    }
+
+    function isClassVerificationLocked(ayId, semId, clsId) {
+      let verifPath = /databases/$(database)/documents/e_rapor_class_verifications/$(ayId + '_' + semId + '_' + clsId);
+      return exists(verifPath) && (
+        get(verifPath).data.status == 'LOCKED' || 
+        get(verifPath).data.status == 'TERVERIFIKASI'
+      );
+    }
+
+    // 1. Users collection: Prevent unauthorized privilege escalation
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      // Allow user self-creation or Admin/Operator creation
+      allow create: if isAuthenticated() && (
+        (request.auth.uid == userId && (
+          isSuperAdmin() ||
+          (request.resource.data.role != 'admin' && !request.resource.data.roles.hasAny(['admin']))
+        )) ||
+        isAdminOrOperator()
+      );
+      // Allow user self-update of profile fields, but prevent privilege escalation (role, roles, status, teacherId, isDeleted, permissions, isAdmin)
+      allow update: if isAuthenticated() && (
+        isAdminOrOperator() ||
+        (request.auth.uid == userId &&
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'role', 'roles', 'status', 'teacherId', 'isDeleted', 'permissions', 'isAdmin', 'isSuperadmin'
+          ])
+        )
+      );
+      allow delete: if isAdminOrOperator();
+    }
+
+    // 2. Audit Trail: Immutable append-only
+    match /activity_logs/{logId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    match /login_history/{historyId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    // 3. Settings & Teacher Assignments: Managed by Admin/Operator
+    match /settings/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /teacher_assignments/{assignmentId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    // 4. e-Rapor Assessments & Schemes: Locked when class verified/locked
+    match /e_rapor_assessments/{docId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && (
+        isAdminOrOperator() ||
+        !isClassVerificationLocked(request.resource.data.academicYearId, request.resource.data.semesterId, request.resource.data.classId)
+      );
+      allow delete: if isAdminOrOperator();
+    }
+
+    match /e_rapor_pondok_assessments/{docId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && (
+        isAdminOrOperator() ||
+        !isClassVerificationLocked(request.resource.data.academicYearId, request.resource.data.semesterId, request.resource.data.classId)
+      );
+      allow delete: if isAdminOrOperator();
+    }
+
+    match /e_rapor_pondok_schemes/{docId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && (
+        isAdminOrOperator() ||
+        !isClassVerificationLocked(request.resource.data.academicYearId, request.resource.data.semesterId, request.resource.data.classId)
+      );
+      allow delete: if isAdminOrOperator();
+    }
+
+    match /e_rapor_extracurricular_assessments/{docId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && (
+        isAdminOrOperator() ||
+        !isClassVerificationLocked(request.resource.data.academicYearId, request.resource.data.semesterId, request.resource.data.classId)
+      );
+      allow delete: if isAdminOrOperator();
+    }
+
+    // 5. Verification & Grade Change Requests
+    match /e_rapor_class_verifications/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (
+        isAdminOrOperator() ||
+        request.auth.uid == request.resource.data.homeroomTeacherId ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         getUserData().teacherId == request.resource.data.homeroomTeacherId)
+      );
+    }
+
+    match /e_rapor_grade_change_requests/{docId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated();
+      allow delete: if isAdminOrOperator();
+    }
+
+    // 6. Master & Operational Modules
     match /master_jabatans/{jabatanId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow read, write: if isAuthenticated();
     }
-    
-    // SDM Performance Evaluations Rules
     match /sdm_performance_evaluations/{evalId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isAuthenticated();
     }
-
-    // Supervision Academic Rules
     match /supervision_academic/{supervisionId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isAuthenticated();
     }
-
-    // Supervision Managerial Rules
     match /supervision_managerial/{supervisionId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isAuthenticated();
     }
-
-    // Supervision Central Schedules Rules
     match /supervision_schedules/{scheduleId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isAuthenticated();
     }
-
-    // Supervision Assessment Instruments Rules
     match /supervision_instruments/{instrumentId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isAuthenticated();
     }
-
-    // Inventaris Masuk Santri Rules
     match /inventaris_goods/{goodId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isAuthenticated();
     }
     match /inventaris_categories/{catId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isAuthenticated();
     }
     match /inventaris_examiners/{examinerId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isAuthenticated();
     }
     match /inventaris_santri/{studentId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isAuthenticated();
     }
     match /riwayat_pemeriksaan/{historyId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isAuthenticated();
     }
 
-    // Default permissive catch-all for existing tables to prevent regressions
+    // Default permissive catch-all for remaining school operational tables
     match /{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isAuthenticated();
     }
   }
 }

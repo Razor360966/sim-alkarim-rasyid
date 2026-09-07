@@ -7,6 +7,7 @@ interface SubjectWithScore {
   subjectName: string;
   group?: string;
   finalScore: number | null;
+  score?: number | null;
   tpAverage?: number | null;
   utsScore?: number | null;
   sasScore?: number | null;
@@ -24,6 +25,7 @@ interface ERaporPrintableProps {
   semester: string;
   subjectsWithScores?: SubjectWithScore[];
   umumSubjects?: SubjectWithScore[];
+  generalSubjects?: SubjectWithScore[];
   pondokSubjects?: SubjectWithScore[];
   extracurriculars?: ERaporExtracurricularAssessment[];
   verification: ERaporClassVerification | null;
@@ -41,6 +43,7 @@ export const ERaporPrintable: React.FC<ERaporPrintableProps> = ({
   semester,
   subjectsWithScores,
   umumSubjects,
+  generalSubjects,
   pondokSubjects,
   extracurriculars = [],
   verification,
@@ -92,7 +95,7 @@ export const ERaporPrintable: React.FC<ERaporPrintableProps> = ({
   const headmasterName = printConfig?.headmasterName || identity?.principalName || identity?.headmasterName || "H. Abdullah, M.Pd.";
   const headmasterSignatureUrl = printConfig?.headmasterSignatureUrl || identity?.principalSignatureUrl || identity?.headmasterSignatureUrl || "";
 
-  const effectiveUmum = umumSubjects || subjectsWithScores || [];
+  const effectiveUmum = generalSubjects || umumSubjects || subjectsWithScores || [];
   const effectivePondok = pondokSubjects || [];
 
   const groupA = effectiveUmum.filter((s) => s.group === "A" || !s.group);

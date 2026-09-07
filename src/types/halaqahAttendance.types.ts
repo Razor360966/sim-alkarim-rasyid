@@ -25,7 +25,12 @@ export interface TeacherHalaqahAttendance {
   checkInTime: string; // HH:mm
   checkOutTime?: string; // HH:mm
   duration?: number; // minutes
-  status: string;
+  status: string; // "Tepat Waktu" | "Terlambat" | "Tidak Hadir" | "Selesai Membimbing"
+  delayMinutes?: number; // minutes
+  isLate?: boolean;
+  scheduledStartTime?: string;
+  scheduledEndTime?: string;
+  notes?: string;
   academicYearId: string;
   semesterId: string;
   createdAt: string;

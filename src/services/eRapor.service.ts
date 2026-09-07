@@ -35,13 +35,14 @@ import {
   ERaporStudentCompleteness,
   ERaporExecutiveDrilldownItem
 } from "../types/eRapor.types";
-import { Student, Subject, AcademicYear, Semester } from "../types";
+import { Student, Subject, AcademicYear, Semester, TeacherAssignment } from "../types";
 import { isStudentActive } from "../utils/studentHelper";
 import { AppConfig, APP_CONFIG } from "../config/appConfig";
 import { academicYearService } from "./academicYear.service";
 import { semesterService } from "./semester.service";
 import { studentService } from "./studentService";
 import { subjectService } from "./subjectService";
+import { teacherAssignmentService } from "./teacherAssignment.service";
 import { getSubjectGroupType, isSubjectReportVisible } from "../utils/subjectHelper";
 
 const COLLECTION_TPS = "e_rapor_tps";
@@ -62,6 +63,16 @@ export function buildPondokSchemeDocId(
   subjectId: string
 ): string {
   return `${academicYearId}_${semesterId}_${classId}_${subjectId}`.replace(/[\/\s]+/g, "_");
+}
+
+export function buildPondokAssessmentDocId(
+  academicYearId: string,
+  semesterId: string,
+  classId: string,
+  subjectId: string,
+  studentId: string
+): string {
+  return `${academicYearId}_${semesterId}_${classId}_${subjectId}_${studentId}`.replace(/[\/\s]+/g, "_");
 }
 
 export function validatePondokScheme(scheme: Partial<ERaporPondokScheme>): void {
@@ -815,7 +826,13 @@ export const eRaporService = {
         continue;
       }
 
-      const docId = `${item.academicYearId}_${item.semesterId}_${item.classId}_${item.subjectId}_${item.studentId}`;
+      const docId = buildPondokAssessmentDocId(
+        item.academicYearId,
+        item.semesterId,
+        item.classId,
+        item.subjectId,
+        item.studentId
+      );
       const docRef = doc(db, COLLECTION_PONDOK_ASSESSMENTS, docId);
 
       const rawScore = item.finalScore ?? item.score;
@@ -1089,6 +1106,78 @@ export const eRaporService = {
       success: true,
       message: `Status kelas ${className} berhasil diubah menjadi ${targetStatus}.`
     };
+  },
+
+  /**
+   * Unlock a previously verified or locked class back to DRAFT.
+   * Authorized for Homeroom Teachers (Wali Kelas) and Administrators.
+   * Records audit trail of who unlocked the class and when.
+   */
+  async unlockClassVerification(
+    academicYearId: string,
+    semesterId: string,
+    classId: string,
+    unlockedById: string,
+    unlockedByName: string,
+    reason: string = "Buka kunci untuk perbaikan nilai"
+  ): Promise<{ success: boolean; message: string }> {
+    const docId = `${academicYearId}_${semesterId}_${classId}`;
+    const docRef = doc(db, COLLECTION_VERIFICATIONS, docId);
+    const existingSnap = await getDoc(docRef);
+
+    if (!existingSnap.exists()) {
+      return { success: false, message: "Dokumen verifikasi kelas tidak ditemukan." };
+    }
+
+    const currentData = existingSnap.data() as ERaporClassVerification;
+    const nowStr = new Date().toISOString();
+
+    const payload: Partial<ERaporClassVerification> & {
+      unlockedAt?: string;
+      unlockedBy?: string;
+      unlockedByName?: string;
+      unlockReason?: string;
+    } = {
+      status: "DRAFT",
+      updatedAt: nowStr,
+      unlockedAt: nowStr,
+      unlockedBy: unlockedById,
+      unlockedByName: unlockedByName,
+      unlockReason: reason,
+      notes: reason ? `[DIBUKA KEMBALI]: ${reason}` : currentData.notes
+    };
+
+    await setDoc(docRef, payload, { merge: true });
+
+    return {
+      success: true,
+      message: `Status verifikasi kelas ${currentData.className || classId} berhasil dibuka kembali menjadi DRAFT.`
+    };
+  },
+
+  /**
+   * Validates whether a specific teacher is authorized to input assessments for a given subject & class.
+   * SSOT: Uses teacherAssignmentService.resolveTeacherAssignmentSync
+   */
+  isTeacherAuthorizedForSubject(
+    teacherId: string,
+    academicYearId: string,
+    semesterId: string,
+    classId: string,
+    subjectId: string,
+    assignments: TeacherAssignment[]
+  ): boolean {
+    if (!teacherId || !academicYearId || !semesterId || !classId || !subjectId) {
+      return false;
+    }
+    const resolved = teacherAssignmentService.resolveTeacherAssignmentSync({
+      academicYearId,
+      semesterId,
+      classId,
+      subjectId,
+      preloadedAssignments: assignments
+    });
+    return Boolean(resolved && resolved.teacherId === teacherId);
   },
 
   // ----------------------------------------------------
@@ -1420,6 +1509,15 @@ export const eRaporService = {
       sasScore: number | null;
       description: string;
     }[];
+    umumSubjects?: {
+      subjectName: string;
+      group: string;
+      finalScore: number | null;
+      tpAverage: number | null;
+      utsScore: number | null;
+      sasScore: number | null;
+      description: string;
+    }[];
     pondokSubjects: {
       subjectName: string;
       finalScore: number | null;
@@ -1572,6 +1670,7 @@ export const eRaporService = {
       homeroomTeacherName,
       identity,
       generalSubjects,
+      umumSubjects: generalSubjects,
       pondokSubjects,
       extracurriculars,
       verification

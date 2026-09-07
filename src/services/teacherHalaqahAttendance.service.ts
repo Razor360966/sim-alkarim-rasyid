@@ -420,8 +420,26 @@ export const teacherHalaqahAttendanceService = {
 
       // Step 7. Check In Case
       const startM = parseTimeToMinutes(scheduledStartTime);
-      const isLate = currentM > (startM + 15);
-      const initialStatus = isLate ? "Terlambat" : "Tepat Waktu";
+      const delayMinutes = currentM - startM;
+      
+      let initialStatus: "Tepat Waktu" | "Terlambat" | "Tidak Hadir" = "Tepat Waktu";
+      let isLate = false;
+      let lateMinutes = 0;
+
+      if (delayMinutes <= 0) {
+        initialStatus = "Tepat Waktu";
+        isLate = false;
+        lateMinutes = 0;
+      } else if (delayMinutes < 15) {
+        initialStatus = "Terlambat";
+        isLate = true;
+        lateMinutes = delayMinutes;
+      } else {
+        // delayMinutes >= 15 -> Batas tepat 15 menit masuk kategori TIDAK HADIR
+        initialStatus = "Tidak Hadir";
+        isLate = true;
+        lateMinutes = delayMinutes;
+      }
 
       const newDocRef = doc(collection(db, HALAQAH_ATTENDANCE_COLLECTION));
       const nowIso = new Date().toISOString();
@@ -438,6 +456,13 @@ export const teacherHalaqahAttendanceService = {
         checkOutTime: "",
         duration: 0,
         status: initialStatus,
+        delayMinutes: lateMinutes,
+        isLate: isLate,
+        scheduledStartTime,
+        scheduledEndTime,
+        notes: lateMinutes > 0 
+          ? (initialStatus === "Tidak Hadir" ? `Terlambat ${lateMinutes} menit (mencapai/melebihi batas 15 menit -> Tidak Hadir)` : `Terlambat ${lateMinutes} menit (Hadir)`)
+          : "Tepat Waktu",
         academicYearId: params.academicYearId || "AY_ACTIVE",
         semesterId: params.semesterId || "SEM_ACTIVE",
         createdAt: nowIso,
@@ -446,12 +471,18 @@ export const teacherHalaqahAttendanceService = {
 
       await setDoc(newDocRef, newRecord);
 
+      const statusFeedback = delayMinutes <= 0
+        ? "HADIR (Tepat Waktu)"
+        : (delayMinutes < 15
+            ? `HADIR (Terlambat ${lateMinutes} menit)`
+            : `TIDAK HADIR (Keterlambatan ${lateMinutes} menit mencapai/melebihi batas 15 menit)`);
+
       return {
         success: true,
         action: "CHECK_IN",
         groupId,
         groupName,
-        message: `CHECK-IN BERHASIL\n\n${groupName}\nPembimbing: ${params.currentUser.name}\nWaktu Check-in: ${currentTimeStr} WIB (${initialStatus})\nJadwal Resmi: ${scheduledStartTime} - ${scheduledEndTime} WIB`,
+        message: `CHECK-IN ${initialStatus === "Tidak Hadir" ? "TERCATAT TIDAK HADIR" : "BERHASIL"}\n\n${groupName}\nPembimbing: ${params.currentUser.name}\nWaktu Check-in: ${currentTimeStr} WIB\nJadwal Resmi: ${scheduledStartTime} - ${scheduledEndTime} WIB\nKeterlambatan: ${lateMinutes > 0 ? `${lateMinutes} menit` : "0 menit (Tepat Waktu)"}\nStatus Presensi: ${statusFeedback}`,
         record: newRecord
       };
 
@@ -902,24 +933,31 @@ export const teacherHalaqahAttendanceService = {
 
           if (actual) {
             entry.totalActual++;
-            const startM = parseTimeToMinutes(agenda.startTime || "07:10");
+            const startM = parseTimeToMinutes(actual.scheduledStartTime || agenda.startTime || "07:10");
             const checkInM = parseTimeToMinutes(actual.checkInTime || "00:00");
+            const delayMinutes = actual.delayMinutes !== undefined 
+              ? actual.delayMinutes 
+              : (checkInM > 0 && startM > 0 ? checkInM - startM : 0);
 
-            let computedStatus = actual.status || "Hadir";
+            let computedStatus = "Tepat Waktu";
 
-            if (actual.checkOutTime) {
-              if (checkInM > startM + 15) {
-                entry.terlambat++;
-                computedStatus = "Terlambat";
-              } else {
-                entry.tepatWaktu++;
-                computedStatus = "Tepat Waktu";
-              }
+            if (delayMinutes <= 0) {
+              computedStatus = "Tepat Waktu";
+              entry.tepatWaktu++;
               entry.hadir++;
-            } else if (actual.checkInTime) {
+            } else if (delayMinutes < 15) {
+              computedStatus = "Terlambat";
+              entry.terlambat++;
+              entry.hadir++;
+            } else {
+              // delayMinutes >= 15 -> Batas tepat 15 menit masuk kategori TIDAK HADIR
+              computedStatus = "Tidak Hadir (Terlambat >= 15m)";
+              entry.tidakHadir++;
+              entry.terlambat++;
+            }
+
+            if (!actual.checkOutTime && actual.checkInTime) {
               entry.belumCheckOut++;
-              computedStatus = "Belum Check-out";
-              entry.hadir++;
             }
 
             if (actual.status?.toLowerCase().includes("susulan")) {
@@ -930,8 +968,10 @@ export const teacherHalaqahAttendanceService = {
               ...actual,
               teacherId: tId,
               teacherName: tName,
-              startTime: agenda.startTime,
-              endTime: agenda.endTime,
+              startTime: actual.scheduledStartTime || agenda.startTime,
+              endTime: actual.scheduledEndTime || agenda.endTime,
+              delayMinutes,
+              isLate: delayMinutes > 0,
               status: computedStatus,
               isExpectedMissing: false
             });
@@ -950,13 +990,15 @@ export const teacherHalaqahAttendanceService = {
               checkInTime: "-",
               checkOutTime: "-",
               duration: 0,
-              status: dateStr <= todayStr ? "Tidak Hadir" : "Belum Dilaksanakan",
-              academicYearId: academicYearId || "AY_ACTIVE",
-              semesterId: semesterId || "SEM_ACTIVE",
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
+              delayMinutes: 0,
+              isLate: false,
               startTime: agenda.startTime,
               endTime: agenda.endTime,
+              status: "Tidak Hadir",
+              academicYearId: academicYearId || "AY_ACTIVE",
+              semesterId: semesterId || "SEM_ACTIVE",
+              createdAt: "",
+              updatedAt: "",
               isExpectedMissing: true
             });
           }

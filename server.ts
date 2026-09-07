@@ -59,17 +59,30 @@ function getFirebaseAdmin(): { adminApp: App | null; adminAuth: Auth | null; adm
   if (!adminApp) {
     try {
       if (getApps().length === 0) {
-        if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
-          try {
-            const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
-            adminApp = initializeApp({
-              credential: cert(serviceAccount),
-              projectId: serviceAccount.project_id || projectId,
-            });
-          } catch (saErr: any) {
-            console.error("[Server] Error parsing FIREBASE_SERVICE_ACCOUNT_KEY:", saErr.message);
-            adminApp = initializeApp({ projectId });
+        const rawKey = (process.env.FIREBASE_SERVICE_ACCOUNT_KEY || "").trim();
+        let serviceAccount: any = null;
+
+        if (rawKey) {
+          if (rawKey.startsWith("{") && rawKey.endsWith("}")) {
+            try {
+              serviceAccount = JSON.parse(rawKey);
+            } catch (saErr: any) {
+              console.warn("[Server] Note: FIREBASE_SERVICE_ACCOUNT_KEY string is not valid JSON, using standard project credentials.");
+            }
+          } else if (fs.existsSync(rawKey)) {
+            try {
+              serviceAccount = JSON.parse(fs.readFileSync(rawKey, "utf-8"));
+            } catch (saErr: any) {
+              console.warn("[Server] Note: FIREBASE_SERVICE_ACCOUNT_KEY file could not be parsed as JSON, using standard project credentials.");
+            }
           }
+        }
+
+        if (serviceAccount && (serviceAccount.project_id || serviceAccount.client_email)) {
+          adminApp = initializeApp({
+            credential: cert(serviceAccount),
+            projectId: serviceAccount.project_id || projectId,
+          });
         } else {
           adminApp = initializeApp({ projectId });
         }
@@ -157,23 +170,38 @@ app.post("/api/users/reset-password", async (req, res) => {
     );
 
     // 1. Verify operator permission from Firestore (Admin, Kepala Sekolah, Waka, Operator, Tata Usaha)
-    if (adminDb && operatorId !== "system") {
+    if (operatorId === "system") {
+      return res.status(403).json({
+        success: false,
+        message: "Akses ditolak: Identifier 'system' tidak diizinkan melalui API eksternal.",
+      });
+    }
+
+    if (adminDb) {
       try {
         const operatorDoc = await adminDb.collection("users").doc(operatorId).get();
-        if (operatorDoc.exists) {
-          const opData = operatorDoc.data() || {};
-          const roles: string[] = opData.roles || (opData.role ? [opData.role] : []);
-          const allowedRoles = ["admin", "kepala sekolah", "wakil kepala sekolah", "operator", "tata usaha"];
-          const hasPermission = roles.some((r: string) => allowedRoles.includes(r.toLowerCase()));
-          if (!hasPermission) {
-            return res.status(403).json({
-              success: false,
-              message: "Akses ditolak: Anda tidak memiliki izin untuk mereset kata sandi akun pengguna.",
-            });
-          }
+        if (!operatorDoc.exists) {
+          return res.status(403).json({
+            success: false,
+            message: "Akses ditolak: Data operator tidak ditemukan dalam sistem.",
+          });
+        }
+        const opData = operatorDoc.data() || {};
+        const roles: string[] = opData.roles || (opData.role ? [opData.role] : []);
+        const allowedRoles = ["admin", "kepala sekolah", "wakil kepala sekolah", "operator", "tata usaha"];
+        const hasPermission = roles.some((r: string) => allowedRoles.includes(r.toLowerCase()));
+        if (!hasPermission) {
+          return res.status(403).json({
+            success: false,
+            message: "Akses ditolak: Anda tidak memiliki izin untuk mereset kata sandi akun pengguna.",
+          });
         }
       } catch (authCheckErr: any) {
-        console.warn("[Server] Operator permission check warning:", authCheckErr.message);
+        console.warn("[Server] Operator permission check error:", authCheckErr.message);
+        return res.status(500).json({
+          success: false,
+          message: "Gagal memverifikasi izin operator.",
+        });
       }
     }
 
