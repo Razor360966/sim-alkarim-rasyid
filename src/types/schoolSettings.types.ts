@@ -95,6 +95,35 @@ export interface TeachingAttendanceSettings {
   journalTimelinessRules?: JournalTimelinessRules;
 }
 
+export type DailyActivityType = 
+  | "KBM" 
+  | "KEGIATAN_SEKOLAH" 
+  | "IBADAH" 
+  | "ISTIRAHAT" 
+  | "UPACARA" 
+  | "APEL" 
+  | "HALAQOH" 
+  | "SENAM" 
+  | "LAINNYA";
+
+export interface DailyActivity {
+  id: string;
+  name: string;
+  type: DailyActivityType | string;
+  isActive: boolean;
+  startTime?: string; // "HH:MM" e.g. "07:00"
+  endTime?: string; // "HH:MM" e.g. "08:00"
+  durationMinutes?: number; // e.g. 60
+  order: number;
+  description?: string;
+}
+
+export interface DailyStructure {
+  day: string; // "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"
+  isActive: boolean;
+  activities: DailyActivity[];
+}
+
 export interface SchoolSettings {
   settingId: string; // "settings"
   activeDays: string[]; // e.g. ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"]
@@ -105,6 +134,7 @@ export interface SchoolSettings {
   specialActivities: SpecialActivity[];
   breakTimes: BreakTime[];
   routineActivities?: RoutineActivity[];
+  dailyStructures?: DailyStructure[];
   createdAt?: string;
   updatedAt?: string;
   updatedBy?: string;

@@ -175,37 +175,37 @@ export const ERaporPrintSettingsPanel: React.FC = () => {
   return (
     <div className="space-y-6 pb-12">
       {/* Header Banner */}
-      <div className="bg-white dark:bg-zinc-900 rounded-2xl p-6 border border-slate-200 dark:border-zinc-800 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="p-3 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-xl">
-            <Printer className="w-6 h-6" />
+      <div className="bg-white dark:bg-zinc-900 rounded-2xl p-4 sm:p-5 border border-slate-200/80 dark:border-zinc-800 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5 min-w-0 flex-1">
+          <div className="p-2.5 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-xl shrink-0">
+            <Printer className="w-5 h-5" />
           </div>
-          <div>
-            <h1 className="text-xl font-bold text-slate-800 dark:text-zinc-100">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-base sm:text-lg font-bold text-slate-800 dark:text-zinc-100 leading-snug">
               Pengaturan Cetak e-Rapor
             </h1>
-            <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">
+            <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5 leading-relaxed">
               Konfigurasi kertas (A4/F4), orientasi, kop lembaga, dan tanda tangan Kepala Sekolah secara terpisah.
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0 flex-wrap sm:flex-nowrap">
           <button
             type="button"
             onClick={() => setShowPreviewModal(true)}
-            className="px-4 py-2 text-xs font-bold rounded-xl border border-slate-200 dark:border-zinc-700 hover:bg-slate-50 dark:hover:bg-zinc-800 text-slate-700 dark:text-zinc-300 transition-all flex items-center gap-2 cursor-pointer"
+            className="px-3.5 py-2 text-xs font-semibold rounded-xl border border-slate-200 dark:border-zinc-700 hover:bg-slate-50 dark:hover:bg-zinc-800 text-slate-700 dark:text-zinc-300 transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
           >
-            <Eye className="w-4 h-4 text-indigo-500" />
+            <Eye className="w-4 h-4 text-indigo-500 shrink-0" />
             Preview Cetak
           </button>
           <button
             type="button"
             onClick={handleSave}
             disabled={isSaving}
-            className="px-4 py-2.5 text-xs font-bold rounded-xl text-white bg-indigo-600 hover:bg-indigo-700 shadow-md transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+            className="px-4 py-2 text-xs font-semibold rounded-xl text-white bg-indigo-600 hover:bg-indigo-700 shadow-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 whitespace-nowrap"
           >
-            <Save className="w-4 h-4" />
+            <Save className="w-4 h-4 shrink-0" />
             {isSaving ? "Menyimpan..." : "Simpan Pengaturan"}
           </button>
         </div>

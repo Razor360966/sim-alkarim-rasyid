@@ -39,10 +39,13 @@ import {
   Phone,
   User,
   Loader2,
-  Printer
+  Printer,
+  ArrowUp,
+  ArrowDown,
+  Copy
 } from "lucide-react";
-import { generateDailySchedule, TimelineBlock, minutesToTime, timeToMinutes } from "../utils/scheduleCalculator";
-import { SchoolSettings, BreakTime, RoutineActivity } from "../types";
+import { generateDailySchedule, TimelineBlock, minutesToTime, timeToMinutes, getDefaultDailyStructures } from "../utils/scheduleCalculator";
+import { SchoolSettings, BreakTime, RoutineActivity, DailyStructure, DailyActivity, DailyActivityType } from "../types";
 import { TeachingAttendanceSettingsPanel } from "../components/TeachingAttendanceSettingsPanel";
 import { ERaporPrintSettingsPanel } from "../components/ERaporPrintSettingsPanel";
 
@@ -104,6 +107,32 @@ function checkRoutineOverlap(activities: RoutineActivity[], activeDays: string[]
   return null;
 }
 
+// Helper to check overlap between activities within each daily structure
+function checkDailyStructureOverlap(structures: DailyStructure[]): string | null {
+  for (const ds of structures) {
+    if (!ds.isActive) continue;
+    const activeActs = (ds.activities || []).filter(a => a.isActive !== false);
+    for (let i = 0; i < activeActs.length; i++) {
+      for (let j = i + 1; j < activeActs.length; j++) {
+        const actA = activeActs[i];
+        const actB = activeActs[j];
+        const startA = timeToMinutes(actA.startTime || "07:00");
+        const durA = actA.durationMinutes || 10;
+        const endA = actA.endTime ? timeToMinutes(actA.endTime) : startA + durA;
+
+        const startB = timeToMinutes(actB.startTime || "07:00");
+        const durB = actB.durationMinutes || 10;
+        const endB = actB.endTime ? timeToMinutes(actB.endTime) : startB + durB;
+
+        if (startA < endB && startB < endA) {
+          return `Tabrakan Kegiatan (${ds.day}): '${actA.name}' (${actA.startTime}-${minutesToTime(endA)}) dan '${actB.name}' (${actB.startTime}-${minutesToTime(endB)}) bertabrakan pada jam yang sama.`;
+        }
+      }
+    }
+  }
+  return null;
+}
+
 export default function Settings() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -112,7 +141,7 @@ export default function Settings() {
 
   // Menu Tabs for sections
   const [activeTab, setActiveTab] = useState<
-    "identitas-sekolah" | "hari-aktif" | "jam-sekolah" | "kegiatan-rutin" | "waktu-istirahat" | "struktur-jp" | "absensi-mengajar" | "hari-libur" | "simpan" | "riwayat"
+    "identitas-sekolah" | "hari-aktif" | "jam-sekolah" | "kegiatan-rutin" | "struktur-harian" | "waktu-istirahat" | "struktur-jp" | "absensi-mengajar" | "hari-libur" | "cetak-rapor" | "simpan" | "riwayat"
   >("identitas-sekolah");
 
   // School Identity form state
@@ -167,6 +196,20 @@ export default function Settings() {
   const [editRoutineDuration, setEditRoutineDuration] = useState<number>(15);
   const [editRoutineDesc, setEditRoutineDesc] = useState("");
 
+  // Dynamic Daily Structure state
+  const [selectedStructureDay, setSelectedStructureDay] = useState("Senin");
+  const [newActivityName, setNewActivityName] = useState("");
+  const [newActivityType, setNewActivityType] = useState<DailyActivityType>("KEGIATAN_SEKOLAH");
+  const [newActivityStart, setNewActivityStart] = useState("07:00");
+  const [newActivityDuration, setNewActivityDuration] = useState<number>(30);
+  const [showCopyModal, setShowCopyModal] = useState(false);
+  const [copyTargetDays, setCopyTargetDays] = useState<string[]>([]);
+  const [editingActivityId, setEditingActivityId] = useState<string | null>(null);
+  const [editActivityName, setEditActivityName] = useState("");
+  const [editActivityType, setEditActivityType] = useState<DailyActivityType>("KEGIATAN_SEKOLAH");
+  const [editActivityStart, setEditActivityStart] = useState("");
+  const [editActivityDuration, setEditActivityDuration] = useState<number>(30);
+
   // Custom loading state to handle timeout (max 3s)
   const [loadingTimedOut, setLoadingTimedOut] = useState(false);
   const [manualLoading, setManualLoading] = useState(true);
@@ -190,6 +233,11 @@ export default function Settings() {
       // Ensure routineActivities has defaults
       if (!cloned.routineActivities) {
         cloned.routineActivities = [];
+      }
+
+      // Ensure dailyStructures has defaults
+      if (!cloned.dailyStructures || cloned.dailyStructures.length === 0) {
+        cloned.dailyStructures = getDefaultDailyStructures(cloned);
       }
 
       setLocalSettings(cloned);
@@ -228,6 +276,14 @@ export default function Settings() {
     if (!fetchedSettings || !localSettings) return false;
     return JSON.stringify(fetchedSettings) !== JSON.stringify(localSettings);
   }, [fetchedSettings, localSettings]);
+
+  // Dynamic Daily Structure helpers
+  const currentDayStructure = useMemo(() => {
+    if (!localSettings?.dailyStructures) return null;
+    return localSettings.dailyStructures.find(
+      ds => ds.day.toLowerCase() === selectedStructureDay.toLowerCase()
+    ) || null;
+  }, [localSettings?.dailyStructures, selectedStructureDay]);
 
   // Fetch settings history
   const fetchHistoryItems = async () => {
@@ -559,21 +615,237 @@ export default function Settings() {
     });
   };
 
+  // Dynamic Daily Structure handlers
+
+  const handleToggleActivityActive = (activityId: string, isActive: boolean) => {
+    if (!hasWriteAccess || !localSettings?.dailyStructures) return;
+    const updated = localSettings.dailyStructures.map(ds => {
+      if (ds.day.toLowerCase() === selectedStructureDay.toLowerCase()) {
+        return {
+          ...ds,
+          activities: ds.activities.map(act => {
+            if (act.id === activityId) {
+              return { ...act, isActive };
+            }
+            return act;
+          })
+        };
+      }
+      return ds;
+    });
+
+    setLocalSettings({
+      ...localSettings,
+      dailyStructures: updated
+    });
+  };
+
+  const handleStartEditActivity = (act: DailyActivity) => {
+    setEditingActivityId(act.id);
+    setEditActivityName(act.name);
+    setEditActivityType(act.type);
+    setEditActivityStart(act.startTime || "07:00");
+    setEditActivityDuration(act.durationMinutes || 15);
+  };
+
+  const handleSaveEditActivity = () => {
+    if (!hasWriteAccess || !localSettings?.dailyStructures || !editingActivityId) return;
+    if (!editActivityName.trim()) {
+      alert("Nama kegiatan tidak boleh kosong!");
+      return;
+    }
+
+    const sMins = timeToMinutes(editActivityStart);
+    const endStr = minutesToTime(sMins + editActivityDuration);
+
+    const updated = localSettings.dailyStructures.map(ds => {
+      if (ds.day.toLowerCase() === selectedStructureDay.toLowerCase()) {
+        const activities = ds.activities.map(act => {
+          if (act.id === editingActivityId) {
+            return {
+              ...act,
+              name: editActivityName.trim(),
+              type: editActivityType,
+              startTime: editActivityStart,
+              endTime: endStr,
+              durationMinutes: editActivityDuration
+            };
+          }
+          return act;
+        }).sort((a, b) => timeToMinutes(a.startTime || "07:00") - timeToMinutes(b.startTime || "07:00"));
+
+        return { ...ds, activities };
+      }
+      return ds;
+    });
+
+    setLocalSettings({
+      ...localSettings,
+      dailyStructures: updated
+    });
+    setEditingActivityId(null);
+  };
+
+  const handleDeleteActivity = (activityId: string) => {
+    if (!hasWriteAccess || !localSettings?.dailyStructures) return;
+    const updated = localSettings.dailyStructures.map(ds => {
+      if (ds.day.toLowerCase() === selectedStructureDay.toLowerCase()) {
+        return {
+          ...ds,
+          activities: ds.activities.filter(act => act.id !== activityId)
+        };
+      }
+      return ds;
+    });
+
+    setLocalSettings({
+      ...localSettings,
+      dailyStructures: updated
+    });
+  };
+
+  const handleMoveActivity = (index: number, direction: "up" | "down") => {
+    if (!hasWriteAccess || !localSettings?.dailyStructures) return;
+    const updated = localSettings.dailyStructures.map(ds => {
+      if (ds.day.toLowerCase() === selectedStructureDay.toLowerCase()) {
+        const list = [...ds.activities];
+        const targetIdx = direction === "up" ? index - 1 : index + 1;
+        if (targetIdx < 0 || targetIdx >= list.length) return ds;
+        const temp = list[index];
+        list[index] = list[targetIdx];
+        list[targetIdx] = temp;
+        list.forEach((a, i) => { a.order = i + 1; });
+        return { ...ds, activities: list };
+      }
+      return ds;
+    });
+
+    setLocalSettings({
+      ...localSettings,
+      dailyStructures: updated
+    });
+  };
+
+  const handleAddActivityToDay = () => {
+    if (!hasWriteAccess || !localSettings) return;
+    if (!newActivityName.trim()) {
+      alert("Nama kegiatan harus diisi!");
+      return;
+    }
+
+    const sMins = timeToMinutes(newActivityStart);
+    const endStr = minutesToTime(sMins + newActivityDuration);
+
+    const newAct: DailyActivity = {
+      id: `act-${selectedStructureDay.toLowerCase()}-${Date.now()}`,
+      name: newActivityName.trim(),
+      type: newActivityType,
+      isActive: true,
+      startTime: newActivityStart,
+      endTime: endStr,
+      durationMinutes: newActivityDuration,
+      order: (currentDayStructure?.activities?.length || 0) + 1
+    };
+
+    const currentStructures = localSettings.dailyStructures && localSettings.dailyStructures.length > 0
+      ? localSettings.dailyStructures
+      : getDefaultDailyStructures(localSettings);
+
+    const updated = currentStructures.map(ds => {
+      if (ds.day.toLowerCase() === selectedStructureDay.toLowerCase()) {
+        const activities = [...(ds.activities || []), newAct].sort(
+          (a, b) => timeToMinutes(a.startTime || "07:00") - timeToMinutes(b.startTime || "07:00")
+        );
+        return { ...ds, activities };
+      }
+      return ds;
+    });
+
+    setLocalSettings({
+      ...localSettings,
+      dailyStructures: updated
+    });
+
+    setNewActivityName("");
+  };
+
+  const handleCopyStructureToDays = (targetDays: string[]) => {
+    if (!hasWriteAccess || !localSettings?.dailyStructures || !currentDayStructure) return;
+    if (targetDays.length === 0) {
+      alert("Pilih minimal satu hari tujuan!");
+      return;
+    }
+
+    const updated = localSettings.dailyStructures.map(ds => {
+      if (targetDays.includes(ds.day)) {
+        const copiedActivities = currentDayStructure.activities.map((act, idx) => ({
+          ...act,
+          id: `act-${ds.day.toLowerCase()}-${Date.now()}-${idx}`
+        }));
+        return {
+          ...ds,
+          activities: copiedActivities
+        };
+      }
+      return ds;
+    });
+
+    setLocalSettings({
+      ...localSettings,
+      dailyStructures: updated
+    });
+    setShowCopyModal(false);
+    setCopyTargetDays([]);
+    toast(`Struktur hari ${selectedStructureDay} berhasil disalin ke: ${targetDays.join(", ")}`, "success");
+  };
+
+  const handleResetDayStructure = (day: string) => {
+    if (!hasWriteAccess || !localSettings) return;
+    const defaultStructures = getDefaultDailyStructures(localSettings);
+    const targetDefault = defaultStructures.find(ds => ds.day.toLowerCase() === day.toLowerCase());
+    if (!targetDefault) return;
+
+    const currentStructures = localSettings.dailyStructures && localSettings.dailyStructures.length > 0
+      ? localSettings.dailyStructures
+      : defaultStructures;
+
+    const updated = currentStructures.map(ds => {
+      if (ds.day.toLowerCase() === day.toLowerCase()) {
+        return { ...targetDefault };
+      }
+      return ds;
+    });
+
+    setLocalSettings({
+      ...localSettings,
+      dailyStructures: updated
+    });
+    toast(`Struktur harian ${day} telah dikembalikan ke pengaturan standar`, "info");
+  };
+
   // Check routine activity list overlaps
-  const routineOverlapError = checkRoutineOverlap(localSettings.routineActivities || [], localSettings.activeDays);
+  const routineOverlapError = checkRoutineOverlap(localSettings?.routineActivities || [], localSettings?.activeDays || []);
   
+  // Check daily structures overlaps
+  const dailyStructureOverlapError = checkDailyStructureOverlap(localSettings?.dailyStructures || []);
+
   // Check break time list overlaps
-  const breakOverlapError = checkBreakOverlap(localSettings.breakTimes || []);
+  const breakOverlapError = checkBreakOverlap(localSettings?.breakTimes || []);
 
   // Final Overall Save Settings
   const handleSaveAllSettings = async () => {
-    if (!hasWriteAccess) return;
+    if (!hasWriteAccess || !localSettings) return;
     
     // Overall validations
     const startMins = timeToMinutes(localSettings.schoolHours?.startTime || "07:00");
     const endMins = timeToMinutes(localSettings.schoolHours?.endTime || "14:00");
     if (startMins >= endMins) {
       alert("Jam Masuk sekolah harus lebih awal dari Jam Pulang!");
+      return;
+    }
+
+    if (dailyStructureOverlapError) {
+      alert(dailyStructureOverlapError);
       return;
     }
 
@@ -588,9 +860,15 @@ export default function Settings() {
     }
 
     try {
+      // Ensure dailyStructures exists
+      const effectiveDailyStructures = localSettings.dailyStructures && localSettings.dailyStructures.length > 0
+        ? localSettings.dailyStructures
+        : getDefaultDailyStructures(localSettings);
+
       // Sync backward compatibility variables
       const payload: SchoolSettings = {
         ...localSettings,
+        dailyStructures: effectiveDailyStructures,
         startTime: localSettings.schoolHours?.startTime || localSettings.startTime || "07:00",
         endTime: localSettings.schoolHours?.endTime || localSettings.endTime || "14:00",
         jpDuration: localSettings.lessonPeriod || localSettings.jpDuration || 40,
@@ -676,7 +954,7 @@ export default function Settings() {
     { id: "hari-aktif", label: "1. Hari Aktif", icon: Calendar },
     { id: "jam-sekolah", label: "2. Jam Sekolah", icon: Clock },
     { id: "struktur-jp", label: "3. Struktur JP", icon: Sliders },
-    { id: "kegiatan-rutin", label: "4. Kegiatan Rutin", icon: Volume2 },
+    { id: "struktur-harian", label: "4. Struktur Harian", icon: Volume2 },
     { id: "waktu-istirahat", label: "5. Waktu Istirahat", icon: Coffee },
     ...(canAccessTeachingSettings ? [{ id: "absensi-mengajar", label: "6. Kebijakan Absensi Mengajar", icon: UserCheck }] : []),
     { id: "hari-libur", label: "7. Hari Libur Khusus", icon: ShieldAlert },
@@ -684,6 +962,16 @@ export default function Settings() {
     { id: "simpan", label: "9. Simpan Pengaturan", icon: Save },
     { id: "riwayat", label: "10. Riwayat & Rollback", icon: RotateCcw },
   ];
+
+  const isScheduleTab = [
+    "hari-aktif",
+    "jam-sekolah",
+    "struktur-jp",
+    "kegiatan-rutin",
+    "struktur-harian",
+    "waktu-istirahat",
+    "simpan"
+  ].includes(activeTab);
 
   return (
     <div className="flex-1 overflow-y-auto bg-slate-50 p-4 md:p-6 lg:p-8 dark:bg-zinc-950 text-slate-900 dark:text-zinc-50 font-sans">
@@ -806,8 +1094,8 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* COLUMN 2: ACTIVE TAB CONTENT (5 COLS) */}
-        <div className="lg:col-span-5 space-y-6">
+        {/* COLUMN 2: ACTIVE TAB CONTENT */}
+        <div className={`${isScheduleTab ? "lg:col-span-5" : "lg:col-span-9"} space-y-6`}>
           <div className="bg-white dark:bg-zinc-900 p-5 rounded-2xl border border-slate-150 dark:border-zinc-800 shadow-xs min-h-[460px] flex flex-col justify-between">
             
             {/* Form Fields Section */}
@@ -1346,265 +1634,380 @@ export default function Settings() {
                 </div>
               )}
 
-              {/* 4. KEGIATAN RUTIN */}
-              {activeTab === "kegiatan-rutin" && (
+              {/* 4. STRUKTUR HARIAN DINAMIS */}
+              {(activeTab === "struktur-harian" || activeTab === "kegiatan-rutin") && (
                 <div className="space-y-4">
                   <div className="border-b border-slate-100 dark:border-zinc-850 pb-3">
-                    <h2 className="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                      <Volume2 className="h-4.5 w-4.5 text-indigo-600" />
-                      4. Daftar Kegiatan Rutin Harian
-                    </h2>
-                    <p className="text-[11px] text-slate-400 mt-0.5">Tentukan kegiatan rutin terjadwal. Admin dapat menonaktifkan kegiatan bawaan dan menambah kegiatan baru.</p>
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                        <Volume2 className="h-4.5 w-4.5 text-indigo-600" />
+                        4. Struktur Harian Sekolah (Dinamis Per-Hari)
+                      </h2>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200/50">
+                        Fleksibel & Dinamis
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      Tentukan rangkaian kegiatan per-hari. Jadwal KBM JP 1 dan jam istirahat otomatis berurutan secara matematis di Preview.
+                    </p>
                   </div>
 
-                  <div className="space-y-4 pt-1">
-                    {/* Routine activities table */}
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse text-xs">
-                        <thead>
-                          <tr className="border-b border-slate-200 dark:border-zinc-800 text-[10px] text-slate-400 uppercase tracking-wider font-bold">
-                            <th className="py-2">Nama</th>
-                            <th className="py-2">Hari</th>
-                            <th className="py-2 text-center">Aktif</th>
-                            <th className="py-2 text-right">Mulai</th>
-                            <th className="py-2 text-right">Durasi</th>
-                            <th className="py-2 text-right">Selesai</th>
-                            <th className="py-2 text-right">Aksi</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 dark:divide-zinc-850">
-                          {(localSettings.routineActivities || []).map((item, index) => {
-                            const isEditing = editingRoutineId === item.id;
-                            return (
-                              <tr key={item.id} className="hover:bg-slate-50/40 dark:hover:bg-zinc-850/20">
-                                <td className="py-3 font-semibold text-slate-800 dark:text-zinc-200">
-                                  {isEditing ? (
-                                    <input
-                                      type="text"
-                                      value={editRoutineName}
-                                      onChange={(e) => setEditRoutineName(e.target.value)}
-                                      className="w-20 px-1 py-0.5 bg-white dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded"
-                                    />
-                                  ) : (
-                                    item.name
-                                  )}
-                                </td>
-                                <td className="py-3">
-                                  {isEditing ? (
-                                    <div className="flex flex-col gap-1 max-h-[80px] overflow-y-auto p-1 bg-white dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded">
-                                      {DAYS_OF_WEEK.map(d => (
-                                        <label key={d} className="flex items-center gap-1 text-[10px]">
-                                          <input
-                                            type="checkbox"
-                                            checked={editRoutineDays.includes(d)}
-                                            onChange={(e) => {
-                                              if (e.target.checked) {
-                                                setEditRoutineDays([...editRoutineDays, d]);
-                                              } else {
-                                                setEditRoutineDays(editRoutineDays.filter(day => day !== d));
-                                              }
-                                            }}
-                                          />
-                                          {d}
-                                        </label>
-                                      ))}
-                                    </div>
-                                  ) : (
-                                    <span className="text-[10px] bg-slate-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded text-slate-600 dark:text-zinc-400 font-medium">
-                                      {item.days.length === DAYS_OF_WEEK.length ? "Semua Hari" : item.days.join(", ")}
-                                    </span>
-                                  )}
-                                </td>
-                                <td className="py-3 text-center">
-                                  {isEditing ? (
-                                    <input
-                                      type="checkbox"
-                                      checked={editRoutineEnabled}
-                                      onChange={(e) => setEditRoutineEnabled(e.target.checked)}
-                                    />
-                                  ) : (
-                                    <input
-                                      type="checkbox"
-                                      checked={item.enabled}
-                                      onChange={(e) => handleToggleRoutineActive(index, e.target.checked)}
-                                      disabled={!hasWriteAccess}
-                                      className="cursor-pointer"
-                                    />
-                                  )}
-                                </td>
-                                <td className="py-3 text-right font-mono text-[11px]">
-                                  {isEditing ? (
-                                    <input
-                                      type="time"
-                                      value={editRoutineStart}
-                                      onChange={(e) => setEditRoutineStart(e.target.value)}
-                                      className="px-1 py-0.5 bg-white dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded text-xs"
-                                    />
-                                  ) : (
-                                    item.startTime
-                                  )}
-                                </td>
-                                <td className="py-3 text-right font-mono font-bold text-indigo-600 dark:text-indigo-400">
-                                  {isEditing ? (
-                                    <input
-                                      type="number"
-                                      value={editRoutineDuration}
-                                      onChange={(e) => setEditRoutineDuration(parseInt(e.target.value, 10) || 10)}
-                                      className="w-12 px-1 py-0.5 bg-white dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded text-xs"
-                                    />
-                                  ) : (
-                                    `${item.duration}m`
-                                  )}
-                                </td>
-                                <td className="py-3 text-right font-mono font-semibold">
-                                  {isEditing ? (
-                                    <span className="text-slate-400 text-[10px] italic">Auto</span>
-                                  ) : (
-                                    item.autoEndTime
-                                  )}
-                                </td>
-                                <td className="py-3 text-right">
-                                  {isEditing ? (
-                                    <div className="flex justify-end gap-1">
-                                      <button onClick={handleSaveEditRoutine} className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-zinc-800 rounded">
-                                        <Check className="h-3.5 w-3.5" />
-                                      </button>
-                                      <button onClick={() => setEditingRoutineId(null)} className="p-1 text-rose-500 hover:bg-rose-50 dark:hover:bg-zinc-800 rounded">
-                                        <X className="h-3.5 w-3.5" />
-                                      </button>
-                                    </div>
-                                  ) : (
-                                    <div className="flex justify-end gap-1">
-                                      <button
-                                        onClick={() => handleStartEditRoutine(item)}
-                                        disabled={!hasWriteAccess}
-                                        className="p-1 text-slate-500 hover:text-indigo-600 dark:text-zinc-400 dark:hover:text-indigo-400 disabled:opacity-50"
-                                      >
-                                        <Edit2 className="h-3.5 w-3.5" />
-                                      </button>
-                                      <button
-                                        onClick={() => handleDeleteRoutine(item.id)}
-                                        disabled={!hasWriteAccess}
-                                        className="p-1 text-rose-500 hover:bg-rose-50 dark:hover:bg-zinc-800 rounded disabled:opacity-50"
-                                      >
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                      </button>
-                                    </div>
-                                  )}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                  {/* Day Tabs selector */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        Pilih Hari untuk Dikonfigurasi
+                      </span>
+                      <span className="text-[10px] font-medium text-slate-500">
+                        Pratinjau otomatis tersinkron
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                      {DAYS_OF_WEEK.map((day) => {
+                        const isSelected = selectedStructureDay === day;
+                        const isDayActive = localSettings?.activeDays?.includes(day);
+                        const dayStruct = (localSettings?.dailyStructures || []).find(ds => ds.day.toLowerCase() === day.toLowerCase());
+                        const activeActsCount = (dayStruct?.activities || []).filter(a => a.isActive !== false).length;
+
+                        return (
+                          <button
+                            key={day}
+                            type="button"
+                            onClick={() => {
+                              setSelectedStructureDay(day);
+                              setSelectedPreviewDay(day);
+                            }}
+                            className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                              isSelected
+                                ? "bg-indigo-600 text-white shadow-xs"
+                                : isDayActive
+                                ? "bg-slate-100 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 hover:bg-slate-200 dark:hover:bg-zinc-700"
+                                : "bg-slate-50 dark:bg-zinc-900 text-slate-400 dark:text-zinc-600 border border-dashed border-slate-200 dark:border-zinc-800"
+                            }`}
+                          >
+                            <span>{day}</span>
+                            {isDayActive && (
+                              <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                                isSelected ? "bg-white/20 text-white" : "bg-slate-200 dark:bg-zinc-700 text-slate-600 dark:text-zinc-300"
+                              }`}>
+                                {activeActsCount}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Day Action & Overview Bar */}
+                  <div className="p-3 bg-slate-50 dark:bg-zinc-950 border border-slate-200/80 dark:border-zinc-800 rounded-xl flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-slate-800 dark:text-zinc-200">
+                        Hari {selectedStructureDay}
+                      </span>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                        localSettings?.activeDays?.includes(selectedStructureDay)
+                          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400"
+                          : "bg-slate-200 text-slate-600 dark:bg-zinc-800 dark:text-zinc-400"
+                      }`}>
+                        {localSettings?.activeDays?.includes(selectedStructureDay) ? "Hari Aktif KBM" : "Hari Libur"}
+                      </span>
                     </div>
 
-                    {/* Add routine activity form */}
-                    {hasWriteAccess && (
-                      <div className="p-4 bg-slate-50 dark:bg-zinc-950 border border-slate-150 dark:border-zinc-850 rounded-2xl space-y-3 mt-2">
-                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">Tambah Kegiatan Rutin Baru</span>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="text-[9px] font-bold text-slate-400 block mb-1">Nama Kegiatan</label>
-                            <input
-                              type="text"
-                              placeholder="Briefing / Kajian"
-                              value={newRoutineName}
-                              onChange={(e) => setNewRoutineName(e.target.value)}
-                              className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-lg focus:outline-hidden"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[9px] font-bold text-slate-400 block mb-1">Jam Mulai</label>
-                            <input
-                              type="time"
-                              value={newRoutineStart}
-                              onChange={(e) => setNewRoutineStart(e.target.value)}
-                              className="w-full px-2.5 py-1.5 text-xs font-semibold bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-lg focus:outline-hidden"
-                            />
-                          </div>
-                        </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setShowCopyModal(true)}
+                        disabled={!hasWriteAccess}
+                        className="px-2.5 py-1 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                        title="Salin konfigurasi kegiatan hari ini ke hari lain"
+                      >
+                        <Copy className="h-3 w-3" />
+                        <span>Salin Struktur</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleResetDayStructure(selectedStructureDay)}
+                        disabled={!hasWriteAccess}
+                        className="px-2.5 py-1 text-[11px] font-semibold text-slate-500 hover:text-slate-700 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-zinc-800 rounded-lg transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                        title="Kembalikan kegiatan hari ini ke bawaan sistem"
+                      >
+                        <RotateCcw className="h-3 w-3" />
+                        <span>Reset Bawaan</span>
+                      </button>
+                    </div>
+                  </div>
 
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="text-[9px] font-bold text-slate-400 block mb-1">Durasi (Menit)</label>
-                            <input
-                              type="number"
-                              value={newRoutineDuration}
-                              onChange={(e) => setNewRoutineDuration(parseInt(e.target.value, 10) || 15)}
-                              className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-lg focus:outline-hidden"
-                              min="5"
-                              max="180"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[9px] font-bold text-slate-400 block mb-1">Keterangan</label>
-                            <input
-                              type="text"
-                              placeholder="Keterangan singkat"
-                              value={newRoutineDesc}
-                              onChange={(e) => setNewRoutineDesc(e.target.value)}
-                              className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-lg focus:outline-hidden"
-                            />
-                          </div>
-                        </div>
+                  {/* Activities List for selectedStructureDay */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        Daftar Kegiatan ({currentDayStructure?.activities?.length || 0})
+                      </span>
+                      <span className="text-[10px] text-slate-400">
+                        Ubah urutan atau aktifkan/nonaktifkan
+                      </span>
+                    </div>
 
-                        {/* Checkbox of Active Days for routine activity */}
-                        <div>
-                          <label className="text-[9px] font-bold text-slate-400 block mb-1">Hari Kerja Aktif</label>
-                          <div className="flex flex-wrap gap-2 pt-1">
-                            {localSettings.activeDays.map(day => {
-                              const isChecked = newRoutineDays.includes(day);
-                              return (
-                                <button
-                                  type="button"
-                                  key={day}
-                                  onClick={() => {
-                                    if (isChecked) {
-                                      setNewRoutineDays(newRoutineDays.filter(d => d !== day));
-                                    } else {
-                                      setNewRoutineDays([...newRoutineDays, day]);
-                                    }
-                                  }}
-                                  className={`px-2 py-1 text-[10px] font-bold rounded-lg transition-all border ${
-                                    isChecked
-                                      ? "bg-indigo-600 text-white border-indigo-600"
-                                      : "bg-white dark:bg-zinc-900 text-slate-500 border-slate-200 dark:border-zinc-800 hover:bg-slate-100"
-                                  }`}
-                                >
-                                  {day}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-
-                        <div className="flex justify-end pt-1">
-                          <button
-                            type="button"
-                            onClick={handleAddRoutine}
-                            className="flex items-center gap-1 px-3.5 py-1.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg cursor-pointer"
-                          >
-                            <Plus className="h-3.5 w-3.5" /> Tambah Kegiatan
-                          </button>
-                        </div>
+                    {(!currentDayStructure?.activities || currentDayStructure.activities.length === 0) ? (
+                      <div className="p-6 text-center border border-dashed border-slate-200 dark:border-zinc-800 rounded-xl">
+                        <p className="text-xs text-slate-400 italic">Belum ada kegiatan untuk hari {selectedStructureDay}.</p>
+                        <p className="text-[11px] text-slate-400 mt-1">Gunakan formulir di bawah atau klik "Reset Bawaan" untuk memuat struktur awal.</p>
                       </div>
-                    )}
+                    ) : (
+                      <div className="space-y-2 max-h-[340px] overflow-y-auto pr-0.5">
+                        {currentDayStructure.activities.map((item, index) => {
+                          const isEditing = editingActivityId === item.id;
+                          const actStart = item.startTime || "07:00";
+                          const actDur = item.durationMinutes || 10;
+                          const actEnd = item.endTime || minutesToTime(timeToMinutes(actStart) + actDur);
 
-                    {hasWriteAccess && (
-                      <div className="flex justify-end pt-3 border-t border-slate-100 dark:border-zinc-850 mt-4">
-                        <button
-                          type="button"
-                          onClick={handleSaveAllSettings}
-                          disabled={isUpdating}
-                          className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all cursor-pointer disabled:opacity-50"
-                        >
-                          {isUpdating ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                          Simpan Perubahan Kegiatan Rutin
-                        </button>
+                          return (
+                            <div
+                              key={item.id}
+                              className={`p-2.5 rounded-xl border transition-all ${
+                                item.isActive === false
+                                  ? "bg-slate-50/60 dark:bg-zinc-950/40 border-slate-200/60 dark:border-zinc-800/60 opacity-60"
+                                  : "bg-white dark:bg-zinc-900 border-slate-200/80 dark:border-zinc-800 shadow-2xs"
+                              }`}
+                            >
+                              {isEditing ? (
+                                <div className="space-y-2">
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <label className="text-[9px] font-bold text-slate-400 block mb-0.5">Nama</label>
+                                      <input
+                                        type="text"
+                                        value={editActivityName}
+                                        onChange={(e) => setEditActivityName(e.target.value)}
+                                        className="w-full px-2 py-1 text-xs bg-white dark:bg-zinc-950 border border-slate-200 dark:border-zinc-700 rounded-lg"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="text-[9px] font-bold text-slate-400 block mb-0.5">Kategori</label>
+                                      <select
+                                        value={editActivityType}
+                                        onChange={(e) => setEditActivityType(e.target.value as DailyActivityType)}
+                                        className="w-full px-2 py-1 text-xs bg-white dark:bg-zinc-950 border border-slate-200 dark:border-zinc-700 rounded-lg"
+                                      >
+                                        <option value="UPACARA">Upacara</option>
+                                        <option value="APEL">Apel Pagi</option>
+                                        <option value="HALAQOH">Halaqoh / Tahfidz</option>
+                                        <option value="IBADAH">Ibadah / Sholat Dhuha</option>
+                                        <option value="SENAM">Senam Pagi</option>
+                                        <option value="ISTIRAHAT">Waktu Istirahat</option>
+                                        <option value="KEGIATAN_SEKOLAH">Kegiatan Sekolah</option>
+                                        <option value="LAINNYA">Lainnya</option>
+                                      </select>
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-3 gap-2 items-center">
+                                    <div>
+                                      <label className="text-[9px] font-bold text-slate-400 block mb-0.5">Mulai</label>
+                                      <input
+                                        type="time"
+                                        value={editActivityStart}
+                                        onChange={(e) => setEditActivityStart(e.target.value)}
+                                        className="w-full px-2 py-1 text-xs font-mono bg-white dark:bg-zinc-950 border border-slate-200 dark:border-zinc-700 rounded-lg"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="text-[9px] font-bold text-slate-400 block mb-0.5">Durasi (Mnt)</label>
+                                      <input
+                                        type="number"
+                                        value={editActivityDuration}
+                                        onChange={(e) => setEditActivityDuration(parseInt(e.target.value, 10) || 10)}
+                                        className="w-full px-2 py-1 text-xs font-mono bg-white dark:bg-zinc-950 border border-slate-200 dark:border-zinc-700 rounded-lg"
+                                        min="5"
+                                        max="180"
+                                      />
+                                    </div>
+                                    <div className="flex items-center justify-end gap-1 pt-3.5">
+                                      <button
+                                        type="button"
+                                        onClick={handleSaveEditActivity}
+                                        className="p-1.5 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-zinc-800 rounded-lg"
+                                        title="Simpan"
+                                      >
+                                        <Check className="h-4 w-4" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setEditingActivityId(null)}
+                                        className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-zinc-800 rounded-lg"
+                                        title="Batal"
+                                      >
+                                        <X className="h-4 w-4" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    {/* Move buttons */}
+                                    <div className="flex flex-col gap-0.5 shrink-0">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleMoveActivity(index, "up")}
+                                        disabled={index === 0 || !hasWriteAccess}
+                                        className="p-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-zinc-200 disabled:opacity-20"
+                                        title="Geser Naik"
+                                      >
+                                        <ArrowUp className="h-3 w-3" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleMoveActivity(index, "down")}
+                                        disabled={index === (currentDayStructure.activities.length - 1) || !hasWriteAccess}
+                                        className="p-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-zinc-200 disabled:opacity-20"
+                                        title="Geser Turun"
+                                      >
+                                        <ArrowDown className="h-3 w-3" />
+                                      </button>
+                                    </div>
+
+                                    {/* Active toggle switch */}
+                                    <input
+                                      type="checkbox"
+                                      checked={item.isActive !== false}
+                                      onChange={(e) => handleToggleActivityActive(item.id, e.target.checked)}
+                                      disabled={!hasWriteAccess}
+                                      className="h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0"
+                                      title={item.isActive !== false ? "Aktif (klik untuk nonaktifkan)" : "Nonaktif (klik untuk aktifkan)"}
+                                    />
+
+                                    {/* Name & Badge */}
+                                    <div className="min-w-0">
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className={`text-xs font-bold truncate ${item.isActive === false ? "line-through text-slate-400" : "text-slate-800 dark:text-zinc-100"}`}>
+                                          {item.name}
+                                        </span>
+                                        <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 uppercase">
+                                          {item.type}
+                                        </span>
+                                      </div>
+                                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                                        {actStart} - {actEnd} ({actDur} mnt)
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Actions */}
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleStartEditActivity(item)}
+                                      disabled={!hasWriteAccess}
+                                      className="p-1.5 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 rounded-lg transition-all disabled:opacity-30 cursor-pointer"
+                                      title="Edit kegiatan"
+                                    >
+                                      <Edit2 className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteActivity(item.id)}
+                                      disabled={!hasWriteAccess}
+                                      className="p-1.5 text-slate-400 hover:text-rose-500 rounded-lg transition-all disabled:opacity-30 cursor-pointer"
+                                      title="Hapus kegiatan"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
+
+                  {/* Add Activity Form */}
+                  {hasWriteAccess && (
+                    <div className="p-3.5 bg-slate-50 dark:bg-zinc-950 border border-slate-200/80 dark:border-zinc-850 rounded-2xl space-y-2.5">
+                      <span className="text-[10px] font-bold text-slate-600 dark:text-zinc-300 uppercase tracking-wider block">
+                        + Tambah Kegiatan ke Hari {selectedStructureDay}
+                      </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[9px] font-bold text-slate-400 block mb-0.5">Nama Kegiatan</label>
+                          <input
+                            type="text"
+                            placeholder="Contoh: Upacara, Sholat Dhuha, Senam"
+                            value={newActivityName}
+                            onChange={(e) => setNewActivityName(e.target.value)}
+                            className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-lg focus:outline-hidden"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-bold text-slate-400 block mb-0.5">Kategori Kegiatan</label>
+                          <select
+                            value={newActivityType}
+                            onChange={(e) => setNewActivityType(e.target.value as DailyActivityType)}
+                            className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-lg focus:outline-hidden"
+                          >
+                            <option value="UPACARA">Upacara</option>
+                            <option value="APEL">Apel Pagi</option>
+                            <option value="HALAQOH">Halaqoh / Tahfidz</option>
+                            <option value="IBADAH">Ibadah / Sholat Dhuha</option>
+                            <option value="SENAM">Senam Pagi</option>
+                            <option value="ISTIRAHAT">Waktu Istirahat</option>
+                            <option value="KEGIATAN_SEKOLAH">Kegiatan Sekolah</option>
+                            <option value="LAINNYA">Lainnya</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[9px] font-bold text-slate-400 block mb-0.5">Jam Mulai</label>
+                          <input
+                            type="time"
+                            value={newActivityStart}
+                            onChange={(e) => setNewActivityStart(e.target.value)}
+                            className="w-full px-2.5 py-1.5 text-xs font-semibold bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-lg focus:outline-hidden"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-bold text-slate-400 block mb-0.5">Durasi (Menit)</label>
+                          <input
+                            type="number"
+                            value={newActivityDuration}
+                            onChange={(e) => setNewActivityDuration(parseInt(e.target.value, 10) || 15)}
+                            className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-lg focus:outline-hidden"
+                            min="5"
+                            max="180"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex justify-end pt-1">
+                        <button
+                          type="button"
+                          onClick={handleAddActivityToDay}
+                          className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg cursor-pointer"
+                        >
+                          <Plus className="h-3.5 w-3.5" /> Tambahkan ke Hari {selectedStructureDay}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Save button footer */}
+                  {hasWriteAccess && (
+                    <div className="flex justify-end pt-3 border-t border-slate-100 dark:border-zinc-850 mt-4">
+                      <button
+                        type="button"
+                        onClick={handleSaveAllSettings}
+                        disabled={isUpdating}
+                        className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        {isUpdating ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                        Simpan Perubahan Struktur Harian
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -2023,80 +2426,168 @@ export default function Settings() {
         </div>
 
         {/* COLUMN 3: REAL-TIME AUTOMATIC PREVIEW PANEL (4 COLS) */}
-        <div className="lg:col-span-4 space-y-4">
-          <div className="bg-white dark:bg-zinc-900 p-5 rounded-2xl border border-slate-150 dark:border-zinc-800 shadow-xs sticky top-4">
-            <div className="border-b border-slate-100 dark:border-zinc-850 pb-3 mb-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xs font-bold uppercase text-slate-500 tracking-wider flex items-center gap-1.5">
-                  <Sliders className="h-4 w-4 text-indigo-600" />
-                  Preview Struktur Harian
-                </h2>
+        {isScheduleTab && (
+          <div className="lg:col-span-4 space-y-4">
+            <div className="bg-white dark:bg-zinc-900 p-5 rounded-2xl border border-slate-150 dark:border-zinc-800 shadow-xs sticky top-4">
+              <div className="border-b border-slate-100 dark:border-zinc-850 pb-3 mb-4">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-xs font-bold uppercase text-slate-500 tracking-wider flex items-center gap-1.5">
+                    <Sliders className="h-4 w-4 text-indigo-600" />
+                    Preview Struktur Harian
+                  </h2>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Visualisasi pembagian waktu belajar SMP Alkarim Rasyid dihitung otomatis berdasarkan input Anda.
+                </p>
               </div>
-              <p className="text-[10px] text-slate-400 mt-1">
-                Visualisasi pembagian waktu belajar SMP Alkarim Rasyid dihitung otomatis berdasarkan input Anda.
-              </p>
-            </div>
 
-            {/* Day Selector Tabs */}
-            <div className="flex gap-1 overflow-x-auto pb-2 border-b border-slate-100 dark:border-zinc-850/50 mb-3">
-              {localSettings.activeDays.map((day) => {
-                const isSelected = selectedPreviewDay === day;
-                return (
-                  <button
-                    key={day}
-                    type="button"
-                    onClick={() => setSelectedPreviewDay(day)}
-                    className={`px-3 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer whitespace-nowrap ${
-                      isSelected
-                        ? "bg-indigo-600 text-white shadow-xs"
-                        : "bg-slate-50 text-slate-500 hover:bg-slate-100 dark:bg-zinc-950 dark:text-zinc-400"
-                    }`}
-                  >
-                    {day}
-                  </button>
-                );
-              })}
-            </div>
+              {/* Day Selector Tabs */}
+              <div className="flex gap-1 overflow-x-auto pb-2 border-b border-slate-100 dark:border-zinc-850/50 mb-3">
+                {localSettings?.activeDays?.map((day) => {
+                  const isSelected = selectedPreviewDay === day;
+                  return (
+                    <button
+                      key={day}
+                      type="button"
+                      onClick={() => setSelectedPreviewDay(day)}
+                      className={`px-3 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+                        isSelected
+                          ? "bg-indigo-600 text-white shadow-xs"
+                          : "bg-slate-50 text-slate-500 hover:bg-slate-100 dark:bg-zinc-950 dark:text-zinc-400"
+                      }`}
+                    >
+                      {day}
+                    </button>
+                  );
+                })}
+              </div>
 
-            {/* Timeline Blocks List */}
-            <div className="relative border-l border-slate-150 dark:border-zinc-800 ml-2.5 pl-4 space-y-3 py-1 max-h-[380px] overflow-y-auto">
-              {previewTimeline.map((block, index) => {
-                return (
-                  <div key={index} className="relative">
-                    {/* Bullet marker */}
-                    <div className="absolute -left-[21px] top-1.5 h-2.5 w-2.5 rounded-full border border-white dark:border-zinc-900 bg-slate-300 dark:bg-zinc-700 flex items-center justify-center z-10" />
-                    
-                    <div className={`p-2.5 rounded-xl border text-[11px] ${getTimelineItemStyle(block.type)}`}>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5 font-bold">
-                          {getTimelineIcon(block.type)}
-                          <span>{block.name}</span>
+              {/* Timeline Blocks List */}
+              <div className="relative border-l border-slate-150 dark:border-zinc-800 ml-2.5 pl-4 space-y-3 py-1 max-h-[380px] overflow-y-auto">
+                {previewTimeline.map((block, index) => {
+                  return (
+                    <div key={index} className="relative">
+                      {/* Bullet marker */}
+                      <div className="absolute -left-[21px] top-1.5 h-2.5 w-2.5 rounded-full border border-white dark:border-zinc-900 bg-slate-300 dark:bg-zinc-700 flex items-center justify-center z-10" />
+                      
+                      <div className={`p-2.5 rounded-xl border text-[11px] ${getTimelineItemStyle(block.type)}`}>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5 font-bold">
+                            {getTimelineIcon(block.type)}
+                            <span>{block.name}</span>
+                          </div>
+                          <span className="text-[9px] font-mono font-bold bg-white/60 dark:bg-zinc-900/50 px-1.5 py-0.5 rounded">
+                            {block.start} - {block.end}
+                          </span>
                         </div>
-                        <span className="text-[9px] font-mono font-bold bg-white/60 dark:bg-zinc-900/50 px-1.5 py-0.5 rounded">
-                          {block.start} - {block.end}
-                        </span>
-                      </div>
-                      <div className="text-[9px] opacity-85 mt-1 flex justify-between">
-                        <span>Durasi: {block.duration} Mnt</span>
-                        {block.type === "jp" && <span className="font-black text-blue-600 dark:text-blue-400">Jam Pelajaran</span>}
-                        {block.type === "assembly" && <span className="font-bold text-amber-600 dark:text-amber-400">Apel Pagi</span>}
-                        {block.type === "special" && <span className="font-bold text-indigo-600 dark:text-indigo-400">Kegiatan Khusus</span>}
-                        {block.type === "break" && <span className="font-bold text-emerald-600 dark:text-emerald-400">Waktu Istirahat</span>}
-                        {block.type === "gap" && <span className="font-medium text-slate-400 italic">Jeda</span>}
-                        {block.type === "end" && <span className="font-bold text-slate-500">Pulang</span>}
+                        <div className="text-[9px] opacity-85 mt-1 flex justify-between">
+                          <span>Durasi: {block.duration} Mnt</span>
+                          {block.type === "jp" && <span className="font-black text-blue-600 dark:text-blue-400">Jam Pelajaran</span>}
+                          {block.type === "assembly" && <span className="font-bold text-amber-600 dark:text-amber-400">Apel Pagi</span>}
+                          {block.type === "special" && <span className="font-bold text-indigo-600 dark:text-indigo-400">Kegiatan Khusus</span>}
+                          {block.type === "break" && <span className="font-bold text-emerald-600 dark:text-emerald-400">Waktu Istirahat</span>}
+                          {block.type === "gap" && <span className="font-medium text-slate-400 italic">Jeda</span>}
+                          {block.type === "end" && <span className="font-bold text-slate-500">Pulang</span>}
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  );
+                })}
+                {previewTimeline.length === 0 && (
+                  <p className="text-xs text-slate-400 italic py-6 text-center">Silakan aktifkan hari di tab Hari Aktif untuk melihat preview struktur jadwal.</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+      </div>
+
+      {/* MODAL SALIN STRUKTUR HARIAN */}
+      {showCopyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fade-in">
+          <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl shadow-2xl max-w-md w-full p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-zinc-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Copy className="h-4 w-4 text-indigo-600" />
+                <h3 className="text-sm font-bold text-slate-800 dark:text-zinc-100">
+                  Salin Struktur Hari {selectedStructureDay}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setShowCopyModal(false); setCopyTargetDays([]); }}
+                className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-zinc-300 rounded-lg cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-500 dark:text-zinc-400">
+              Pilih hari tujuan yang akan menerima salinan daftar kegiatan dari hari <strong>{selectedStructureDay}</strong>:
+            </p>
+
+            <div className="grid grid-cols-2 gap-2">
+              {DAYS_OF_WEEK.filter(d => d !== selectedStructureDay).map(day => {
+                const isChecked = copyTargetDays.includes(day);
+                return (
+                  <label
+                    key={day}
+                    className={`p-2.5 rounded-xl border text-xs font-semibold flex items-center gap-2 cursor-pointer transition-all ${
+                      isChecked
+                        ? "bg-indigo-50 border-indigo-300 text-indigo-700 dark:bg-indigo-950/40 dark:border-indigo-800 dark:text-indigo-300"
+                        : "bg-slate-50 border-slate-200 text-slate-600 dark:bg-zinc-950 dark:border-zinc-800 dark:text-zinc-400"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setCopyTargetDays([...copyTargetDays, day]);
+                        } else {
+                          setCopyTargetDays(copyTargetDays.filter(d => d !== day));
+                        }
+                      }}
+                      className="h-3.5 w-3.5 text-indigo-600 rounded cursor-pointer"
+                    />
+                    <span>{day}</span>
+                  </label>
                 );
               })}
-              {previewTimeline.length === 0 && (
-                <p className="text-xs text-slate-400 italic py-6 text-center">Silakan aktifkan hari di tab Hari Aktif untuk melihat preview struktur jadwal.</p>
-              )}
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-zinc-800">
+              <button
+                type="button"
+                onClick={() => {
+                  const otherActiveDays = (localSettings?.activeDays || []).filter(d => d !== selectedStructureDay);
+                  setCopyTargetDays(otherActiveDays);
+                }}
+                className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+              >
+                Pilih Semua Hari Aktif
+              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setShowCopyModal(false); setCopyTargetDays([]); }}
+                  className="px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-100 dark:hover:bg-zinc-800 rounded-lg cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleCopyStructureToDays(copyTargetDays)}
+                  className="px-3.5 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg cursor-pointer"
+                >
+                  Terapkan Salinan
+                </button>
+              </div>
             </div>
           </div>
         </div>
-
-      </div>
+      )}
 
       {/* PREVIEW & DIFF MODAL BEFORE SAVING */}
       {showPreviewModal && (

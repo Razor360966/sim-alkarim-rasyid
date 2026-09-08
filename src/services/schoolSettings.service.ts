@@ -10,6 +10,7 @@ import {
 } from "firebase/firestore";
 import { db, handleFirestoreError, OperationType } from "../firebase/config";
 import { SchoolSettings, TeachingAttendanceSettings, JournalTimelinessRules } from "../types";
+import { getDefaultDailyStructures } from "../utils/scheduleCalculator";
 
 const COLLECTION_NAME = "school_settings";
 const DOCUMENT_ID = "settings";
@@ -99,6 +100,7 @@ const DEFAULT_SETTINGS: SchoolSettings = {
   breakTimes: [],
   jpStructure: [],
   routineActivities: [],
+  dailyStructures: getDefaultDailyStructures(),
   schoolHours: {
     startTime: "07:00",
     endTime: "14:00"
@@ -141,6 +143,7 @@ export const schoolSettingsService = {
           breakTimes: data.breakTimes || DEFAULT_SETTINGS.breakTimes,
           jpStructure: data.jpStructure || DEFAULT_SETTINGS.jpStructure,
           routineActivities: data.routineActivities || DEFAULT_SETTINGS.routineActivities,
+          dailyStructures: data.dailyStructures || getDefaultDailyStructures(data),
           schoolHours: data.schoolHours || {
             startTime: data.startTime || DEFAULT_SETTINGS.startTime,
             endTime: data.endTime || DEFAULT_SETTINGS.endTime
