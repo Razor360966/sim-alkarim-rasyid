@@ -27,6 +27,7 @@ export const DEFAULT_JOURNAL_TIMELINESS_RULES: JournalTimelinessRules = {
 
 export const DEFAULT_TEACHING_ATTENDANCE_SETTINGS: TeachingAttendanceSettings = {
   checkInToleranceMinutes: 15,
+  lateToleranceMinutes: 15,
   checkOutToleranceMinutes: 15,
   qrScanCooldownSeconds: 30,
   approvalMethod: "hybrid",
@@ -149,26 +150,44 @@ export const schoolSettingsService = {
             endTime: data.endTime || DEFAULT_SETTINGS.endTime
           },
           lessonPeriod: data.lessonPeriod || data.jpDuration || DEFAULT_SETTINGS.lessonPeriod,
-          teachingAttendanceSettings: {
-            ...DEFAULT_TEACHING_ATTENDANCE_SETTINGS,
-            ...(data.teachingAttendanceSettings || {}),
-            pendingValidationConditions: {
-              ...DEFAULT_TEACHING_ATTENDANCE_SETTINGS.pendingValidationConditions,
-              ...(data.teachingAttendanceSettings?.pendingValidationConditions || {})
-            },
-            qrRules: {
-              ...DEFAULT_TEACHING_ATTENDANCE_SETTINGS.qrRules,
-              ...(data.teachingAttendanceSettings?.qrRules || {})
-            },
-            notifications: {
-              ...DEFAULT_TEACHING_ATTENDANCE_SETTINGS.notifications,
-              ...(data.teachingAttendanceSettings?.notifications || {})
-            },
-            journalTimelinessRules: {
-              ...DEFAULT_JOURNAL_TIMELINESS_RULES,
-              ...(data.teachingAttendanceSettings?.journalTimelinessRules || {})
-            }
-          },
+          teachingAttendanceSettings: (() => {
+            const rawTas = data.teachingAttendanceSettings || {};
+            const rawLate = rawTas.lateToleranceMinutes;
+            const rawCheckIn = rawTas.checkInToleranceMinutes;
+            const effectiveTolerance = typeof rawLate === "number" && rawLate >= 0
+              ? Math.floor(rawLate)
+              : (typeof rawCheckIn === "number" && rawCheckIn >= 0
+                  ? Math.floor(rawCheckIn)
+                  : DEFAULT_TEACHING_ATTENDANCE_SETTINGS.checkInToleranceMinutes);
+            const rawCheckOut = rawTas.checkOutToleranceMinutes;
+            const effectiveCheckOut = typeof rawCheckOut === "number" && rawCheckOut >= 0
+              ? Math.floor(rawCheckOut)
+              : DEFAULT_TEACHING_ATTENDANCE_SETTINGS.checkOutToleranceMinutes;
+
+            return {
+              ...DEFAULT_TEACHING_ATTENDANCE_SETTINGS,
+              ...rawTas,
+              checkInToleranceMinutes: effectiveTolerance,
+              lateToleranceMinutes: effectiveTolerance,
+              checkOutToleranceMinutes: effectiveCheckOut,
+              pendingValidationConditions: {
+                ...DEFAULT_TEACHING_ATTENDANCE_SETTINGS.pendingValidationConditions,
+                ...(rawTas.pendingValidationConditions || {})
+              },
+              qrRules: {
+                ...DEFAULT_TEACHING_ATTENDANCE_SETTINGS.qrRules,
+                ...(rawTas.qrRules || {})
+              },
+              notifications: {
+                ...DEFAULT_TEACHING_ATTENDANCE_SETTINGS.notifications,
+                ...(rawTas.notifications || {})
+              },
+              journalTimelinessRules: {
+                ...DEFAULT_JOURNAL_TIMELINESS_RULES,
+                ...(rawTas.journalTimelinessRules || {})
+              }
+            };
+          })(),
           createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : data.createdAt,
           updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate().toISOString() : data.updatedAt
         } as SchoolSettings;
@@ -210,8 +229,31 @@ export const schoolSettingsService = {
     try {
       const docRef = doc(db, COLLECTION_NAME, DOCUMENT_ID);
       
+      // Ensure tolerance values are sanitized non-negative integers and synced
+      const sanitizedSettings = { ...settings };
+      if (sanitizedSettings.teachingAttendanceSettings) {
+        const rawLate = sanitizedSettings.teachingAttendanceSettings.lateToleranceMinutes;
+        const rawCheckIn = sanitizedSettings.teachingAttendanceSettings.checkInToleranceMinutes;
+        const effectiveTol = Math.max(0, Math.floor(
+          typeof rawLate === "number" && !isNaN(rawLate)
+            ? rawLate
+            : (typeof rawCheckIn === "number" && !isNaN(rawCheckIn) ? rawCheckIn : 15)
+        ));
+        const rawCheckOut = sanitizedSettings.teachingAttendanceSettings.checkOutToleranceMinutes;
+        const effectiveCheckOut = Math.max(0, Math.floor(
+          typeof rawCheckOut === "number" && !isNaN(rawCheckOut) ? rawCheckOut : 15
+        ));
+
+        sanitizedSettings.teachingAttendanceSettings = {
+          ...sanitizedSettings.teachingAttendanceSettings,
+          checkInToleranceMinutes: effectiveTol,
+          lateToleranceMinutes: effectiveTol,
+          checkOutToleranceMinutes: effectiveCheckOut
+        };
+      }
+
       const payload = {
-        ...settings,
+        ...sanitizedSettings,
         updatedAt: serverTimestamp(),
         updatedBy: operatorId
       };

@@ -73,21 +73,22 @@ export function getAttendanceStatusDisplay(item: Partial<TeacherTeachingAttendan
     };
   }
 
-  // 2. Keterlambatan > 15 Menit evaluation
-  const isLateOver15 = !!item.requiresLateValidation || (item.lateMinutes !== undefined && item.lateMinutes > 15);
+  // 2. Keterlambatan requiring validation evaluation
+  const isLateRequiresVal = !!item.requiresLateValidation || (item.lateMinutes !== undefined && item.lateMinutes > 0 && item.attendanceStatus === "Pending");
   const currentValidationStatus = item.attendanceStatus || (
     item.requiresLateValidation
       ? (item.lateValidationStatus === "APPROVED" ? "Approved" : item.lateValidationStatus === "REJECTED" ? "Rejected" : "Pending")
       : undefined
   );
 
-  if (isLateOver15) {
-    const minutesLabel = item.lateMinutes && item.lateMinutes > 0 ? `${item.lateMinutes} MENIT` : ">15 MENIT";
+  if (isLateRequiresVal) {
+    const minutesLabel = item.lateMinutes && item.lateMinutes > 0 ? `${item.lateMinutes} MENIT` : "";
+    const labelWithSpace = minutesLabel ? ` ${minutesLabel}` : "";
 
     // Subcase 2a: Validasi Disetujui (Approved)
     if (currentValidationStatus === "Approved" || item.lateValidationStatus === "APPROVED") {
       return {
-        statusLabel: `TERLAMBAT ${minutesLabel} — DISETUJUI`,
+        statusLabel: `TERLAMBAT${labelWithSpace} — DISETUJUI`,
         hadirJpText: "1 JP",
         hadirJpValue: 1,
         category: "TERLAMBAT_APPROVED",
@@ -118,9 +119,9 @@ export function getAttendanceStatusDisplay(item: Partial<TeacherTeachingAttendan
       };
     }
 
-    // Subcase 2c: Menunggu Validasi (Pending / Default for >15 min)
+    // Subcase 2c: Menunggu Validasi (Pending)
     return {
-      statusLabel: `TERLAMBAT ${minutesLabel} — MENUNGGU VALIDASI`,
+      statusLabel: `TERLAMBAT${labelWithSpace} — MENUNGGU VALIDASI`,
       hadirJpText: "0 JP (Terkunci)",
       hadirJpValue: 0,
       category: "TERLAMBAT_PENDING",
@@ -134,14 +135,15 @@ export function getAttendanceStatusDisplay(item: Partial<TeacherTeachingAttendan
     };
   }
 
-  // 3. Keterlambatan normal <= 15 Menit (Toleransi)
+  // 3. Keterlambatan normal (Disetujui Otomatis / Sesuai Toleransi)
   if (
-    (item.lateMinutes !== undefined && item.lateMinutes > 0 && item.lateMinutes <= 15) ||
-    (item.status === "Terlambat" && !item.requiresLateValidation)
+    item.status === "Terlambat" ||
+    (item.lateMinutes !== undefined && item.lateMinutes > 0)
   ) {
-    const minutesLabel = item.lateMinutes && item.lateMinutes > 0 ? `${item.lateMinutes} MENIT` : "≤15 MENIT";
+    const minutesLabel = item.lateMinutes && item.lateMinutes > 0 ? `${item.lateMinutes} MENIT` : "";
+    const labelWithSpace = minutesLabel ? ` ${minutesLabel}` : "";
     return {
-      statusLabel: `TERLAMBAT ${minutesLabel}`,
+      statusLabel: `TERLAMBAT${labelWithSpace}`,
       hadirJpText: "1 JP",
       hadirJpValue: 1,
       category: "TERLAMBAT_TOLERANSI",

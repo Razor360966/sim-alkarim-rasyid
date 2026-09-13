@@ -18,6 +18,7 @@ import {
 import { halaqahGroupService } from "./halaqahGroupService";
 import { schoolAgendaService } from "./schoolAgenda.service";
 import { schoolSettingsService } from "./schoolSettings.service";
+import { getEffectiveLateTolerance } from "../utils/attendanceToleranceHelper";
 
 const HALAQAH_ATTENDANCE_COLLECTION = "teacher_halaqah_attendances";
 const HALAQAH_SCHEDULES_COLLECTION = "halaqah_schedules";
@@ -421,22 +422,25 @@ export const teacherHalaqahAttendanceService = {
       // Step 7. Check In Case
       const startM = parseTimeToMinutes(scheduledStartTime);
       const delayMinutes = currentM - startM;
+
+      let tolerance = 15;
+      try {
+        const settings = await schoolSettingsService.getSettings();
+        tolerance = getEffectiveLateTolerance(settings);
+      } catch (e) {
+        console.warn("Failed to load schoolSettings for halaqah tolerance:", e);
+      }
       
       let initialStatus: "Tepat Waktu" | "Terlambat" | "Tidak Hadir" = "Tepat Waktu";
       let isLate = false;
       let lateMinutes = 0;
 
-      if (delayMinutes <= 0) {
+      if (delayMinutes <= tolerance) {
         initialStatus = "Tepat Waktu";
         isLate = false;
         lateMinutes = 0;
-      } else if (delayMinutes < 15) {
-        initialStatus = "Terlambat";
-        isLate = true;
-        lateMinutes = delayMinutes;
       } else {
-        // delayMinutes >= 15 -> Batas tepat 15 menit masuk kategori TIDAK HADIR
-        initialStatus = "Tidak Hadir";
+        initialStatus = "Terlambat";
         isLate = true;
         lateMinutes = delayMinutes;
       }
@@ -461,7 +465,7 @@ export const teacherHalaqahAttendanceService = {
         scheduledStartTime,
         scheduledEndTime,
         notes: lateMinutes > 0 
-          ? (initialStatus === "Tidak Hadir" ? `Terlambat ${lateMinutes} menit (mencapai/melebihi batas 15 menit -> Tidak Hadir)` : `Terlambat ${lateMinutes} menit (Hadir)`)
+          ? `Terlambat ${lateMinutes} menit (Toleransi ${tolerance} menit)`
           : "Tepat Waktu",
         academicYearId: params.academicYearId || "AY_ACTIVE",
         semesterId: params.semesterId || "SEM_ACTIVE",
@@ -471,18 +475,16 @@ export const teacherHalaqahAttendanceService = {
 
       await setDoc(newDocRef, newRecord);
 
-      const statusFeedback = delayMinutes <= 0
+      const statusFeedback = !isLate
         ? "HADIR (Tepat Waktu)"
-        : (delayMinutes < 15
-            ? `HADIR (Terlambat ${lateMinutes} menit)`
-            : `TIDAK HADIR (Keterlambatan ${lateMinutes} menit mencapai/melebihi batas 15 menit)`);
+        : `HADIR (Terlambat ${lateMinutes} menit, batas toleransi ${tolerance} menit)`;
 
       return {
         success: true,
         action: "CHECK_IN",
         groupId,
         groupName,
-        message: `CHECK-IN ${initialStatus === "Tidak Hadir" ? "TERCATAT TIDAK HADIR" : "BERHASIL"}\n\n${groupName}\nPembimbing: ${params.currentUser.name}\nWaktu Check-in: ${currentTimeStr} WIB\nJadwal Resmi: ${scheduledStartTime} - ${scheduledEndTime} WIB\nKeterlambatan: ${lateMinutes > 0 ? `${lateMinutes} menit` : "0 menit (Tepat Waktu)"}\nStatus Presensi: ${statusFeedback}`,
+        message: `CHECK-IN BERHASIL\n\n${groupName}\nPembimbing: ${params.currentUser.name}\nWaktu Check-in: ${currentTimeStr} WIB\nJadwal Resmi: ${scheduledStartTime} - ${scheduledEndTime} WIB\nKeterlambatan: ${lateMinutes > 0 ? `${lateMinutes} menit` : "0 menit (Tepat Waktu)"}\nStatus Presensi: ${statusFeedback}`,
         record: newRecord
       };
 

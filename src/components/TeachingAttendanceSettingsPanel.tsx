@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { SchoolSettings, TeachingAttendanceSettings } from "../types";
 import { DEFAULT_TEACHING_ATTENDANCE_SETTINGS, SettingsHistoryItem } from "../services/schoolSettings.service";
+import { parseTimeToMinutes, formatMinutesToTime } from "../utils/attendanceToleranceHelper";
 
 interface TeachingAttendanceSettingsPanelProps {
   localSettings: SchoolSettings;
@@ -58,6 +59,7 @@ export const TeachingAttendanceSettingsPanel: React.FC<TeachingAttendanceSetting
   const [activeSubSection, setActiveSubSection] = useState<
     "toleransi" | "approval" | "validasi" | "scan_berulang" | "jadwal_istirahat" | "qr_code" | "durasi" | "notifikasi" | "ketepatan_jurnal" | "audit"
   >("toleransi");
+  const [toleranceError, setToleranceError] = useState<string | null>(null);
 
   // Helper to update teachingAttendanceSettings in localSettings
   const updateTas = (updater: (prev: TeachingAttendanceSettings) => TeachingAttendanceSettings) => {
@@ -154,117 +156,326 @@ export const TeachingAttendanceSettingsPanel: React.FC<TeachingAttendanceSetting
       </div>
 
       {/* TAB 1: TOLERANSI WAKTU */}
-      {activeSubSection === "toleransi" && (
-        <div className="bg-white dark:bg-zinc-900 p-5 rounded-2xl border border-slate-150 dark:border-zinc-800 space-y-5 shadow-xs">
-          <div className="flex items-start gap-3 border-b border-slate-100 dark:border-zinc-800 pb-4">
-            <div className="p-2.5 bg-indigo-50 dark:bg-indigo-950/40 rounded-xl text-indigo-600 dark:text-indigo-400">
-              <Clock className="h-5 w-5" />
+      {activeSubSection === "toleransi" && (() => {
+        const schoolStartTime = localSettings.schoolHours?.startTime || localSettings.startTime || "07:00";
+        const startMinutes = parseTimeToMinutes(schoolStartTime);
+        const checkInTol = typeof tas.lateToleranceMinutes === "number"
+          ? tas.lateToleranceMinutes
+          : (typeof tas.checkInToleranceMinutes === "number" ? tas.checkInToleranceMinutes : 15);
+        const cutoffMinutes = startMinutes + checkInTol;
+        const cutoffTimeStr = formatMinutesToTime(cutoffMinutes);
+
+        return (
+          <div className="bg-white dark:bg-zinc-900 p-5 rounded-2xl border border-slate-150 dark:border-zinc-800 space-y-5 shadow-xs">
+            <div className="flex items-start gap-3 border-b border-slate-100 dark:border-zinc-800 pb-4">
+              <div className="p-2.5 bg-indigo-50 dark:bg-indigo-950/40 rounded-xl text-indigo-600 dark:text-indigo-400">
+                <Clock className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">1. Konfigurasi Presensi Guru & Toleransi Waktu</h3>
+                <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">
+                  Tentukan jam masuk resmi dan toleransi keterlambatan secara bebas. Guru dianggap terlambat jika check-in melewati jam masuk + toleransi.
+                </p>
+              </div>
             </div>
-            <div>
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white">1. Konfigurasi Toleransi Waktu Check-In & Check-Out</h3>
-              <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">
-                Batas waktu keterlambatan dan kelonggaran scan bagi guru sebelum & setelah jam jadwal pelajaran.
-              </p>
+
+            {/* Presensi Guru - Section Card */}
+            <div className="bg-slate-50/80 dark:bg-zinc-800/40 border border-slate-200 dark:border-zinc-700/80 rounded-2xl p-4 sm:p-5 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/70 dark:border-zinc-700/60 pb-3">
+                <div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 px-2 py-0.5 rounded-md border border-indigo-200/50 dark:border-indigo-900/40">
+                    Pengaturan Utama
+                  </span>
+                  <h4 className="text-sm font-bold text-slate-900 dark:text-zinc-100 mt-1">
+                    Presensi Guru
+                  </h4>
+                </div>
+                <div className="text-xs font-semibold text-slate-500 dark:text-zinc-400">
+                  Rumus Acuan: <span className="font-mono text-indigo-600 dark:text-indigo-400 font-bold">Jam Masuk + Toleransi = Batas Akhir</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Jam Masuk */}
+                <div className="p-4 bg-white dark:bg-zinc-900 rounded-xl border border-slate-200 dark:border-zinc-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 flex items-center gap-1.5">
+                      <Clock className="h-4 w-4 text-indigo-500" />
+                      Jam Masuk Resmi
+                    </label>
+                    <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 px-2 py-0.5 rounded-md border border-indigo-200/50 dark:border-indigo-900/40 font-mono">
+                      {schoolStartTime} WIB
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-zinc-400">
+                    Jam masuk resmi sekolah (atau jam mulai sesi JP jadwal) sebagai titik awal perhitungan keterlambatan.
+                  </p>
+                  <div className="relative">
+                    <Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                    <input
+                      type="time"
+                      disabled={!canEdit}
+                      value={schoolStartTime}
+                      onChange={(e) => {
+                        if (!canEdit) return;
+                        const newTime = e.target.value;
+                        setLocalSettings(prev => {
+                          if (!prev) return prev;
+                          return {
+                            ...prev,
+                            schoolHours: {
+                              startTime: newTime,
+                              endTime: prev.schoolHours?.endTime || "14:00"
+                            }
+                          };
+                        });
+                      }}
+                      className="w-full pl-10 pr-3 py-2 text-xs font-bold font-mono bg-slate-50 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed"
+                    />
+                  </div>
+                </div>
+
+                {/* Toleransi Keterlambatan - CUSTOM NUMBER INPUT */}
+                <div className="p-4 bg-white dark:bg-zinc-900 rounded-xl border border-slate-200 dark:border-zinc-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 flex items-center gap-1.5">
+                      <Sliders className="h-4 w-4 text-emerald-500" />
+                      Toleransi Keterlambatan
+                    </label>
+                    <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-200/50 dark:border-emerald-900/40 font-mono">
+                      {checkInTol} Menit
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-zinc-400">
+                    Kelonggaran waktu bebas (angka bulat &ge; 0). Contoh: 0, 5, 10, 15, 30, 60, atau angka lainnya.
+                  </p>
+
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        disabled={!canEdit}
+                        value={checkInTol}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          if (raw === "") {
+                            updateTas(prev => ({
+                              ...prev,
+                              checkInToleranceMinutes: 0,
+                              lateToleranceMinutes: 0
+                            }));
+                            setToleranceError(null);
+                            return;
+                          }
+                          const num = parseInt(raw, 10);
+                          if (isNaN(num) || num < 0) {
+                            setToleranceError("Toleransi keterlambatan minimal 0 menit (tidak boleh negatif).");
+                            return;
+                          }
+                          setToleranceError(null);
+                          updateTas(prev => ({
+                            ...prev,
+                            checkInToleranceMinutes: num,
+                            lateToleranceMinutes: num
+                          }));
+                        }}
+                        className={`w-full px-3 py-2 text-xs font-bold font-mono bg-slate-50 dark:bg-zinc-800 border ${
+                          toleranceError ? "border-rose-500 focus:ring-rose-500" : "border-slate-300 dark:border-zinc-700 focus:ring-indigo-500"
+                        } rounded-xl focus:ring-2 disabled:opacity-60 disabled:cursor-not-allowed`}
+                        placeholder="Contoh: 10"
+                      />
+                    </div>
+                    <span className="text-xs font-bold text-slate-600 dark:text-zinc-400 shrink-0">menit</span>
+                  </div>
+
+                  {/* Preset Buttons for Quick Choice */}
+                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                    <span className="text-[10px] text-slate-400 font-medium">Pilihan cepat:</span>
+                    {[0, 5, 10, 15, 20, 30, 45, 60].map(val => (
+                      <button
+                        key={val}
+                        type="button"
+                        disabled={!canEdit}
+                        onClick={() => {
+                          setToleranceError(null);
+                          updateTas(prev => ({
+                            ...prev,
+                            checkInToleranceMinutes: val,
+                            lateToleranceMinutes: val
+                          }));
+                        }}
+                        className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition-all cursor-pointer ${
+                          checkInTol === val
+                            ? "bg-indigo-600 text-white shadow-2xs"
+                            : "bg-slate-100 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-300"
+                        }`}
+                      >
+                        {val} mnt
+                      </button>
+                    ))}
+                  </div>
+
+                  {toleranceError && (
+                    <p className="text-[11px] text-rose-600 dark:text-rose-400 font-medium flex items-center gap-1">
+                      <AlertTriangle className="h-3 w-3 shrink-0" />
+                      {toleranceError}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Dynamic Simulation Card & Core Explanation */}
+              <div className="p-4 bg-indigo-50/80 dark:bg-indigo-950/30 border border-indigo-200/80 dark:border-indigo-900/50 rounded-xl space-y-3">
+                <div className="flex items-center gap-2 text-indigo-900 dark:text-indigo-300 font-bold text-xs">
+                  <Info className="h-4 w-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                  <span>Keterangan & Simulasi Batas Toleransi</span>
+                </div>
+                
+                <p className="text-xs text-indigo-950 dark:text-indigo-100 leading-relaxed font-medium">
+                  Guru dianggap terlambat apabila melakukan check-in melewati <strong>jam masuk + toleransi keterlambatan</strong>.
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+                  <div className="bg-white dark:bg-zinc-900 p-3 rounded-lg border border-indigo-100 dark:border-indigo-950">
+                    <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Jam Masuk Resmi</div>
+                    <div className="font-bold font-mono text-slate-900 dark:text-zinc-100 text-sm mt-0.5">{schoolStartTime} WIB</div>
+                  </div>
+                  <div className="bg-white dark:bg-zinc-900 p-3 rounded-lg border border-indigo-100 dark:border-indigo-950">
+                    <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Toleransi Keterlambatan</div>
+                    <div className="font-bold font-mono text-emerald-600 dark:text-emerald-400 text-sm mt-0.5">+{checkInTol} Menit</div>
+                  </div>
+                  <div className="bg-white dark:bg-zinc-900 p-3 rounded-lg border border-indigo-100 dark:border-indigo-950">
+                    <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Batas Akhir Toleransi</div>
+                    <div className="font-bold font-mono text-indigo-600 dark:text-indigo-400 text-sm mt-0.5">
+                      {cutoffTimeStr} WIB
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white dark:bg-zinc-900 p-3 rounded-lg border border-indigo-100 dark:border-indigo-950 text-xs space-y-1.5">
+                  <div className="font-bold text-slate-800 dark:text-zinc-200 text-[11px]">Hasil Evaluasi Check-In:</div>
+                  <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
+                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                    <span>Check-in &le; <strong>{cutoffTimeStr} WIB</strong> &rarr; <strong className="bg-emerald-100 dark:bg-emerald-950 px-1.5 py-0.5 rounded text-emerald-800 dark:text-emerald-300">TIDAK TERLAMBAT</strong> (Hadir Tepat Waktu)</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-rose-700 dark:text-rose-400">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    <span>Check-in &gt; <strong>{cutoffTimeStr} WIB</strong> &rarr; <strong className="bg-rose-100 dark:bg-rose-950 px-1.5 py-0.5 rounded text-rose-800 dark:text-rose-300">TERLAMBAT</strong> (Durasi keterlambatan dicatat aktual dari jam masuk resmi)</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 dark:text-zinc-400 italic pt-1">
+                    * Catatan: Data &ldquo;Terlambat (JP)&rdquo; hanya merupakan informasi monitoring keterlambatan. Terlambat tidak mengurangi Kehadiran dan tidak mempengaruhi perhitungan formula JML JP / Total JP.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Check-Out Tolerance & Cooldown Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+              {/* Check-Out Tolerance */}
+              <div className="p-4 bg-slate-50 dark:bg-zinc-800/50 rounded-xl border border-slate-200/80 dark:border-zinc-700/60 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 flex items-center gap-1.5">
+                    <Clock className="h-4 w-4 text-rose-500" />
+                    Toleransi Check-Out
+                  </label>
+                  <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 px-2 py-0.5 rounded-md border border-indigo-200/50 dark:border-indigo-900/40 font-mono">
+                    {tas.checkOutToleranceMinutes} Menit
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-zinc-400">
+                  Batas waktu kelonggaran saat jam pelajaran selesai untuk menyelesaikan check-out mengajar.
+                </p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    disabled={!canEdit}
+                    value={tas.checkOutToleranceMinutes}
+                    onChange={(e) => {
+                      const val = Math.max(0, parseInt(e.target.value, 10) || 0);
+                      updateTas(prev => ({ ...prev, checkOutToleranceMinutes: val }));
+                    }}
+                    className="w-full px-3 py-2 text-xs font-bold font-mono bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed"
+                    placeholder="15"
+                  />
+                  <span className="text-xs font-bold text-slate-500 dark:text-zinc-400 shrink-0">menit</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                  <span className="text-[10px] text-slate-400 font-medium">Pilihan cepat:</span>
+                  {[0, 5, 10, 15, 20, 30].map(val => (
+                    <button
+                      key={val}
+                      type="button"
+                      disabled={!canEdit}
+                      onClick={() => updateTas(prev => ({ ...prev, checkOutToleranceMinutes: val }))}
+                      className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition-all cursor-pointer ${
+                        tas.checkOutToleranceMinutes === val
+                          ? "bg-indigo-600 text-white shadow-2xs"
+                          : "bg-slate-200 dark:bg-zinc-700 hover:bg-slate-300 dark:hover:bg-zinc-600 text-slate-700 dark:text-zinc-200"
+                      }`}
+                    >
+                      {val} mnt
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* QR Scan Cooldown */}
+              <div className="p-4 bg-slate-50 dark:bg-zinc-800/50 rounded-xl border border-slate-200/80 dark:border-zinc-700/60 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 flex items-center gap-1.5">
+                    <Zap className="h-4 w-4 text-amber-500" />
+                    QR Scan Cooldown
+                  </label>
+                  <span className="text-xs font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded-md border border-amber-200/50 dark:border-amber-900/40 font-mono">
+                    {tas.qrScanCooldownSeconds ?? 30} Detik
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-zinc-400">
+                  Masa tunggu Anti Double Scan setelah Check-in di mana scan selanjutnya langsung diabaikan.
+                </p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="5"
+                    step="5"
+                    disabled={!canEdit}
+                    value={tas.qrScanCooldownSeconds ?? 30}
+                    onChange={(e) => {
+                      const val = Math.max(5, parseInt(e.target.value, 10) || 30);
+                      updateTas(prev => ({ ...prev, qrScanCooldownSeconds: val }));
+                    }}
+                    className="w-full px-3 py-2 text-xs font-bold font-mono bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed"
+                    placeholder="30"
+                  />
+                  <span className="text-xs font-bold text-slate-500 dark:text-zinc-400 shrink-0">detik</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                  <span className="text-[10px] text-slate-400 font-medium">Pilihan cepat:</span>
+                  {[10, 15, 30, 45, 60].map(val => (
+                    <button
+                      key={val}
+                      type="button"
+                      disabled={!canEdit}
+                      onClick={() => updateTas(prev => ({ ...prev, qrScanCooldownSeconds: val }))}
+                      className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition-all cursor-pointer ${
+                        (tas.qrScanCooldownSeconds ?? 30) === val
+                          ? "bg-amber-600 text-white shadow-2xs"
+                          : "bg-slate-200 dark:bg-zinc-700 hover:bg-slate-300 dark:hover:bg-zinc-600 text-slate-700 dark:text-zinc-200"
+                      }`}
+                    >
+                      {val} dtk
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Check-In Tolerance */}
-            <div className="p-4 bg-slate-50 dark:bg-zinc-800/50 rounded-xl border border-slate-200/80 dark:border-zinc-700/60 space-y-3">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 flex items-center gap-1.5">
-                  <Clock className="h-4 w-4 text-emerald-500" />
-                  Toleransi Check-In
-                </label>
-                <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 px-2 py-0.5 rounded-md border border-indigo-200/50 dark:border-indigo-900/40">
-                  {tas.checkInToleranceMinutes} Menit
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-500 dark:text-zinc-400">
-                Waktu maksimal sebelum/setelah jam mulai jadwal yang masih dianggap sah/tepat waktu.
-              </p>
-              <select
-                disabled={!canEdit}
-                value={tas.checkInToleranceMinutes}
-                onChange={(e) => {
-                  const val = Number(e.target.value);
-                  updateTas(prev => ({ ...prev, checkInToleranceMinutes: val }));
-                }}
-                className="w-full px-3 py-2 text-xs font-semibold bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                {TOLERANCE_OPTIONS.map(opt => (
-                  <option key={opt} value={opt}>{opt} Menit {opt === 15 ? "(Default Sekolah)" : ""}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Check-Out Tolerance */}
-            <div className="p-4 bg-slate-50 dark:bg-zinc-800/50 rounded-xl border border-slate-200/80 dark:border-zinc-700/60 space-y-3">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 flex items-center gap-1.5">
-                  <Clock className="h-4 w-4 text-rose-500" />
-                  Toleransi Check-Out
-                </label>
-                <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 px-2 py-0.5 rounded-md border border-indigo-200/50 dark:border-indigo-900/40">
-                  {tas.checkOutToleranceMinutes} Menit
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-500 dark:text-zinc-400">
-                Batas waktu kelonggaran saat jam pelajaran selesai untuk menyelesaikan check-out mengajar.
-              </p>
-              <select
-                disabled={!canEdit}
-                value={tas.checkOutToleranceMinutes}
-                onChange={(e) => {
-                  const val = Number(e.target.value);
-                  updateTas(prev => ({ ...prev, checkOutToleranceMinutes: val }));
-                }}
-                className="w-full px-3 py-2 text-xs font-semibold bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                {TOLERANCE_OPTIONS.map(opt => (
-                  <option key={opt} value={opt}>{opt} Menit {opt === 15 ? "(Default Sekolah)" : ""}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* QR Scan Cooldown (Anti Double Scan) */}
-            <div className="p-4 bg-slate-50 dark:bg-zinc-800/50 rounded-xl border border-slate-200/80 dark:border-zinc-700/60 space-y-3">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-slate-800 dark:text-zinc-200 flex items-center gap-1.5">
-                  <Zap className="h-4 w-4 text-amber-500" />
-                  QR Scan Cooldown
-                </label>
-                <span className="text-xs font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded-md border border-amber-200/50 dark:border-amber-900/40">
-                  {tas.qrScanCooldownSeconds ?? 30} Detik
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-500 dark:text-zinc-400">
-                Masa tunggu Anti Double Scan setelah Check-in di mana scan selanjutnya langsung diabaikan.
-              </p>
-              <select
-                disabled={!canEdit}
-                value={tas.qrScanCooldownSeconds ?? 30}
-                onChange={(e) => {
-                  const val = Number(e.target.value);
-                  updateTas(prev => ({ ...prev, qrScanCooldownSeconds: val }));
-                }}
-                className="w-full px-3 py-2 text-xs font-semibold bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                {[10, 15, 30, 45, 60, 120, 300].map(opt => (
-                  <option key={opt} value={opt}>{opt} Detik {opt === 30 ? "(Default Standar)" : ""}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 rounded-xl flex gap-2.5 text-xs text-amber-800 dark:text-amber-300">
-            <Info className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
-            <p>
-              <strong>Contoh Penerapan:</strong> Jika jam mengajar dimulai 07:30 dengan toleransi 10 menit, guru dapat melakukan check-in antara 07:20 s.d. 07:40 tanpa masuk status terlambat atau memerlukan persetujuan manual.
-            </p>
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* TAB 2: METODE APPROVAL */}
       {activeSubSection === "approval" && (

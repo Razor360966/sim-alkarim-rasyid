@@ -1547,6 +1547,46 @@ export default function Settings() {
                       </div>
                     </div>
 
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                          Toleransi Keterlambatan Presensi Guru (Menit)
+                        </label>
+                        <span className="text-[10px] font-mono font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-200/50 dark:border-emerald-900/40">
+                          Batas: {minutesToTime(
+                            timeToMinutes(localSettings.schoolHours?.startTime || "07:00") + 
+                            (localSettings.teachingAttendanceSettings?.checkInToleranceMinutes ?? 15)
+                          )} WIB
+                        </span>
+                      </div>
+                      <div className="relative">
+                        <Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-emerald-500" />
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={localSettings.teachingAttendanceSettings?.checkInToleranceMinutes ?? 15}
+                          onChange={(e) => {
+                            if (!hasWriteAccess) return;
+                            const val = Math.max(0, parseInt(e.target.value, 10) || 0);
+                            setLocalSettings({
+                              ...localSettings,
+                              teachingAttendanceSettings: {
+                                ...(localSettings.teachingAttendanceSettings || {}),
+                                checkInToleranceMinutes: val,
+                                lateToleranceMinutes: val
+                              }
+                            });
+                          }}
+                          className="w-full pl-10 pr-3 py-2.5 text-xs font-semibold bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500/25"
+                          disabled={!hasWriteAccess}
+                        />
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-zinc-400 mt-1.5 leading-relaxed">
+                        Guru dianggap terlambat apabila melakukan check-in melewati jam masuk + toleransi keterlambatan.
+                      </p>
+                    </div>
+
                     <div className="p-3.5 bg-indigo-50/40 dark:bg-indigo-950/10 border border-indigo-100/50 dark:border-indigo-950/20 rounded-xl text-xs space-y-1">
                       <span className="font-bold text-indigo-900 dark:text-indigo-400">Total Durasi Operasional:</span>
                       <p className="text-slate-600 dark:text-zinc-400 text-[11px]">

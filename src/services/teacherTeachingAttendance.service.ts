@@ -31,6 +31,7 @@ import { SchoolSettings } from "../types";
 import { academicYearService } from "./academicYearService";
 import { semesterService } from "./semester.service";
 import { teacherHalaqahAttendanceService } from "./teacherHalaqahAttendance.service";
+import { evaluateLateness, getEffectiveLateTolerance, isLate } from "../utils/attendanceToleranceHelper";
 
 const COLLECTION_NAME = "teacher_teaching_attendances";
 const AUDIT_LOGS_COLLECTION = "teacher_attendance_audit_logs";
@@ -1816,10 +1817,9 @@ export const teacherTeachingAttendanceService = {
             sum.terlambatJP += recJP;
 
             {
-              // Keterlambatan >15 Menit: Evaluasi status validasi
-              const isLateOver15 = !!rec.requiresLateValidation || (rec.lateMinutes !== undefined && rec.lateMinutes > 15);
-              const isLatePending = isLateOver15 && (rec.attendanceStatus === "Pending" || (!rec.validatedByUserId && rec.lateValidationStatus === "PENDING"));
-              const isLateRejected = isLateOver15 && (rec.attendanceStatus === "Rejected" || rec.lateValidationStatus === "REJECTED");
+              // Keterlambatan: Evaluasi status validasi keterlambatan (tidak bergantung pada hardcode 15)
+              const isLatePending = !!rec.requiresLateValidation && (rec.attendanceStatus === "Pending" || (!rec.validatedByUserId && rec.lateValidationStatus === "PENDING"));
+              const isLateRejected = !!rec.requiresLateValidation && (rec.attendanceStatus === "Rejected" || rec.lateValidationStatus === "REJECTED");
 
               if (isLatePending) {
                 // Terkunci untuk perhitungan kehadiran (Kehadiran = 0 sementara sampai divalidasi)
@@ -1829,7 +1829,7 @@ export const teacherTeachingAttendanceService = {
                 sum.tidakHadirJP += recJP;
                 sum.tidakHadir++;
               } else {
-                // Validasi diterima (Approved) ATAU keterlambatan normal <= 15 menit:
+                // Validasi diterima (Approved) ATAU keterlambatan normal dalam batas toleransi yang disetujui:
                 sum.hadirJP += recJP;
                 sum.hadir++;
                 sum.executedEncounters++;
@@ -2223,6 +2223,9 @@ export const teacherTeachingAttendanceService = {
         console.warn("[QR Audit Step 8] Failed to load school settings:", e);
       }
       const breakTimes = schoolSettings?.breakTimes || [];
+      const tas = schoolSettings?.teachingAttendanceSettings || DEFAULT_TEACHING_ATTENDANCE_SETTINGS;
+      const checkInTolerance = getEffectiveLateTolerance(schoolSettings);
+      const earlyWindow = Math.max(15, checkInTolerance);
 
       // Group classTeacherItems into Sessions (Break Time Exception)
       // If two JPs are separated by official school break time (or >= 10 mins gap), they form 2 DIFFERENT sessions.
@@ -2362,7 +2365,7 @@ export const teacherTeachingAttendanceService = {
               ? Math.min(rawToleranceEndM, nextGroup.startM) 
               : rawToleranceEndM;
             
-            const windowStartM = g.startM - 15;
+            const windowStartM = g.startM - earlyWindow;
             const inWindow = (currentM >= windowStartM && currentM <= effectiveToleranceEndM);
             const distanceToStart = Math.abs(currentM - g.startM);
 
@@ -2648,8 +2651,8 @@ export const teacherTeachingAttendanceService = {
       }
 
       // Rule 2: Validate Check-In Time Window for Target Session Group
-      if (currentM < targetGroup.startM - 15) {
-        const earlyMsg = `Terlalu awal. Check-In untuk mapel ${targetGroup.subjectName} (${targetGroup.jpLabel}) di kelas ${targetClassName} baru dapat dilakukan 15 menit sebelum jam ${targetGroup.startStr} (mulai ${formatMinutesToTime(targetGroup.startM - 15)} WIB).`;
+      if (currentM < targetGroup.startM - earlyWindow) {
+        const earlyMsg = `Terlalu awal. Check-In untuk mapel ${targetGroup.subjectName} (${targetGroup.jpLabel}) di kelas ${targetClassName} baru dapat dilakukan ${earlyWindow} menit sebelum jam ${targetGroup.startStr} (mulai ${formatMinutesToTime(targetGroup.startM - earlyWindow)} WIB).`;
         return {
           success: false,
           message: earlyMsg
@@ -2753,9 +2756,9 @@ export const teacherTeachingAttendanceService = {
           missedJpList.push(jpLabel);
         } else {
           // Scan occurs before JP ends -> Check-In for this JP
-          const lateMinutes = currentM > itemStartM ? (currentM - itemStartM) : 0;
-          const isLateOver15 = currentM > (itemStartM + 15);
-          const isPunctualOrNormalLate = !isLateOver15;
+          const lateEval = evaluateLateness(currentM, itemStartM, checkInTolerance);
+          const isLateCheckIn = lateEval.isLate;
+          const lateMinutes = lateEval.lateMinutes;
 
           item.checkInTime = currentTimeStr;
           item.checkInType = "Scan QR";
@@ -2769,25 +2772,42 @@ export const teacherTeachingAttendanceService = {
             item.className = matchedClass.name;
           }
 
-          if (isLateOver15) {
-            // KONDISI B: Terlambat > 15 Menit -> Status TERLAMBAT >15 MENIT — MENUNGGU VALIDASI
-            // JP dikunci untuk perhitungan kehadiran (Kehadiran = 0 sementara sampai divalidasi)
+          if (isLateCheckIn) {
+            // TERLAMBAT: Melewati Jam Masuk + Toleransi Keterlambatan
+            const needsLateValidation = tas.pendingValidationConditions?.checkInTerlambat !== false;
             item.status = "Terlambat";
-            item.attendanceStatus = "Pending";
-            item.approvalType = "Manual";
-            item.requiresLateValidation = true;
-            item.lateValidationStatus = "PENDING";
-            item.checkInLocked = true;
-            item.isLateLocked = true;
-            item.lockReason = "TERLAMBAT >15 MENIT — MENUNGGU VALIDASI";
-            item.pendingReason = "TERLAMBAT >15 MENIT — MENUNGGU VALIDASI";
-            item.notes = `Terlambat scan ${lateMinutes} menit (Jadwal: ${itemRange.startStr} WIB, Scan: ${currentTimeStr} WIB). Menunggu validasi Kepala Sekolah / Waka Kurikulum.`;
 
-            activeJpList.push({ label: jpLabel, status: "Terlambat", isPendingLate: true, lateMinutes });
+            if (needsLateValidation) {
+              item.attendanceStatus = "Pending";
+              item.approvalType = "Manual";
+              item.requiresLateValidation = true;
+              item.lateValidationStatus = "PENDING";
+              item.checkInLocked = true;
+              item.isLateLocked = true;
+              const lockMsg = checkInTolerance > 0
+                ? `TERLAMBAT >${checkInTolerance} MENIT — MENUNGGU VALIDASI`
+                : `TERLAMBAT — MENUNGGU VALIDASI`;
+              item.lockReason = lockMsg;
+              item.pendingReason = lockMsg;
+              item.notes = `Terlambat scan ${lateMinutes} menit (Jadwal: ${itemRange.startStr} WIB, Batas toleransi: ${lateEval.cutoffTimeStr} WIB, Scan: ${currentTimeStr} WIB). Menunggu validasi Kepala Sekolah / Waka Kurikulum.`;
+
+              activeJpList.push({ label: jpLabel, status: "Terlambat", isPendingLate: true, lateMinutes });
+            } else {
+              item.attendanceStatus = "Approved";
+              item.approvalType = "Automatic";
+              item.requiresLateValidation = false;
+              item.lateValidationStatus = "APPROVED";
+              item.checkInLocked = false;
+              item.isLateLocked = false;
+              item.lockReason = "";
+              item.pendingReason = "";
+              item.notes = `Terlambat scan ${lateMinutes} menit (Jadwal: ${itemRange.startStr} WIB, Batas toleransi: ${lateEval.cutoffTimeStr} WIB).`;
+
+              activeJpList.push({ label: jpLabel, status: "Terlambat", isPendingLate: false, lateMinutes });
+            }
           } else {
-            // KONDISI A: Tepat Waktu atau Keterlambatan normal <= 15 Menit
-            const activeStatus: AttendanceTeachingStatus = (currentM > itemStartM) ? "Terlambat" : "Hadir Mengajar";
-            item.status = activeStatus;
+            // TIDAK TERLAMBAT: Check-In <= Jam Masuk + Toleransi Keterlambatan
+            item.status = "Hadir Mengajar";
             item.attendanceStatus = "Approved";
             item.approvalType = "Automatic";
             item.requiresLateValidation = false;
@@ -2796,11 +2816,11 @@ export const teacherTeachingAttendanceService = {
             item.isLateLocked = false;
             item.lockReason = "";
             item.pendingReason = "";
-            if (lateMinutes > 0) {
-              item.notes = `Scan terlambat ${lateMinutes} menit (Toleransi <=15 Menit).`;
-            }
+            item.notes = (currentM > itemStartM)
+              ? `Hadir dalam batas toleransi (+${currentM - itemStartM} mnt dari jam ${itemRange.startStr} WIB, batas ${lateEval.cutoffTimeStr} WIB).`
+              : "";
 
-            activeJpList.push({ label: jpLabel, status: activeStatus, isPendingLate: false, lateMinutes });
+            activeJpList.push({ label: jpLabel, status: "Hadir Mengajar", isPendingLate: false, lateMinutes: 0 });
           }
 
           if (!item.checkInLogs) item.checkInLogs = [];
@@ -3306,7 +3326,7 @@ export const teacherTeachingAttendanceService = {
       }
 
       // 3. Terlambat Check In
-      if (item.status === "Terlambat" || (item.checkInTime && parseTimeToMinutes(item.checkInTime) > startM + 15)) {
+      if (item.status === "Terlambat" || (item.lateMinutes !== undefined && item.lateMinutes > 0)) {
         terlambatCheckIn.push(item);
       }
 

@@ -94,10 +94,17 @@ export const ExecutiveMutabaahDrilldown: React.FC<ExecutiveMutabaahDrilldownProp
     queryFn: () => semesterService.getSemesters()
   });
 
-  const { data: teachers = [] } = useQuery({
+  const { data: rawTeachers = [] } = useQuery({
     queryKey: ["execMutabaahTeachers"],
     queryFn: () => teacherService.getTeachers()
   });
+
+  const teachers = useMemo(() => {
+    return rawTeachers.filter(t => 
+      !t.isDeleted && 
+      (t.status === true || t.status === "Aktif" || t.status === undefined)
+    );
+  }, [rawTeachers]);
 
   const { data: subjects = [] } = useQuery({
     queryKey: ["execMutabaahSubjects"],
@@ -466,6 +473,23 @@ export const ExecutiveMutabaahDrilldown: React.FC<ExecutiveMutabaahDrilldownProp
         </div>
       </div>
 
+      {/* TARGET METRIC TRANSPARENCY BANNER */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 bg-slate-100 dark:bg-zinc-850 rounded-2xl text-xs border border-slate-200 dark:border-zinc-800 text-slate-600 dark:text-slate-300">
+        <div className="flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+          <span>
+            <strong>Master Guru Aktif:</strong> {summary?.totalTeachers ?? 0} Asatidz/ah
+          </span>
+          <span className="text-slate-300 dark:text-zinc-700">|</span>
+          <span>
+            <strong>Target Evaluasi Mutabaah:</strong> {summary?.targetMutabaahCount ?? 0} SDM Wajib
+          </span>
+        </div>
+        <div className="text-[11px] text-slate-400 dark:text-zinc-400 italic">
+          *Akun non-evaluasi (Ketua Yayasan, Super Admin) dikecualikan dari target dan denominator.
+        </div>
+      </div>
+
       {/* MONITORING KEPATUHAN SUMMARY CARDS (CLICKABLE DRILLDOWN) */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         {/* Total Guru */}
@@ -474,7 +498,7 @@ export const ExecutiveMutabaahDrilldown: React.FC<ExecutiveMutabaahDrilldownProp
           <div className="text-2xl font-black text-slate-800 dark:text-white">
             {summary?.totalTeachers ?? 0}
           </div>
-          <p className="text-[10px] text-slate-400">Total Terdaftar</p>
+          <p className="text-[10px] text-slate-400 font-medium">Master Guru Aktif</p>
         </div>
 
         {/* Sudah Mengisi */}
@@ -507,7 +531,11 @@ export const ExecutiveMutabaahDrilldown: React.FC<ExecutiveMutabaahDrilldownProp
           <div className="text-2xl font-black">
             {summary?.fillRatePercentage ?? 0}%
           </div>
-          <p className="text-[10px] text-indigo-100">Rata-rata Periode</p>
+          <p className="text-[10px] text-indigo-100">
+            {summary?.targetMutabaahCount !== undefined
+              ? `${summary.targetMutabaahCount} Target Wajib`
+              : "Rata-rata Periode"}
+          </p>
         </div>
 
         {/* Guru Terlambat */}

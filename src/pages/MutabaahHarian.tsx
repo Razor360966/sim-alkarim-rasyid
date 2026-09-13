@@ -770,7 +770,13 @@ export const MutabaahHarian: React.FC = () => {
 
   // Filtered monitoring table data
   const filteredMonitoringList = useMemo(() => {
-    let sdmList = allUsers.filter((u) => u.status === "Aktif");
+    let sdmList = allUsers.filter((u) => {
+      if (u.status !== "Aktif" || u.isDeleted) return false;
+      const rolesList = (u.roles || [u.role || ""]).map(r => (r || "").toLowerCase().trim());
+      // Exclude ketua yayasan from target mutabaah monitoring
+      if (rolesList.some(r => r.includes("yayasan"))) return false;
+      return true;
+    });
     if (!canViewAllRekap) {
       sdmList = sdmList.filter((u) => u.userId === user?.userId || u.id === user?.userId);
       if (sdmList.length === 0 && user) {
@@ -964,7 +970,13 @@ export const MutabaahHarian: React.FC = () => {
 
   // Helper to get active SDM list according to permissions
   const activeSdmList = useMemo(() => {
-    let sdm = allUsers.filter(u => u.status === "Aktif");
+    let sdm = allUsers.filter(u => {
+      if (u.status !== "Aktif" || u.isDeleted) return false;
+      const rolesList = (u.roles || [u.role || ""]).map(r => (r || "").toLowerCase().trim());
+      // Exclude ketua yayasan from target mutabaah monitoring
+      if (rolesList.some(r => r.includes("yayasan"))) return false;
+      return true;
+    });
     if (!canViewAllRekap) {
       sdm = sdm.filter(u => u.userId === user?.userId || u.id === user?.userId);
       if (sdm.length === 0 && user) {

@@ -7,7 +7,7 @@ import {
 import { db } from "../firebase/config";
 import { SdmMutabaahEntry, SdmMutabaahIndicator } from "../types/mutabaah.types";
 import { mutabaahService } from "./mutabaahService";
-import { userService } from "./user.service";
+import { userService, getPrimaryRole } from "./user.service";
 import { teacherService } from "./teacherService";
 import { subjectService } from "./subjectService";
 import { academicYearService } from "./academicYearService";
@@ -42,7 +42,8 @@ export interface ExecutiveMutabaahRecord {
 }
 
 export interface ExecutiveMutabaahSummary {
-  totalTeachers: number;
+  totalTeachers: number; // Single Source of Truth: Active Teachers in Master Guru
+  targetMutabaahCount: number; // Target Personil Wajib Mutabaah (Active Eligible GTK, Exclude Ketua Yayasan)
   filledCount: number;
   unfilledCount: number;
   lateCount: number;
@@ -137,84 +138,203 @@ export const executiveMutabaahService = {
     const subjectMap = new Map<string, string>();
     allSubjects.forEach(s => subjectMap.set(s.id, s.name));
 
-    // Filter relevant GTK (Guru, Musrif, Staff/TU, Wakakur, Kepsek)
-    // Map teachers to a standard teacher list
-    const teacherList: Array<{
-      userId: string;
+    // A. SINGLE SOURCE OF TRUTH (SSOT) FOR MASTER GURU
+    // A teacher is valid & active if:
+    // - !t.isDeleted
+    // - status is not "Nonaktif", "Pensiun", "Cuti" (or false)
+    const isTeacherActive = (t: any): boolean => {
+      if (t.isDeleted === true) return false;
+      if (t.status === false || t.status === "Nonaktif" || t.status === "Pensiun") return false;
+      return true; // "Aktif", true, or default undefined
+    };
+
+    const activeMasterTeachers = allTeachers.filter(isTeacherActive);
+    const totalMasterTeachers = activeMasterTeachers.length;
+
+    // B. TARGET MUTABAAH ELIGIBILITY & DEDUPLICATION (1 PERSON = 1 RECORD)
+    // Business Rules:
+    // - Ketua Yayasan is strictly EXCLUDED from Mutabaah obligation.
+    // - Pure technical admins/operators without teaching or GTK role are EXCLUDED.
+    // - Master Guru active teachers are eligible GTK (role "guru").
+    // - Other active GTKs (musrif, tata usaha, staff) in users collection are eligible.
+    // - Deduplicate between teacher document and user account so one person is never counted twice.
+
+    interface MutabaahTargetPerson {
+      targetId: string; // Unified unique key
+      userId: string; // User ID used for mutabaah_entries lookup
+      teacherId?: string; // Teacher document ID
       name: string;
       niy: string;
       role: string;
       subjectName: string;
-    }> = [];
+      aliases: Set<string>; // All known IDs (user.id, user.userId, teacher.id, email)
+      isMasterTeacher: boolean;
+    }
 
-    // Combine users and teachers to ensure we capture all staff
-    const processedUserIds = new Set<string>();
+    const mutabaahTargets: MutabaahTargetPerson[] = [];
+    const addedTargetKeys = new Set<string>();
 
+    // 1. Process Active Master Teachers
+    activeMasterTeachers.forEach(t => {
+      const aliases = new Set<string>();
+      if (t.id) aliases.add(t.id);
+      if (t.teacherId) aliases.add(t.teacherId);
+      if (t.email) aliases.add(t.email.toLowerCase().trim());
+
+      // Match with User account in users collection
+      const matchedUser = allUsers.find(u =>
+        !u.isDeleted &&
+        u.status === "Aktif" &&
+        ((u.teacherId && (u.teacherId === t.id || u.teacherId === t.teacherId)) ||
+         (u.email && t.email && u.email.toLowerCase().trim() === t.email.toLowerCase().trim()) ||
+         (u.name && t.name && u.name.toLowerCase().trim() === t.name.toLowerCase().trim()))
+      );
+
+      // Check if user has Ketua Yayasan role (if so, exclude from mutabaah target)
+      const userRoles = matchedUser ? (matchedUser.roles || [matchedUser.role || ""]) : [];
+      const isYayasan = userRoles.some(r => r.toLowerCase().includes("yayasan"));
+      if (isYayasan) {
+        // Ketua Yayasan is NEVER a Mutabaah target
+        return;
+      }
+
+      if (matchedUser) {
+        if (matchedUser.userId) aliases.add(matchedUser.userId);
+        if (matchedUser.id) aliases.add(matchedUser.id);
+        if (matchedUser.email) aliases.add(matchedUser.email.toLowerCase().trim());
+      }
+
+      // Map subjects taught
+      let subName = "-";
+      if (t.subjectIds && t.subjectIds.length > 0) {
+        subName = t.subjectIds.map(id => subjectMap.get(id) || "").filter(Boolean).join(", ") || "-";
+      }
+
+      const primaryRole = matchedUser ? getPrimaryRole(userRoles) : "guru";
+
+      const target: MutabaahTargetPerson = {
+        targetId: t.id || t.teacherId,
+        userId: matchedUser?.userId || matchedUser?.id || t.id,
+        teacherId: t.id,
+        name: t.name,
+        niy: t.niy || (matchedUser as any)?.niy || "-",
+        role: primaryRole,
+        subjectName: subName,
+        aliases,
+        isMasterTeacher: true
+      };
+
+      mutabaahTargets.push(target);
+      if (t.id) addedTargetKeys.add(t.id);
+      if (t.teacherId) addedTargetKeys.add(t.teacherId);
+      if (t.email) addedTargetKeys.add(t.email.toLowerCase().trim());
+      if (t.name) addedTargetKeys.add(t.name.toLowerCase().trim());
+      if (matchedUser?.userId) addedTargetKeys.add(matchedUser.userId);
+      if (matchedUser?.id) addedTargetKeys.add(matchedUser.id);
+    });
+
+    // 2. Process other active GTK users (e.g. Musrif, Tata Usaha, Staff) not in teachers collection
     allUsers.forEach(u => {
-      const lowerRole = (u.role || u.roles?.[0] || "").toLowerCase();
-      // Include GTK roles
+      if (u.isDeleted || u.status !== "Aktif") return;
+
+      const userRoles = (u.roles || [u.role || ""]).map(r => r.toLowerCase().trim());
+
+      // Ketua Yayasan is NEVER a Mutabaah target
+      if (userRoles.some(r => r.includes("yayasan"))) return;
+
+      // Pure system admin or operator without GTK duties is excluded
+      const isPureAdminOrOperator = userRoles.every(r => r === "admin" || r === "operator");
+      if (isPureAdminOrOperator && !u.teacherId) return;
+
+      // Must have an eligible GTK role
+      const isEligibleGtk = userRoles.some(r =>
+        r.includes("guru") ||
+        r.includes("musrif") ||
+        r.includes("sekolah") ||
+        r.includes("kurikulum") ||
+        r.includes("tata usaha") ||
+        r.includes("staff") ||
+        r.includes("pimpinan")
+      );
+
+      if (!isEligibleGtk && !u.teacherId) return;
+
+      // Deduplication check
+      const uEmail = (u.email || "").toLowerCase().trim();
+      const uName = (u.name || "").toLowerCase().trim();
+      const uId = u.userId || u.id;
+      const uTeacherId = u.teacherId || "";
+
       if (
-        lowerRole.includes("guru") ||
-        lowerRole.includes("musrif") ||
-        lowerRole.includes("sekolah") ||
-        lowerRole.includes("kurikulum") ||
-        lowerRole.includes("tata usaha") ||
-        lowerRole.includes("staff") ||
-        lowerRole.includes("pimpinan") ||
-        lowerRole.includes("yayasan")
+        (uId && addedTargetKeys.has(uId)) ||
+        (uTeacherId && addedTargetKeys.has(uTeacherId)) ||
+        (uEmail && addedTargetKeys.has(uEmail)) ||
+        (uName && addedTargetKeys.has(uName))
       ) {
-        processedUserIds.add(u.userId || u.id);
-
-        // Find subject from matched teacher
-        const matchedTeacher = allTeachers.find(t => t.email === u.email || t.name.toLowerCase() === u.name.toLowerCase());
-        let subName = "-";
-        if (matchedTeacher?.subjectIds && matchedTeacher.subjectIds.length > 0) {
-          subName = matchedTeacher.subjectIds.map(id => subjectMap.get(id) || "").filter(Boolean).join(", ") || "-";
-        }
-
-        teacherList.push({
-          userId: u.userId || u.id,
-          name: u.name,
-          niy: matchedTeacher?.niy || u.niy || (u as any).nip || "-",
-          role: u.role || u.roles?.[0] || "Guru",
-          subjectName: subName
-        });
+        return; // Already accounted for
       }
+
+      // Add as distinct non-master-teacher GTK target
+      const aliases = new Set<string>();
+      if (u.userId) aliases.add(u.userId);
+      if (u.id) aliases.add(u.id);
+      if (u.email) aliases.add(uEmail);
+      if (uTeacherId) aliases.add(uTeacherId);
+
+      const target: MutabaahTargetPerson = {
+        targetId: u.userId || u.id,
+        userId: u.userId || u.id,
+        teacherId: uTeacherId || undefined,
+        name: u.name,
+        niy: (u as any).niy || (u as any).nip || "-",
+        role: getPrimaryRole(u.roles || [u.role || "guru"]),
+        subjectName: "-",
+        aliases,
+        isMasterTeacher: false
+      };
+
+      mutabaahTargets.push(target);
+      if (uId) addedTargetKeys.add(uId);
+      if (uEmail) addedTargetKeys.add(uEmail);
+      if (uName) addedTargetKeys.add(uName);
     });
 
-    // Also add any teacher from allTeachers that wasn't in allUsers
-    allTeachers.forEach(t => {
-      if (!processedUserIds.has(t.id) && !processedUserIds.has(t.teacherId)) {
-        processedUserIds.add(t.id);
-        let subName = "-";
-        if (t.subjectIds && t.subjectIds.length > 0) {
-          subName = t.subjectIds.map(id => subjectMap.get(id) || "").filter(Boolean).join(", ") || "-";
-        }
+    // Apply filters (teacherId, role, subjectId) on the eligible targets
+    let filteredTargets = mutabaahTargets;
 
-        teacherList.push({
-          userId: t.id || t.teacherId,
-          name: t.name,
-          niy: t.niy || t.nip || "-",
-          role: "Guru",
-          subjectName: subName
-        });
-      }
-    });
-
-    // Apply teacher, subject, and role filter on the GTK list
-    let filteredTeachers = teacherList;
     if (filters.teacherId && filters.teacherId !== "ALL") {
-      filteredTeachers = filteredTeachers.filter(t => t.userId === filters.teacherId);
+      filteredTargets = filteredTargets.filter(t =>
+        t.teacherId === filters.teacherId ||
+        t.targetId === filters.teacherId ||
+        t.userId === filters.teacherId ||
+        t.aliases.has(filters.teacherId!)
+      );
     }
     if (filters.role && filters.role !== "ALL") {
-      const rFilter = filters.role.toLowerCase();
-      filteredTeachers = filteredTeachers.filter(t => t.role.toLowerCase().includes(rFilter));
+      const rFilter = filters.role.toLowerCase().trim();
+      filteredTargets = filteredTargets.filter(t => t.role.toLowerCase().includes(rFilter));
     }
     if (filters.subjectId && filters.subjectId !== "ALL") {
       const targetSubName = subjectMap.get(filters.subjectId)?.toLowerCase();
       if (targetSubName) {
-        filteredTeachers = filteredTeachers.filter(t => t.subjectName.toLowerCase().includes(targetSubName));
+        filteredTargets = filteredTargets.filter(t => t.subjectName.toLowerCase().includes(targetSubName));
       }
+    }
+
+    // Determine displayed Total Guru (SSoT from Master Guru)
+    let displayTotalTeachers = totalMasterTeachers;
+    if (filters.teacherId && filters.teacherId !== "ALL") {
+      displayTotalTeachers = activeMasterTeachers.filter(t => t.id === filters.teacherId || t.teacherId === filters.teacherId).length;
+    } else if (filters.subjectId && filters.subjectId !== "ALL") {
+      const targetSubName = subjectMap.get(filters.subjectId)?.toLowerCase();
+      displayTotalTeachers = activeMasterTeachers.filter(t => {
+        if (!t.subjectIds || t.subjectIds.length === 0) return false;
+        const subNames = t.subjectIds.map(id => subjectMap.get(id)?.toLowerCase() || "");
+        return subNames.some(sn => targetSubName && sn.includes(targetSubName));
+      }).length;
+    } else if (filters.role && filters.role !== "ALL") {
+      // Role filter on master teachers
+      displayTotalTeachers = filteredTargets.filter(t => t.isMasterTeacher).length;
     }
 
     // 2. Resolve Date Range
@@ -259,53 +379,24 @@ export const executiveMutabaahService = {
       }
     });
 
-    // Build comprehensive aliases map for each teacher in filteredTeachers
-    const teacherAliasesMap = new Map<string, Set<string>>();
-    filteredTeachers.forEach(t => {
-      const aliases = new Set<string>();
-      if (t.userId) aliases.add(t.userId);
-      
-      const matchedUser = allUsers.find(u => 
-        (u.userId && u.userId === t.userId) || 
-        (u.id && u.id === t.userId) || 
-        (u.teacherId && u.teacherId === t.userId) ||
-        (u.name && t.name && u.name.toLowerCase().trim() === t.name.toLowerCase().trim())
-      );
-      if (matchedUser) {
-        if (matchedUser.userId) aliases.add(matchedUser.userId);
-        if (matchedUser.id) aliases.add(matchedUser.id);
-        if (matchedUser.teacherId) aliases.add(matchedUser.teacherId);
+    const findEntryForTarget = (target: MutabaahTargetPerson, dateStr: string): SdmMutabaahEntry | null => {
+      // 1. Match by any alias
+      for (const alias of target.aliases) {
+        const aliasKey = `${alias}_${dateStr}`;
+        if (allEntriesMap.has(aliasKey)) return allEntriesMap.get(aliasKey)!;
       }
 
-      const matchedTch = allTeachers.find(tch => 
-        tch.id === t.userId || 
-        tch.teacherId === t.userId ||
-        (tch.name && t.name && tch.name.toLowerCase().trim() === t.name.toLowerCase().trim())
-      );
-      if (matchedTch) {
-        if (matchedTch.id) aliases.add(matchedTch.id);
-        if (matchedTch.teacherId) aliases.add(matchedTch.teacherId);
+      // 2. Match by teacherId field in entry
+      if (target.teacherId) {
+        const tIdKey = `${target.teacherId}_${dateStr}`;
+        if (allEntriesMap.has(tIdKey)) return allEntriesMap.get(tIdKey)!;
       }
 
-      teacherAliasesMap.set(t.userId, aliases);
-    });
-
-    const findEntryForTeacher = (teacherUserId: string, teacherName: string, dateStr: string): SdmMutabaahEntry | null => {
-      const directKey = `${teacherUserId}_${dateStr}`;
-      if (allEntriesMap.has(directKey)) return allEntriesMap.get(directKey)!;
-
-      const aliases = teacherAliasesMap.get(teacherUserId);
-      if (aliases) {
-        for (const alias of aliases) {
-          const aliasKey = `${alias}_${dateStr}`;
-          if (allEntriesMap.has(aliasKey)) return allEntriesMap.get(aliasKey)!;
-        }
-      }
-
-      const tNameLower = (teacherName || "").toLowerCase().trim();
+      // 3. Fallback: match by normalized user name on the same date
+      const tNameLower = (target.name || "").toLowerCase().trim();
       for (const entry of allEntriesMap.values()) {
         if (entry.date === dateStr) {
-          if ((entry as any).teacherId && aliases?.has((entry as any).teacherId)) return entry;
+          if ((entry as any).teacherId && target.aliases.has((entry as any).teacherId)) return entry;
           if (tNameLower && entry.userName && entry.userName.toLowerCase().trim() === tNameLower) return entry;
         }
       }
@@ -313,11 +404,11 @@ export const executiveMutabaahService = {
       return null;
     };
 
-    // 4. Construct Records Matrix (Filtered Teachers x Dates in Range)
+    // 4. Construct Records Matrix (Filtered Targets x Dates in Range)
     const rawRecords: ExecutiveMutabaahRecord[] = [];
 
-    // Track per-teacher consistency statistics
-    const teacherStatsMap = new Map<string, {
+    // Track per-target consistency statistics
+    const targetStatsMap = new Map<string, {
       userId: string;
       teacherName: string;
       niy: string;
@@ -329,8 +420,8 @@ export const executiveMutabaahService = {
       lateCount: number;
     }>();
 
-    filteredTeachers.forEach(t => {
-      teacherStatsMap.set(t.userId, {
+    filteredTargets.forEach(t => {
+      targetStatsMap.set(t.targetId, {
         userId: t.userId,
         teacherName: t.name,
         niy: t.niy,
@@ -344,10 +435,9 @@ export const executiveMutabaahService = {
     });
 
     for (const dStr of datesInRange) {
-      for (const t of filteredTeachers) {
-        const entry = findEntryForTeacher(t.userId, t.name, dStr);
-
-        const teacherStat = teacherStatsMap.get(t.userId);
+      for (const t of filteredTargets) {
+        const entry = findEntryForTarget(t, dStr);
+        const targetStat = targetStatsMap.get(t.targetId);
 
         let status: "Lengkap" | "Belum Lengkap" | "Belum Mengisi" | "Terlambat" = "Belum Mengisi";
         let completenessPercentage = 0;
@@ -369,15 +459,15 @@ export const executiveMutabaahService = {
             status = "Belum Mengisi";
           }
 
-          if (teacherStat) {
-            teacherStat.filledDays++;
-            teacherStat.totalPercentageSum += completenessPercentage;
-            if (isLate) teacherStat.lateCount++;
+          if (targetStat) {
+            targetStat.filledDays++;
+            targetStat.totalPercentageSum += completenessPercentage;
+            if (isLate) targetStat.lateCount++;
           }
         }
 
         const rec: ExecutiveMutabaahRecord = {
-          id: `${t.userId}_${dStr}`,
+          id: `${t.targetId}_${dStr}`,
           userId: t.userId,
           teacherName: t.name,
           niy: t.niy,
@@ -415,8 +505,10 @@ export const executiveMutabaahService = {
     }
 
     // 6. Compute Monitoring Kepatuhan Summary Metrics
-    const totalTeachers = filteredTeachers.length;
-    const totalExpectedRecords = totalTeachers * datesInRange.length;
+    // Formula:
+    // Persentase Mutabaah = jumlah target yang memenuhi ketentuan / jumlah target Mutabaah * 100
+    const targetMutabaahCount = filteredTargets.length;
+    const totalExpectedRecords = targetMutabaahCount * datesInRange.length;
 
     const filledRecords = rawRecords.filter(r => r.status !== "Belum Mengisi");
     const unfilledRecords = rawRecords.filter(r => r.status === "Belum Mengisi");
@@ -430,15 +522,16 @@ export const executiveMutabaahService = {
       ? Math.round((filledCount / totalExpectedRecords) * 100)
       : 0;
 
-    // Teachers with consistency >= 90%
+    // Targets with consistency >= 90%
     let consistentCount = 0;
-    teacherStatsMap.forEach(stat => {
+    targetStatsMap.forEach(stat => {
       const avg = stat.totalTargetDays > 0 ? (stat.totalPercentageSum / stat.totalTargetDays) : 0;
       if (avg >= 90) consistentCount++;
     });
 
     const summary: ExecutiveMutabaahSummary = {
-      totalTeachers,
+      totalTeachers: displayTotalTeachers,
+      targetMutabaahCount,
       filledCount,
       unfilledCount,
       lateCount,
@@ -448,13 +541,13 @@ export const executiveMutabaahService = {
 
     // 7. Compute Widget Statistics
     // A. Top 10 Disiplin
-    const sortedTeacherStats = Array.from(teacherStatsMap.values()).map(s => ({
+    const sortedTargetStats = Array.from(targetStatsMap.values()).map(s => ({
       ...s,
       avgPercentage: s.totalTargetDays > 0 ? Math.round(s.totalPercentageSum / s.totalTargetDays) : 0
     }));
-    sortedTeacherStats.sort((a, b) => b.avgPercentage - a.avgPercentage || b.filledDays - a.filledDays);
+    sortedTargetStats.sort((a, b) => b.avgPercentage - a.avgPercentage || b.filledDays - a.filledDays);
 
-    const topDisciplinedTeachers = sortedTeacherStats.slice(0, 10).map(s => ({
+    const topDisciplinedTeachers = sortedTargetStats.slice(0, 10).map(s => ({
       userId: s.userId,
       teacherName: s.teacherName,
       niy: s.niy,
@@ -464,7 +557,7 @@ export const executiveMutabaahService = {
       totalFilled: s.filledDays
     }));
 
-    // B. Unfilled Today Teachers
+    // B. Unfilled Today Teachers (strictly from eligible targets, Ketua Yayasan is never here)
     const unfilledTodayTeachers: Array<{
       userId: string;
       teacherName: string;
@@ -473,10 +566,9 @@ export const executiveMutabaahService = {
       subjectName: string;
     }> = [];
 
-    filteredTeachers.forEach(t => {
-      const todayKey = `${t.userId}_${todayStr}`;
-      const entry = allEntriesMap.get(todayKey);
-      if (!entry || (entry.compliancePercentage ?? 0) === 0) {
+    filteredTargets.forEach(t => {
+      const todayEntry = findEntryForTarget(t, todayStr);
+      if (!todayEntry || (todayEntry.compliancePercentage ?? 0) === 0) {
         unfilledTodayTeachers.push({
           userId: t.userId,
           teacherName: t.name,
@@ -565,3 +657,4 @@ export const executiveMutabaahService = {
     };
   }
 };
+
