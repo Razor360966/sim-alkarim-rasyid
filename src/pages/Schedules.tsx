@@ -23,10 +23,12 @@ import {
   Clock,
   BookOpen,
   Settings,
-  UserCheck
+  UserCheck,
+  AlertTriangle
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useSchedules } from "../hooks/schedule.hook";
+import { scheduleService } from "../services/schedule.service";
 import { academicYearService } from "../services/academicYear.service";
 import { semesterService } from "../services/semester.service";
 import { classService } from "../services/classService";
@@ -47,10 +49,21 @@ import {
   BatchTeacherTransferModal,
   getSlotStyling 
 } from "../components/ScheduleHelper";
+import {
+  normalizeGradeLevel,
+  getTargetJPFromMatrix,
+  getCanonicalClassId,
+  isClassMatch,
+  isScheduleForClass,
+  countScheduledJP,
+  formsContiguousSession
+} from "../utils/gradeLevelHelper";
 
 interface ParsedSlot {
   day: string;
   sequence: number;
+  lessonPeriodId?: string;
+  jp?: string;
   className: string;
   classId: string | null;
   subjectName: string;
@@ -120,6 +133,7 @@ export default function Schedules() {
 
   // --- EXCEL IMPORT STATES ---
   const [importedSlots, setImportedSlots] = useState<ParsedSlot[]>([]);
+  const [rawImportData, setRawImportData] = useState<any[] | null>(null);
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [importOption, setImportOption] = useState<"overwrite" | "merge">("merge");
   const [showImportPreview, setShowImportPreview] = useState(false);
@@ -225,7 +239,6 @@ export default function Schedules() {
   const instructionalPeriods = lessonPeriods.filter(p => 
     p.type === LessonPeriodType.LESSON && 
     p.instructional &&
-    p.sequence !== 1 &&
     activeDays.some(ad => ad.toLowerCase() === p.day.toLowerCase())
   );
 
@@ -440,7 +453,7 @@ export default function Schedules() {
 
     // Remove old matching slot if any
     updatedSchedules = updatedSchedules.filter(s => 
-      !(s.classId === selectedSlot.classId && 
+      !(isClassMatch(s.classId, selectedSlot.classId, classes) && 
         s.day.toLowerCase() === selectedSlot.day.toLowerCase() && 
         s.sequence === selectedSlot.sequence)
     );
@@ -448,11 +461,14 @@ export default function Schedules() {
     const assignedTeacher = teachers.find(t => t.id === teacherId);
     const resolvedTeacherName = assignedTeacher?.name || matrixItem.teacherName || "Guru Pengampu";
 
+    const targetClassEntity = classes.find(c => isClassMatch(selectedSlot.classId, c, classes));
+    const canonicalClassId = targetClassEntity ? getCanonicalClassId(targetClassEntity) : selectedSlot.classId;
+
     const newSchedule: Schedule = {
       academicYearId: selectedYearId,
       semesterId: selectedSemesterId,
-      classId: selectedSlot.classId,
-      className: selectedSlot.className,
+      classId: canonicalClassId,
+      className: targetClassEntity?.name || selectedSlot.className,
       day: selectedSlot.day,
       sequence: selectedSlot.sequence,
       jp: selectedSlot.jp,
@@ -492,7 +508,7 @@ export default function Schedules() {
     let updatedSchedules = previewSchedules !== null ? [...previewSchedules] : [...dbSchedules];
 
     updatedSchedules = updatedSchedules.filter(s => 
-      !(s.classId === selectedSlot.classId && 
+      !(isClassMatch(s.classId, selectedSlot.classId, classes) && 
         s.day.toLowerCase() === selectedSlot.day.toLowerCase() && 
         s.sequence === selectedSlot.sequence)
     );
@@ -672,12 +688,12 @@ export default function Schedules() {
         dayPeriods.forEach((period) => {
           const row: any = {
             "Hari": day,
-            "Jam": period.sequence,
+            "Jam": period.title || `JP ${period.sequence}`,
           };
           
           activeClasses.forEach((c) => {
             const sched = activeSchedules.find((s) => 
-              (s.classId === c.id || s.classId === c.classId) && 
+              isScheduleForClass(s, c, classes) && 
               s.day.toLowerCase() === day.toLowerCase() && 
               s.sequence === period.sequence
             );
@@ -713,7 +729,8 @@ export default function Schedules() {
         const worksheet = workbook.Sheets[sheetName];
         const jsonData = XLSX.utils.sheet_to_json(worksheet) as any[];
         
-        processImportData(jsonData);
+        setRawImportData(jsonData);
+        processImportData(jsonData, importOption);
       } catch (err) {
         console.error("Error reading excel file:", err);
         toast("Gagal membaca file Excel. Pastikan format file sesuai.", "error");
@@ -723,7 +740,8 @@ export default function Schedules() {
     e.target.value = "";
   };
 
-  const processImportData = (rows: any[]) => {
+  const processImportData = (rows: any[], targetOption?: "overwrite" | "merge") => {
+    const activeImportOption = targetOption || importOption;
     const errorsList: string[] = [];
     const parsed: ParsedSlot[] = [];
     
@@ -765,17 +783,6 @@ export default function Schedules() {
         return;
       }
       
-      // Parse sequence
-      let sequence = parseInt(String(jamVal), 10);
-      if (isNaN(sequence)) {
-        const match = String(jamVal).match(/\d+/);
-        if (match) {
-          sequence = parseInt(match[0], 10);
-        } else {
-          sequence = rowIdx + 1;
-        }
-      }
-      
       // Validate if day matches settings
       const dayNormalized = dayStr.toLowerCase();
       const validDay = (settings?.activeDays || ["Sabtu", "Minggu", "Senin", "Selasa", "Rabu", "Kamis"])
@@ -784,6 +791,49 @@ export default function Schedules() {
       if (!validDay) {
         errorsList.push(`Baris ${rowIdx + 1}: Hari "${dayStr}" tidak aktif/tidak valid dalam pengaturan sekolah.`);
       }
+
+      // Filter periods for this day
+      const allDayPeriods = lessonPeriods
+        .filter(p => p.day.toLowerCase() === (validDay || dayStr).toLowerCase())
+        .sort((a, b) => a.sequence - b.sequence);
+      
+      const dayInstructionalPeriods = allDayPeriods.filter(p => p.type === LessonPeriodType.LESSON && p.instructional);
+
+      const jamStr = String(jamVal ?? "").trim();
+      const numMatch = jamStr.match(/\d+/);
+      const parsedNum = numMatch ? parseInt(numMatch[0], 10) : NaN;
+
+      let matchedPeriod: LessonPeriod | undefined;
+
+      // Strategy 1: Match by exact title among instructional periods (e.g. "JP 1", "jp 1", "JP1")
+      matchedPeriod = dayInstructionalPeriods.find(p => 
+        p.title.toLowerCase().trim() === jamStr.toLowerCase() ||
+        p.title.toLowerCase().replace(/\s+/g, '') === jamStr.toLowerCase().replace(/\s+/g, '')
+      );
+
+      // Strategy 2: Match by exact sequence among instructional periods
+      if (!matchedPeriod && !isNaN(parsedNum)) {
+        matchedPeriod = dayInstructionalPeriods.find(p => p.sequence === parsedNum);
+      }
+
+      // Strategy 3: Match by 1-based index (e.g. user typed 1 for JP 1, 2 for JP 2)
+      if (!matchedPeriod && !isNaN(parsedNum) && parsedNum >= 1 && parsedNum <= dayInstructionalPeriods.length) {
+        matchedPeriod = dayInstructionalPeriods[parsedNum - 1];
+      }
+
+      // Strategy 4: Check if user entered a routine/non-instructional period title or sequence
+      if (!matchedPeriod) {
+        const routinePeriod = allDayPeriods.find(p => 
+          p.title.toLowerCase().trim() === jamStr.toLowerCase() ||
+          p.sequence === parsedNum
+        );
+        if (routinePeriod && (routinePeriod.type !== LessonPeriodType.LESSON || !routinePeriod.instructional)) {
+          errorsList.push(`Baris ${rowIdx + 1}: Jam "${jamVal}" pada hari ${validDay || dayStr} adalah waktu "${routinePeriod.title}" (bukan jam pelajaran efektif). Slot tidak dapat diisi.`);
+          return;
+        }
+      }
+
+      const sequence = matchedPeriod ? matchedPeriod.sequence : (!isNaN(parsedNum) ? parsedNum : rowIdx + 1);
       
       // For each class column in this row
       classKeys.forEach(classNameKey => {
@@ -804,7 +854,9 @@ export default function Schedules() {
           subjectName = "";
         } else {
           let explicitTeacherStr: string | null = null;
-          let matchedMatrixItem = curriculumMatrix.find(m => m.subjectName.toLowerCase().trim() === subjectName.toLowerCase());
+          let matchedMatrixItem = curriculumMatrix.find(m => 
+            m.subjectName.toLowerCase().trim() === subjectName.toLowerCase()
+          );
 
           // Check if cell format contains "Mapel - Nama Guru" or "Mapel / Nama Guru"
           if (!matchedMatrixItem && (subjectName.includes(" - ") || subjectName.includes(" / "))) {
@@ -812,10 +864,23 @@ export default function Schedules() {
             const parts = subjectName.split(separator);
             const subPart = parts[0].trim();
             const teacherPart = parts.slice(1).join(separator).trim();
-            const tryMatrix = curriculumMatrix.find(m => m.subjectName.toLowerCase().trim() === subPart.toLowerCase());
+            const tryMatrix = curriculumMatrix.find(m => 
+              m.subjectName.toLowerCase().trim() === subPart.toLowerCase()
+            );
             if (tryMatrix) {
               matchedMatrixItem = tryMatrix;
               explicitTeacherStr = teacherPart;
+            }
+          }
+
+          // Also check masterSubjects by name or code
+          if (!matchedMatrixItem) {
+            const matchedMaster = masterSubjects.find(ms => 
+              ms.name.toLowerCase().trim() === subjectName.toLowerCase() ||
+              (ms.code && ms.code.toLowerCase().trim() === subjectName.toLowerCase())
+            );
+            if (matchedMaster) {
+              matchedMatrixItem = curriculumMatrix.find(m => m.subjectId === matchedMaster.id);
             }
           }
 
@@ -827,16 +892,16 @@ export default function Schedules() {
             subjectId = matchedMatrixItem.subjectId;
             subjectName = matchedMatrixItem.subjectName; // normalize casing
             
-            const targetClassId = targetClass ? (targetClass.classId || targetClass.id) : "";
-            const grade = targetClass?.gradeLevel; // "VII" / "VIII" / "IX"
+            const targetCanonicalClassId = targetClass ? getCanonicalClassId(targetClass, classes) : "";
+            const normGrade = targetClass ? normalizeGradeLevel(targetClass.gradeLevel) : "INVALID_GRADE_LEVEL";
 
             // Class-aware SSOT 4-tier resolver: teacher_assignments -> matrix_grade -> matrix_global -> fallback
             const resolved = resolveTeacherAssignmentSync({
               academicYearId: selectedYearId,
               semesterId: selectedSemesterId,
               subjectId: matchedMatrixItem.subjectId,
-              classId: targetClassId,
-              gradeLevel: grade,
+              classId: targetCanonicalClassId,
+              gradeLevel: normGrade !== "INVALID_GRADE_LEVEL" ? normGrade : undefined,
               curriculumMatrixItem: matchedMatrixItem,
               preloadedAssignments: teacherAssignments as TeacherAssignment[]
             });
@@ -869,11 +934,15 @@ export default function Schedules() {
           }
         }
         
+        const targetCanonicalClassId = targetClass ? getCanonicalClassId(targetClass, classes) : null;
+
         parsed.push({
           day: validDay || dayStr,
           sequence,
+          lessonPeriodId: matchedPeriod?.id || "LPERIOD_IMPORT",
+          jp: matchedPeriod?.title || `JP ${sequence}`,
           className: classNameKey,
-          classId: targetClass ? (targetClass.classId || targetClass.id) : null,
+          classId: targetCanonicalClassId,
           subjectName,
           subjectId,
           teacherId,
@@ -884,7 +953,7 @@ export default function Schedules() {
       });
     });
     
-    // A. Class Conflicts
+    // A. Class Conflicts (multiple subjects in the same class at the same time)
     const classDaySeqMap = new Map<string, ParsedSlot[]>();
     parsed.forEach(slot => {
       if (slot.status === "valid" && slot.classId) {
@@ -900,11 +969,11 @@ export default function Schedules() {
           slot.status = "error";
           slot.errors.push("Bentrok Kelas (beberapa mapel di jam yang sama).");
         });
-        errorsList.push(`Bentrok Kelas: Kelas ${slots[0].className} memiliki ${slots.length} mata pelajaran di hari ${slots[0].day} JP ${slots[0].sequence}.`);
+        errorsList.push(`Bentrok Kelas: Kelas ${slots[0].className} memiliki ${slots.length} mata pelajaran di hari ${slots[0].day} ${slots[0].jp || `JP ${slots[0].sequence}`}.`);
       }
     });
     
-    // B. Teacher Conflicts
+    // B. Teacher Conflicts (teacher assigned to multiple different classes at the same time)
     const teacherDaySeqMap = new Map<string, ParsedSlot[]>();
     parsed.forEach(slot => {
       if (slot.status === "valid" && slot.teacherId) {
@@ -914,10 +983,10 @@ export default function Schedules() {
       }
     });
     
-    if (importOption === "merge") {
+    if (activeImportOption === "merge") {
       activeSchedules.forEach(es => {
         const isOverridden = parsed.some(ps => 
-          ps.classId === es.classId && 
+          isClassMatch(ps.classId, es.classId, classes) && 
           ps.day.toLowerCase() === es.day.toLowerCase() && 
           ps.sequence === es.sequence
         );
@@ -928,8 +997,10 @@ export default function Schedules() {
           teacherDaySeqMap.get(key)!.push({
             day: es.day,
             sequence: es.sequence,
+            lessonPeriodId: es.lessonPeriodId,
+            jp: es.jp,
             className: es.className,
-            classId: es.classId,
+            classId: getCanonicalClassId(es.classId, classes),
             subjectName: es.subjectName,
             subjectId: es.subjectId,
             teacherId: es.teacherId,
@@ -941,47 +1012,64 @@ export default function Schedules() {
       });
     }
     
+    let teacherConflictsCount = 0;
     teacherDaySeqMap.forEach((slots) => {
-      if (slots.length > 1) {
+      // Teacher conflict ONLY occurs if teaching DIFFERENT classes at the same time:
+      const distinctClasses = new Set<string>();
+      slots.forEach(s => {
+        if (s.classId) {
+          distinctClasses.add(getCanonicalClassId(s.classId, classes));
+        }
+      });
+
+      if (distinctClasses.size > 1) {
+        teacherConflictsCount++;
         const parsedSlotsInConflict = slots.filter(s => parsed.includes(s));
         parsedSlotsInConflict.forEach(slot => {
           slot.status = "error";
           slot.errors.push(`Bentrok Guru ${slot.teacherName} (mengajar di kelas lain).`);
         });
-        errorsList.push(`Bentrok Guru: ${slots[0].teacherName} terdeteksi mengajar di beberapa kelas sekaligus (${slots.map(s => s.className).join(", ")}) pada hari ${slots[0].day} JP ${slots[0].sequence}.`);
+        const classNamesStr = Array.from(distinctClasses).map(cid => {
+          const cObj = classes.find(c => isClassMatch(c.id, cid, classes));
+          return cObj?.name || cid;
+        }).join(", ");
+        errorsList.push(`Bentrok Guru: ${slots[0].teacherName} terdeteksi mengajar di beberapa kelas sekaligus (${classNamesStr}) pada hari ${slots[0].day} ${slots[0].jp || `JP ${slots[0].sequence}`}.`);
       }
     });
     
-    // C. JP validation
+    // C. JP validation against Curriculum Matrix (Kurikulum SSOT check)
     const classSubjectsJpMap = new Map<string, number>();
     parsed.forEach(slot => {
       if (slot.status === "valid" && slot.classId && slot.subjectId) {
-        const key = `${slot.classId}_${slot.subjectId}`;
+        const canonClassId = getCanonicalClassId(slot.classId, classes);
+        const key = `${canonClassId}_${slot.subjectId}`;
         classSubjectsJpMap.set(key, (classSubjectsJpMap.get(key) || 0) + 1);
       }
     });
     
-    if (importOption === "merge") {
+    if (activeImportOption === "merge") {
       activeSchedules.forEach(es => {
         const isOverridden = parsed.some(ps => 
-          ps.classId === es.classId && 
+          isClassMatch(ps.classId, es.classId, classes) && 
           ps.day.toLowerCase() === es.day.toLowerCase() && 
           ps.sequence === es.sequence
         );
-        if (!isOverridden) {
-          const key = `${es.classId}_${es.subjectId}`;
+        if (!isOverridden && es.classId && es.subjectId) {
+          const canonClassId = getCanonicalClassId(es.classId, classes);
+          const key = `${canonClassId}_${es.subjectId}`;
           classSubjectsJpMap.set(key, (classSubjectsJpMap.get(key) || 0) + 1);
         }
       });
     }
     
     activeClasses.forEach(cls => {
-      const classId = cls.classId || cls.id;
-      const grade = cls.gradeLevel;
+      const classId = getCanonicalClassId(cls, classes);
+      const normGrade = normalizeGradeLevel(cls.gradeLevel);
+      if (normGrade === "INVALID_GRADE_LEVEL") return;
       
       curriculumMatrix.forEach(matrix => {
-        const requiredJp = grade === "VII" ? matrix.jp_vii : grade === "VIII" ? matrix.jp_viii : matrix.jp_ix;
-        if (requiredJp > 0) {
+        const requiredJp = getTargetJPFromMatrix(matrix, normGrade);
+        if (requiredJp !== "INVALID_GRADE_LEVEL" && requiredJp > 0) {
           const allocatedJp = classSubjectsJpMap.get(`${classId}_${matrix.subjectId}`) || 0;
           if (allocatedJp > requiredJp) {
             errorsList.push(`Kelebihan JP: Kelas ${cls.name} mengalokasikan ${allocatedJp} JP untuk mapel ${matrix.subjectName} (Kurikulum hanya butuh ${requiredJp} JP).`);
@@ -1005,7 +1093,7 @@ export default function Schedules() {
     parsed.forEach(slot => {
       if (slot.status === "valid") {
         const existing = dbSchedules.find(s => 
-          s.classId === slot.classId && 
+          isClassMatch(s.classId, slot.classId, classes) && 
           s.day.toLowerCase() === slot.day.toLowerCase() && 
           s.sequence === slot.sequence
         );
@@ -1021,11 +1109,13 @@ export default function Schedules() {
     
     let incompleteSubjectsCount = 0;
     activeClasses.forEach(cls => {
-      const classId = cls.classId || cls.id;
-      const grade = cls.gradeLevel;
+      const classId = getCanonicalClassId(cls, classes);
+      const normGrade = normalizeGradeLevel(cls.gradeLevel);
+      if (normGrade === "INVALID_GRADE_LEVEL") return;
+
       curriculumMatrix.forEach(matrix => {
-        const requiredJp = grade === "VII" ? matrix.jp_vii : grade === "VIII" ? matrix.jp_viii : matrix.jp_ix;
-        if (requiredJp > 0) {
+        const requiredJp = getTargetJPFromMatrix(matrix, normGrade);
+        if (requiredJp !== "INVALID_GRADE_LEVEL" && requiredJp > 0) {
           const allocatedJp = classSubjectsJpMap.get(`${classId}_${matrix.subjectId}`) || 0;
           if (allocatedJp < requiredJp) {
             incompleteSubjectsCount++;
@@ -1042,7 +1132,7 @@ export default function Schedules() {
       newSchedulesCount,
       updatedSchedulesCount,
       incompleteSubjectsCount,
-      teacherConflictsCount: Array.from(teacherDaySeqMap.values()).filter(slots => slots.length > 1).length,
+      teacherConflictsCount,
       classConflictsCount: Array.from(classDaySeqMap.values()).filter(slots => slots.length > 1).length
     });
   };
@@ -1064,7 +1154,7 @@ export default function Schedules() {
     importedSlots.forEach((slot) => {
       if (slot.status === "valid" && slot.classId && slot.subjectId && slot.teacherId) {
         updatedSchedules = updatedSchedules.filter(s => 
-          !(s.classId === slot.classId && 
+          !(isClassMatch(s.classId, slot.classId, classes) && 
             s.day.toLowerCase() === slot.day.toLowerCase() && 
             s.sequence === slot.sequence)
         );
@@ -1072,11 +1162,11 @@ export default function Schedules() {
         const newSchedule: Schedule = {
           academicYearId: selectedYearId,
           semesterId: selectedSemesterId,
-          classId: slot.classId,
+          classId: getCanonicalClassId(slot.classId, classes),
           className: slot.className,
           day: slot.day,
           sequence: slot.sequence,
-          jp: `JP ${slot.sequence}`,
+          jp: slot.jp || `JP ${slot.sequence}`,
           subjectId: slot.subjectId,
           subjectName: slot.subjectName,
           teacherId: slot.teacherId,
@@ -1085,12 +1175,12 @@ export default function Schedules() {
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           createdBy: "excel_import",
-          lessonPeriodId: "LPERIOD_MANUAL"
+          lessonPeriodId: slot.lessonPeriodId || "LPERIOD_IMPORT"
         };
         updatedSchedules.push(newSchedule);
       } else if (slot.status === "empty" && importOption === "overwrite") {
         updatedSchedules = updatedSchedules.filter(s => 
-          !(s.classId === slot.classId && 
+          !(isClassMatch(s.classId, slot.classId, classes) && 
             s.day.toLowerCase() === slot.day.toLowerCase() && 
             s.sequence === slot.sequence)
         );
@@ -1114,11 +1204,16 @@ export default function Schedules() {
       tempTeacherOccupation.add(`${s.teacherId}_${s.day.toLowerCase()}_${s.sequence}`);
     });
 
-    const tempClassSubjectCount = new Map<string, number>();
-    currentScheds.forEach(s => {
-      const k = `${s.classId}_${s.subjectId}`;
-      tempClassSubjectCount.set(k, (tempClassSubjectCount.get(k) || 0) + 1);
-    });
+    const getCurrentCount = (targetCls: Class, subjectId: string) => {
+      return countScheduledJP(currentScheds, {
+        academicYearId: selectedYearId,
+        semesterId: selectedSemesterId,
+        classId: getCanonicalClassId(targetCls),
+        subjectId: subjectId,
+        classEntity: targetCls,
+        classes: activeClasses
+      });
+    };
 
     const classRequirements: { 
       classId: string; 
@@ -1130,22 +1225,25 @@ export default function Schedules() {
     }[] = [];
     
     activeClasses.forEach(cls => {
-      const grade = cls.gradeLevel;
+      const canonicalClassId = getCanonicalClassId(cls);
+      const normGrade = normalizeGradeLevel(cls.gradeLevel);
+      if (normGrade === "INVALID_GRADE_LEVEL") return;
+
       curriculumMatrix.forEach(m => {
-        const req = grade === "VII" ? m.jp_vii : grade === "VIII" ? m.jp_viii : m.jp_ix;
-        if (req > 0) {
+        const req = getTargetJPFromMatrix(m, normGrade);
+        if (req !== "INVALID_GRADE_LEVEL" && req > 0) {
           const resolved = teacherAssignmentService.resolveTeacherAssignmentSync({
             academicYearId: selectedYearId,
             semesterId: selectedSemesterId,
             subjectId: m.subjectId,
-            classId: cls.id || cls.classId,
-            gradeLevel: cls.gradeLevel,
+            classId: canonicalClassId,
+            gradeLevel: normGrade,
             curriculumMatrixItem: m,
             preloadedAssignments: teacherAssignments
           });
 
           classRequirements.push({
-            classId: cls.classId,
+            classId: canonicalClassId,
             subjectId: m.subjectId,
             requiredJp: req,
             teacherId: resolved.teacherId || "GURU_ALM_01",
@@ -1159,37 +1257,59 @@ export default function Schedules() {
     activeClasses.forEach(cls => {
       activeDays.forEach(day => {
         const dayLower = day.toLowerCase();
-        const dayPeriods = instructionalPeriods.filter(p => p.day.toLowerCase() === dayLower);
+        const dayPeriods = instructionalPeriods
+          .filter(p => p.day.toLowerCase() === dayLower)
+          .sort((a, b) => a.sequence - b.sequence);
         
         dayPeriods.forEach(period => {
           const isOccupied = currentScheds.some(s => 
-            s.classId === cls.classId && 
+            isScheduleForClass(s, cls, activeClasses) && 
             s.day.toLowerCase() === dayLower && 
             s.sequence === period.sequence
           );
           
           if (!isOccupied) {
             const candidates = classRequirements.filter(req => {
-              if (req.classId !== cls.classId) return false;
+              if (!isClassMatch(req.classId, cls, activeClasses)) return false;
               
-              const currentCount = tempClassSubjectCount.get(`${cls.classId}_${req.subjectId}`) || 0;
+              const currentCount = getCurrentCount(cls, req.subjectId);
               if (currentCount >= req.requiredJp) return false;
               
               const teacherKey = `${req.teacherId}_${dayLower}_${period.sequence}`;
               if (tempTeacherOccupation.has(teacherKey)) return false;
               
-              const isSubjectOnDay = currentScheds.some(s => 
-                s.classId === cls.classId && 
-                s.day.toLowerCase() === dayLower && 
-                s.subjectId === req.subjectId
-              );
+              // Check existing occurrences of this subject on this day for this class (Rule 9 single session)
+              const existingSeqs = currentScheds
+                .filter(s => isScheduleForClass(s, cls, activeClasses) && s.day.toLowerCase() === dayLower && s.subjectId === req.subjectId)
+                .map(s => s.sequence);
 
-              return !isSubjectOnDay;
+              if (existingSeqs.length > 0) {
+                // Must form a contiguous block with existing session and total <= 3 JP
+                const isContiguous = formsContiguousSession(existingSeqs, [period.sequence]);
+                const totalCombined = existingSeqs.length + 1;
+                if (!isContiguous || totalCombined > 3) {
+                  return false;
+                }
+              }
+
+              return true;
             });
 
             candidates.sort((a, b) => {
-              const lackingA = a.requiredJp - (tempClassSubjectCount.get(`${cls.classId}_${a.subjectId}`) || 0);
-              const lackingB = b.requiredJp - (tempClassSubjectCount.get(`${cls.classId}_${b.subjectId}`) || 0);
+              // Block-awareness: Prioritize adjacent slot to complete multi-JP session
+              const hasAdjacentA = currentScheds.some(s => 
+                isScheduleForClass(s, cls, activeClasses) && s.day.toLowerCase() === dayLower && s.subjectId === a.subjectId &&
+                Math.abs(s.sequence - period.sequence) === 1
+              );
+              const hasAdjacentB = currentScheds.some(s => 
+                isScheduleForClass(s, cls, activeClasses) && s.day.toLowerCase() === dayLower && s.subjectId === b.subjectId &&
+                Math.abs(s.sequence - period.sequence) === 1
+              );
+              if (hasAdjacentA && !hasAdjacentB) return -1;
+              if (!hasAdjacentA && hasAdjacentB) return 1;
+
+              const lackingA = a.requiredJp - getCurrentCount(cls, a.subjectId);
+              const lackingB = b.requiredJp - getCurrentCount(cls, b.subjectId);
               return lackingB - lackingA;
             });
 
@@ -1199,7 +1319,7 @@ export default function Schedules() {
               const newSched: Schedule = {
                 academicYearId: selectedYearId,
                 semesterId: selectedSemesterId,
-                classId: cls.classId,
+                classId: getCanonicalClassId(cls),
                 className: cls.name,
                 day: day,
                 lessonPeriodId: period.id || "LPERIOD_FALLBACK",
@@ -1217,9 +1337,6 @@ export default function Schedules() {
 
               currentScheds.push(newSched);
               tempTeacherOccupation.add(`${chosen.teacherId}_${dayLower}_${period.sequence}`);
-              
-              const ck = `${cls.classId}_${chosen.subjectId}`;
-              tempClassSubjectCount.set(ck, (tempClassSubjectCount.get(ck) || 0) + 1);
               filledCount++;
             }
           }
@@ -1477,6 +1594,45 @@ export default function Schedules() {
   const handlePublish = async () => {
     if (!selectedYearId || !selectedSemesterId) return;
 
+    // 1. Conflict validation check: block hard conflicts
+    if (liveMetrics.teacherConflicts > 0 || liveMetrics.classConflicts > 0) {
+      toast(`Tidak dapat mempublikasikan jadwal: Terdeteksi ${liveMetrics.teacherConflicts} bentrok guru dan ${liveMetrics.classConflicts} bentrok kelas. Harap perbaiki bentrok terlebih dahulu.`, "error");
+      return;
+    }
+
+    // 2. Over-allocation check against curriculum matrix
+    const currentActiveScheds = previewSchedules !== null ? previewSchedules : dbSchedules;
+    let overAllocatedMessage = "";
+
+    const activeClassesList = classes.filter(c => c.status === "Aktif" && !c.isDeleted);
+    for (const cls of activeClassesList) {
+      const normGrade = normalizeGradeLevel(cls.gradeLevel);
+      if (normGrade === "INVALID_GRADE_LEVEL") continue;
+
+      const classScheds = currentActiveScheds.filter(s => 
+        isScheduleForClass(s, cls, classes) &&
+        (!selectedYearId || !s.academicYearId || s.academicYearId === selectedYearId) &&
+        (!selectedSemesterId || !s.semesterId || s.semesterId === selectedSemesterId)
+      );
+
+      for (const m of curriculumMatrix) {
+        const required = getTargetJPFromMatrix(m, normGrade);
+        if (required !== "INVALID_GRADE_LEVEL" && required > 0) {
+          const scheduled = classScheds.filter(s => s.subjectId === m.subjectId).length;
+          if (scheduled > required) {
+            overAllocatedMessage = `Kelas ${cls.name} mengalokasikan ${scheduled} JP untuk "${m.subjectName}" (melebihi target ${required} JP).`;
+            break;
+          }
+        }
+      }
+      if (overAllocatedMessage) break;
+    }
+
+    if (overAllocatedMessage) {
+      toast(`Tidak dapat mempublikasikan jadwal: ${overAllocatedMessage}. Harap perbaiki sebelum publish.`, "error");
+      return;
+    }
+
     if (previewSchedules !== null) {
       try {
         await saveSchedules({
@@ -1528,7 +1684,7 @@ export default function Schedules() {
   // --- FILTERED SCHEDULES RENDER COMPOSITION ---
   const getFilteredSchedules = () => {
     return activeSchedules.filter((s) => {
-      const matchesClass = selectedClassId === "ALL" || s.classId === selectedClassId;
+      const matchesClass = selectedClassId === "ALL" || isClassMatch(s.classId, selectedClassId, classes);
       const matchesTeacher = selectedTeacherId === "ALL" || s.teacherId === selectedTeacherId;
       const matchesDay = selectedDay === "ALL" || s.day.toLowerCase() === selectedDay.toLowerCase();
       return matchesClass && matchesTeacher && matchesDay;
@@ -1582,7 +1738,7 @@ export default function Schedules() {
         const dayPeriods = displayPeriods.filter(p => p.day.toLowerCase() === day.toLowerCase());
         dayPeriods.forEach((period) => {
           const fixedActivity = getFixedActivityForPeriod(period);
-          const matched = filteredItems.find(s => s.day.toLowerCase() === day.toLowerCase() && s.sequence === period.sequence && s.classId === selectedClassId);
+          const matched = filteredItems.find(s => s.day.toLowerCase() === day.toLowerCase() && s.sequence === period.sequence && isClassMatch(s.classId, selectedClassId, classes));
           reportData.push({
             "Hari": day,
             "JP": period.title,
@@ -1624,7 +1780,7 @@ export default function Schedules() {
           const dayPeriods = displayPeriods.filter(p => p.day.toLowerCase() === day.toLowerCase());
           dayPeriods.forEach((period) => {
             const fixedActivity = getFixedActivityForPeriod(period);
-            const matched = activeSchedules.find(s => s.classId === cls.id && s.day.toLowerCase() === day.toLowerCase() && s.sequence === period.sequence);
+            const matched = activeSchedules.find(s => isClassMatch(s.classId, cls, classes) && s.day.toLowerCase() === day.toLowerCase() && s.sequence === period.sequence);
             reportData.push({
               "Hari": day,
               "JP": period.title,
@@ -1695,7 +1851,7 @@ export default function Schedules() {
         const dayPeriods = displayPeriods.filter(p => p.day.toLowerCase() === day.toLowerCase());
         dayPeriods.forEach((period) => {
           const fixedActivity = getFixedActivityForPeriod(period);
-          const matched = filteredItems.find(s => s.day.toLowerCase() === day.toLowerCase() && s.sequence === period.sequence && s.classId === selectedClassId);
+          const matched = filteredItems.find(s => s.day.toLowerCase() === day.toLowerCase() && s.sequence === period.sequence && isClassMatch(s.classId, selectedClassId, classes));
           doc.text(period.title, 14, yOffset);
           doc.text(`${period.startTime} - ${period.endTime}`, 30, yOffset);
           doc.text(fixedActivity ? fixedActivity.title : (matched ? getSubjectDisplayName(matched) : "-"), 65, yOffset);
@@ -1972,6 +2128,8 @@ export default function Schedules() {
         classes={classes}
         instructionalPeriods={instructionalPeriods}
         teachers={teachers}
+        selectedYearId={selectedYearId}
+        selectedSemesterId={selectedSemesterId}
         onJump={handleJumpToWarning}
       />
 
@@ -2356,7 +2514,7 @@ export default function Schedules() {
                             const matched = filteredItems.find(s => 
                               s.day.toLowerCase() === day.toLowerCase() && 
                               s.sequence === period.sequence && 
-                              s.classId === selectedClassId
+                              isClassMatch(s.classId, selectedClassId, classes)
                             );
 
                             return (
@@ -2394,7 +2552,7 @@ export default function Schedules() {
                                         onClick={() => {
                                           setSelectedSlot({
                                             classId: selectedClassId,
-                                            className: classes.find(c => c.classId === selectedClassId || c.id === selectedClassId)?.name || "",
+                                            className: classes.find(c => isClassMatch(c.classId, selectedClassId, classes) || isClassMatch(c.id, selectedClassId, classes))?.name || "",
                                             day,
                                             sequence: period.sequence,
                                             jp: period.title,
@@ -2402,7 +2560,7 @@ export default function Schedules() {
                                           });
                                           setIsEditorOpen(true);
                                         }}
-                                        className={`p-3 rounded-xl border transition-all cursor-pointer hover:shadow-xs group ${getSlotStyling(selectedClassId, day, period.sequence, matched, activeSchedules).bgColor}`}
+                                        className={`p-3 rounded-xl border transition-all cursor-pointer hover:shadow-xs group ${getSlotStyling(selectedClassId, day, period.sequence, matched, activeSchedules, classes).bgColor}`}
                                       >
                                         <div className="flex items-center justify-between">
                                           <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-zinc-100">
@@ -2410,7 +2568,7 @@ export default function Schedules() {
                                             {matched ? getSubjectDisplayName(matched) : <span className="italic text-slate-400">Isi Slot Kosong...</span>}
                                           </div>
                                           <div className="flex items-center gap-1">
-                                            <span className={`h-1.5 w-1.5 rounded-full ${getSlotStyling(selectedClassId, day, period.sequence, matched, activeSchedules).colorTag}`} />
+                                            <span className={`h-1.5 w-1.5 rounded-full ${getSlotStyling(selectedClassId, day, period.sequence, matched, activeSchedules, classes).colorTag}`} />
                                             <span className="text-[9px] font-bold text-slate-400 dark:text-zinc-500 opacity-0 group-hover:opacity-100 transition-opacity">Edit</span>
                                           </div>
                                         </div>
@@ -2518,7 +2676,7 @@ export default function Schedules() {
                                             });
                                             setIsEditorOpen(true);
                                           }}
-                                          className={`p-3 rounded-xl border transition-all cursor-pointer hover:shadow-xs group ${getSlotStyling(matched.classId, day, period.sequence, matched, activeSchedules).bgColor}`}
+                                          className={`p-3 rounded-xl border transition-all cursor-pointer hover:shadow-xs group ${getSlotStyling(matched.classId, day, period.sequence, matched, activeSchedules, classes).bgColor}`}
                                         >
                                           <div className="flex items-center justify-between">
                                             <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-zinc-100">
@@ -2526,7 +2684,7 @@ export default function Schedules() {
                                               Kelas {matched.className}
                                             </div>
                                             <div className="flex items-center gap-1">
-                                              <span className={`h-1.5 w-1.5 rounded-full ${getSlotStyling(matched.classId, day, period.sequence, matched, activeSchedules).colorTag}`} />
+                                              <span className={`h-1.5 w-1.5 rounded-full ${getSlotStyling(matched.classId, day, period.sequence, matched, activeSchedules, classes).colorTag}`} />
                                               <span className="text-[9px] font-bold text-slate-400 dark:text-zinc-500 opacity-0 group-hover:opacity-100 transition-opacity">Edit</span>
                                             </div>
                                           </div>
@@ -2652,6 +2810,9 @@ export default function Schedules() {
                               checked={importOption === "merge"} 
                               onChange={() => {
                                 setImportOption("merge");
+                                if (rawImportData) {
+                                  processImportData(rawImportData, "merge");
+                                }
                               }}
                               className="text-blue-600 focus:ring-blue-500 cursor-pointer h-4 w-4"
                             />
@@ -2665,6 +2826,9 @@ export default function Schedules() {
                               checked={importOption === "overwrite"} 
                               onChange={() => {
                                 setImportOption("overwrite");
+                                if (rawImportData) {
+                                  processImportData(rawImportData, "overwrite");
+                                }
                               }}
                               className="text-blue-600 focus:ring-blue-500 cursor-pointer h-4 w-4"
                             />
@@ -2735,11 +2899,11 @@ export default function Schedules() {
                           Sel Terpilih: 
                         </span>
                         <span className="text-xs bg-blue-100/60 dark:bg-zinc-800 px-2 py-0.5 rounded text-blue-800 dark:text-zinc-200 font-mono">
-                          {activeClasses.find(c => c.id === selectedCell.classId || c.classId === selectedCell.classId)?.name || selectedCell.classId} 
+                          {activeClasses.find(c => isClassMatch(c.id, selectedCell.classId, activeClasses) || isClassMatch(c.classId, selectedCell.classId, activeClasses))?.name || selectedCell.classId} 
                           {" • "} 
                           {selectedCell.day} 
-                          {" • JP "} 
-                          {selectedCell.sequence}
+                          {" • "} 
+                          {sortedPeriods.find(p => p.day.toLowerCase() === selectedCell.day.toLowerCase() && p.sequence === selectedCell.sequence)?.title || `JP ${selectedCell.sequence}`}
                         </span>
                       </div>
                       <div className="flex items-center gap-2">
@@ -2747,7 +2911,7 @@ export default function Schedules() {
                         <button
                           onClick={() => {
                             const matched = activeSchedules.find(s => 
-                              (s.classId === selectedCell.classId) && 
+                              isClassMatch(s.classId, selectedCell.classId, classes) && 
                               s.day.toLowerCase() === selectedCell.day.toLowerCase() && 
                               s.sequence === selectedCell.sequence
                             );
@@ -2772,7 +2936,7 @@ export default function Schedules() {
                               toast("Belum ada jadwal yang disalin! Salin jadwal terlebih dahulu.", "warning");
                               return;
                             }
-                            const targetClass = activeClasses.find(c => c.id === selectedCell.classId || c.classId === selectedCell.classId);
+                            const targetClass = activeClasses.find(c => isClassMatch(c.id, selectedCell.classId, activeClasses) || isClassMatch(c.classId, selectedCell.classId, activeClasses));
                             const targetPeriod = sortedPeriods.find(p => p.day.toLowerCase() === selectedCell.day.toLowerCase() && p.sequence === selectedCell.sequence);
                             if (targetClass && targetPeriod) {
                               handlePasteSlot(copiedSlot, targetClass, targetPeriod);
@@ -2789,11 +2953,11 @@ export default function Schedules() {
                         {/* Edit button */}
                         <button
                           onClick={() => {
-                            const targetClass = activeClasses.find(c => c.id === selectedCell.classId || c.classId === selectedCell.classId);
+                            const targetClass = activeClasses.find(c => isClassMatch(c.id, selectedCell.classId, activeClasses) || isClassMatch(c.classId, selectedCell.classId, activeClasses));
                             const targetPeriod = sortedPeriods.find(p => p.day.toLowerCase() === selectedCell.day.toLowerCase() && p.sequence === selectedCell.sequence);
                             if (targetClass && targetPeriod) {
                               const matched = activeSchedules.find(s => 
-                                (s.classId === targetClass.id || s.classId === targetClass.classId) && 
+                                isClassMatch(s.classId, targetClass, activeClasses) && 
                                 s.day.toLowerCase() === targetPeriod.day.toLowerCase() && 
                                 s.sequence === targetPeriod.sequence
                               );
@@ -2817,11 +2981,11 @@ export default function Schedules() {
                         {/* Clear button */}
                         <button
                           onClick={() => {
-                            const targetClass = activeClasses.find(c => c.id === selectedCell.classId || c.classId === selectedCell.classId);
+                            const targetClass = activeClasses.find(c => isClassMatch(c.id, selectedCell.classId, activeClasses) || isClassMatch(c.classId, selectedCell.classId, activeClasses));
                             const targetPeriod = sortedPeriods.find(p => p.day.toLowerCase() === selectedCell.day.toLowerCase() && p.sequence === selectedCell.sequence);
                             if (targetClass && targetPeriod) {
                               const matchedTarget = activeSchedules.find(s => 
-                                (s.classId === targetClass.id || s.classId === targetClass.classId) && 
+                                isClassMatch(s.classId, targetClass, activeClasses) && 
                                 s.day.toLowerCase() === targetPeriod.day.toLowerCase() && 
                                 s.sequence === targetPeriod.sequence
                               );
@@ -2955,7 +3119,7 @@ export default function Schedules() {
                                     return activeClasses.map((cls) => {
                                       const classId = cls.classId || cls.id;
                                       const matched = activeSchedules.find(s => 
-                                        (s.classId === cls.id || s.classId === cls.classId) && 
+                                        isClassMatch(s.classId, cls, classes) && 
                                         s.day.toLowerCase() === day.toLowerCase() && 
                                         s.sequence === period.sequence
                                       );
@@ -2965,12 +3129,12 @@ export default function Schedules() {
 
                                       // Selection check
                                       const isSelected = selectedCell && 
-                                        selectedCell.classId === classId && 
+                                        isClassMatch(selectedCell.classId, cls, classes) && 
                                         selectedCell.day.toLowerCase() === day.toLowerCase() && 
                                         selectedCell.sequence === period.sequence;
 
                                       // Styling
-                                      const styling = getSlotStyling(classId, day, period.sequence, matched, activeSchedules);
+                                      const styling = getSlotStyling(classId, day, period.sequence, matched, activeSchedules, classes);
 
                                       return (
                                         <td 
@@ -3153,34 +3317,55 @@ export default function Schedules() {
 
                       <div className="flex-1 overflow-y-auto space-y-2 pr-1">
                         {activeClasses.map(cls => {
-                          const classId = cls.classId || cls.id;
-                          const grade = cls.gradeLevel;
-                          const classScheds = activeSchedules.filter(s => s.classId === cls.id || s.classId === cls.classId);
+                          const normGrade = normalizeGradeLevel(cls.gradeLevel);
+                          if (normGrade === "INVALID_GRADE_LEVEL") {
+                            return (
+                              <div key={cls.id || cls.classId} className="p-2 border border-rose-200 dark:border-rose-900/60 bg-rose-50/50 dark:bg-rose-950/20 rounded-xl space-y-1">
+                                <span className="text-[10px] font-extrabold text-rose-700 dark:text-rose-400">{cls.name}</span>
+                                <p className="text-[9px] text-rose-600 dark:text-rose-400">Jenjang kelas ({cls.gradeLevel || 'kosong'}) tidak valid. Harap pilih jenjang VII/VIII/IX di Master Kelas.</p>
+                              </div>
+                            );
+                          }
+
+                          const classScheds = activeSchedules.filter(s => 
+                            isScheduleForClass(s, cls, classes) &&
+                            (!selectedYearId || !s.academicYearId || s.academicYearId === selectedYearId) &&
+                            (!selectedSemesterId || !s.semesterId || s.semesterId === selectedSemesterId)
+                          );
                           
-                          const incompleteList: { name: string; req: number; sched: number }[] = [];
+                          const discrepancyList: { name: string; req: number; sched: number; diff: number; type: 'under' | 'over' }[] = [];
                           curriculumMatrix.forEach(m => {
-                            const req = grade === "VII" ? m.jp_vii : grade === "VIII" ? m.jp_viii : m.jp_ix;
-                            if (req > 0) {
+                            const req = getTargetJPFromMatrix(m, normGrade);
+                            if (req !== "INVALID_GRADE_LEVEL" && req > 0) {
                               const sched = classScheds.filter(s => s.subjectId === m.subjectId).length;
                               if (sched < req) {
                                 const masterSubj = masterSubjects.find(s => s.id === m.subjectId);
-                                incompleteList.push({ name: masterSubj?.name || m.subjectName, req, sched });
+                                discrepancyList.push({ name: masterSubj?.name || m.subjectName, req, sched, diff: req - sched, type: 'under' });
+                              } else if (sched > req) {
+                                const masterSubj = masterSubjects.find(s => s.id === m.subjectId);
+                                discrepancyList.push({ name: masterSubj?.name || m.subjectName, req, sched, diff: sched - req, type: 'over' });
                               }
                             }
                           });
 
-                          if (incompleteList.length === 0) return null;
+                          if (discrepancyList.length === 0) return null;
 
                           return (
-                            <div key={cls.id} className="p-2 border border-slate-100 dark:border-zinc-800/80 bg-slate-50/30 dark:bg-zinc-950/20 rounded-xl space-y-1">
+                            <div key={cls.id || cls.classId} className="p-2 border border-slate-100 dark:border-zinc-800/80 bg-slate-50/30 dark:bg-zinc-950/20 rounded-xl space-y-1">
                               <span className="text-[10px] font-extrabold text-slate-700 dark:text-zinc-300">{cls.name}</span>
                               <div className="space-y-1">
-                                {incompleteList.map((item, idx) => (
+                                {discrepancyList.map((item, idx) => (
                                   <div key={idx} className="flex items-center justify-between p-1 bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 text-[9px] rounded px-1.5">
                                     <span className="font-semibold text-slate-600 dark:text-zinc-400">{item.name}</span>
-                                    <span className="text-amber-600 font-extrabold bg-amber-50 dark:bg-amber-950/20 px-1.5 py-0.5 rounded">
-                                      Kurang {item.req - item.sched} JP ({item.sched}/{item.req} JP)
-                                    </span>
+                                    {item.type === 'under' ? (
+                                      <span className="text-amber-600 font-extrabold bg-amber-50 dark:bg-amber-950/20 px-1.5 py-0.5 rounded">
+                                        Kurang {item.diff} JP ({item.sched}/{item.req} JP)
+                                      </span>
+                                    ) : (
+                                      <span className="text-rose-600 font-extrabold bg-rose-50 dark:bg-rose-950/20 px-1.5 py-0.5 rounded">
+                                        Kelebihan {item.diff} JP ({item.sched}/{item.req} JP)
+                                      </span>
+                                    )}
                                   </div>
                                 ))}
                               </div>
@@ -3188,18 +3373,25 @@ export default function Schedules() {
                           );
                         }).filter(Boolean)}
 
-                        {activeClasses.every(cls => {
-                          const classScheds = activeSchedules.filter(s => s.classId === cls.id || s.classId === cls.classId);
+                        {activeClasses.length > 0 && activeClasses.every(cls => {
+                          const normGrade = normalizeGradeLevel(cls.gradeLevel);
+                          if (normGrade === "INVALID_GRADE_LEVEL") return false;
+
+                          const classScheds = activeSchedules.filter(s => 
+                            isScheduleForClass(s, cls, classes) &&
+                            (!selectedYearId || !s.academicYearId || s.academicYearId === selectedYearId) &&
+                            (!selectedSemesterId || !s.semesterId || s.semesterId === selectedSemesterId)
+                          );
                           return curriculumMatrix.every(m => {
-                            const req = cls.gradeLevel === "VII" ? m.jp_vii : cls.gradeLevel === "VIII" ? m.jp_viii : m.jp_ix;
-                            if (req === 0) return true;
+                            const req = getTargetJPFromMatrix(m, normGrade);
+                            if (req === "INVALID_GRADE_LEVEL" || req === 0) return true;
                             const sched = classScheds.filter(s => s.subjectId === m.subjectId).length;
-                            return sched >= req;
+                            return sched === req;
                           });
                         }) && (
                           <div className="flex flex-col items-center justify-center h-full text-center p-4">
                             <CheckCircle className="h-8 w-8 text-emerald-500 mb-2" />
-                            <p className="text-[10px] text-slate-400 font-bold">Semua kebutuhan JP kurikulum telah terpenuhi!</p>
+                            <p className="text-[10px] text-slate-400 font-bold">Semua kebutuhan JP kurikulum telah terpenuhi dengan tepat!</p>
                           </div>
                         )}
                       </div>
@@ -3215,37 +3407,54 @@ export default function Schedules() {
                       </div>
 
                       <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-                        {/* Calculate Teacher Conflicts */}
+                        {/* Calculate Teacher Conflicts & Class Duplicates */}
                         {(() => {
                           const teacherDaySlotMap = new Map<string, { className: string; subjectName: string; classId: string; seq: number; day: string }[]>();
+                          const classDaySlotMap = new Map<string, { className: string; subjectName: string; teacherName: string; classId: string; seq: number; day: string; id?: string }[]>();
+
                           activeSchedules.forEach((s) => {
-                            const key = `${s.teacherId}_${s.day.toLowerCase()}_${s.sequence}`;
-                            if (!teacherDaySlotMap.has(key)) {
-                              teacherDaySlotMap.set(key, []);
+                            const dayLower = s.day.toLowerCase();
+                            const canonClassId = getCanonicalClassId(s.classId, classes);
+
+                            // Teacher slot map
+                            const teachKey = `${s.teacherId}_${dayLower}_${s.sequence}`;
+                            if (!teacherDaySlotMap.has(teachKey)) {
+                              teacherDaySlotMap.set(teachKey, []);
                             }
-                            teacherDaySlotMap.get(key)!.push({ className: s.className, subjectName: s.subjectName, classId: s.classId, seq: s.sequence, day: s.day });
+                            teacherDaySlotMap.get(teachKey)!.push({ className: s.className, subjectName: s.subjectName, classId: canonClassId, seq: s.sequence, day: s.day });
+
+                            // Class slot map
+                            const classKey = `${canonClassId}_${dayLower}_${s.sequence}`;
+                            if (!classDaySlotMap.has(classKey)) {
+                              classDaySlotMap.set(classKey, []);
+                            }
+                            classDaySlotMap.get(classKey)!.push({ className: s.className, subjectName: s.subjectName, teacherName: s.teacherName, classId: canonClassId, seq: s.sequence, day: s.day, id: s.id });
                           });
 
                           const conflictsList: React.ReactNode[] = [];
+
+                          // 1. Teacher Conflicts (teaching DIFFERENT classes at the same time)
                           teacherDaySlotMap.forEach((slots, key) => {
-                            if (slots.length > 1) {
+                            const distinctClasses = new Set(slots.map(s => s.classId));
+                            if (distinctClasses.size > 1) {
                               const parts = key.split("_");
                               const tId = parts[0];
                               const day = parts[1];
                               const seq = parseInt(parts[2]);
                               const tName = teachers.find(t => t.id === tId)?.name || tId;
+                              const uniqueClassNames = Array.from(new Set(slots.map(s => s.className)));
                               
                               conflictsList.push(
                                 <div 
-                                  key={key} 
+                                  key={`teach_${key}`} 
                                   className="p-2 border border-rose-100 dark:border-rose-950 bg-rose-50/40 dark:bg-rose-950/10 rounded-xl space-y-1.5"
                                 >
                                   <div className="flex items-center gap-1 text-[10px] font-extrabold text-rose-700 dark:text-rose-400">
                                     <AlertCircle className="h-3.5 w-3.5" />
-                                    <span>Guru {tName} Bentrok!</span>
+                                    <span>Guru {tName} Bentrok Kelas!</span>
                                   </div>
                                   <p className="text-[9.5px] text-slate-600 dark:text-zinc-400 leading-normal">
-                                    Mengajar bersamaan pada {day.toUpperCase()} JP {seq} di kelas: {slots.map(s => s.className).join(", ")}.
+                                    Mengajar bersamaan pada {day.toUpperCase()} JP {seq} di kelas berbeda: {uniqueClassNames.join(", ")}.
                                   </p>
                                   <div className="flex flex-wrap gap-1.5 mt-1">
                                     {slots.map((s, sIdx) => (
@@ -3254,7 +3463,7 @@ export default function Schedules() {
                                         onClick={() => {
                                           setSelectedCell({ classId: s.classId, day: s.day, sequence: s.seq });
                                           const matched = activeSchedules.find(as => 
-                                            as.classId === s.classId && 
+                                            isClassMatch(as.classId, s.classId, classes) && 
                                             as.day.toLowerCase() === s.day.toLowerCase() && 
                                             as.sequence === s.seq
                                           );
@@ -3274,6 +3483,55 @@ export default function Schedules() {
                                       </button>
                                     ))}
                                   </div>
+                                </div>
+                              );
+                            }
+                          });
+
+                          // 2. Class Duplicates (same class has >1 schedule at the same day & sequence)
+                          classDaySlotMap.forEach((slots, key) => {
+                            if (slots.length > 1) {
+                              const parts = key.split("_");
+                              const cId = parts[0];
+                              const day = parts[1];
+                              const seq = parseInt(parts[2]);
+                              const cName = classes.find(c => isClassMatch(c.id, cId, classes))?.name || slots[0].className || cId;
+                              const subjectList = slots.map(s => `${s.subjectName} (${s.teacherName})`).join(", ");
+
+                              conflictsList.push(
+                                <div 
+                                  key={`class_${key}`} 
+                                  className="p-2 border border-amber-200 dark:border-amber-950 bg-amber-50/40 dark:bg-amber-950/10 rounded-xl space-y-1.5"
+                                >
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-1 text-[10px] font-extrabold text-amber-700 dark:text-amber-400">
+                                      <AlertTriangle className="h-3.5 w-3.5" />
+                                      <span>Duplikasi Slot: {cName}</span>
+                                    </div>
+                                    <button
+                                      onClick={async () => {
+                                        if (!selectedYearId || !selectedSemesterId) return;
+                                        try {
+                                          const res = await scheduleService.cleanDuplicateSchedules(selectedYearId, selectedSemesterId);
+                                          if (res.cleanedCount > 0) {
+                                            toast.success(`Berhasil membersihkan ${res.cleanedCount} duplikasi slot!`);
+                                            refetch();
+                                          } else {
+                                            toast.info("Slot sudah bersih.");
+                                            refetch();
+                                          }
+                                        } catch (err: any) {
+                                          toast.error(`Gagal membersihkan duplikasi: ${err.message}`);
+                                        }
+                                      }}
+                                      className="text-[9px] font-bold px-2 py-0.5 bg-amber-600 hover:bg-amber-700 text-white rounded cursor-pointer"
+                                    >
+                                      Bersihkan Otomatis
+                                    </button>
+                                  </div>
+                                  <p className="text-[9.5px] text-slate-600 dark:text-zinc-400 leading-normal">
+                                    Terdapat {slots.length} data jadwal pada {day.toUpperCase()} JP {seq}: {subjectList}.
+                                  </p>
                                 </div>
                               );
                             }
@@ -3315,6 +3573,9 @@ export default function Schedules() {
           activeSchedules={activeSchedules}
           subjects={masterSubjects}
           teacherAssignments={teacherAssignments}
+          classes={classes}
+          selectedYearId={selectedYearId}
+          selectedSemesterId={selectedSemesterId}
           onSave={handleSaveManualSlot}
           onDelete={handleDeleteManualSlot}
           onAssignmentUpdated={() => {

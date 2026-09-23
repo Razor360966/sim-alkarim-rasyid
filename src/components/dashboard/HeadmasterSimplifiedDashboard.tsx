@@ -11,6 +11,7 @@ import { executiveMutabaahService } from "../../services/executiveMutabaahServic
 import { supervisionService } from "../../services/supervision.service";
 import { academicYearService } from "../../services/academicYearService";
 import { semesterService } from "../../services/semester.service";
+import { getCanonicalActiveTeachers } from "../../utils/teacherFilterHelper";
 import { Dialog } from "../Dialog";
 import { Loading } from "../Loading";
 import {
@@ -118,9 +119,9 @@ export const HeadmasterSimplifiedDashboard: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedKaldikEvent, setSelectedKaldikEvent] = useState<any | null>(null);
 
-  // Filtered Active Entities
+  // Filtered Active Genuine Teachers
   const activeTeachers = useMemo(() => {
-    return teachers.filter(t => !t.isDeleted && t.status !== "Nonaktif");
+    return getCanonicalActiveTeachers(teachers);
   }, [teachers]);
 
   const activeStudents = useMemo(() => {

@@ -27,11 +27,12 @@ import { academicPlanningService } from "./academicPlanning.service";
 import { lessonPeriodService } from "./lessonPeriod.service";
 import { classService } from "./classService";
 import { schoolSettingsService, DEFAULT_TEACHING_ATTENDANCE_SETTINGS } from "./schoolSettings.service";
-import { SchoolSettings } from "../types";
+import { SchoolSettings, Schedule } from "../types";
 import { academicYearService } from "./academicYearService";
 import { semesterService } from "./semester.service";
 import { teacherHalaqahAttendanceService } from "./teacherHalaqahAttendance.service";
 import { evaluateLateness, getEffectiveLateTolerance, isLate } from "../utils/attendanceToleranceHelper";
+import { getCanonicalSlotKey, getCanonicalClassId } from "../utils/gradeLevelHelper";
 
 const COLLECTION_NAME = "teacher_teaching_attendances";
 const AUDIT_LOGS_COLLECTION = "teacher_attendance_audit_logs";
@@ -648,8 +649,37 @@ export const teacherTeachingAttendanceService = {
       existingRecords.set(data.scheduleId || recordId, { ...data, id: recordId });
     });
 
-    // 4. Merge schedule items with existing attendance records
-    const items: TeacherTeachingAttendance[] = activeSchedules.map(sch => {
+    // 4. Canonical deduplication: ensure exactly 1 schedule item per real class slot
+    const canonicalScheduleMap = new Map<string, Schedule>();
+    activeSchedules.forEach(sch => {
+      const slotKey = getCanonicalSlotKey(
+        {
+          academicYearId: sch.academicYearId || academicYearId,
+          semesterId: sch.semesterId || semesterId,
+          classId: sch.classId,
+          day: dayName,
+          sequence: sch.sequence
+        },
+        classes
+      );
+
+      if (!canonicalScheduleMap.has(slotKey)) {
+        canonicalScheduleMap.set(slotKey, sch);
+      } else {
+        const current = canonicalScheduleMap.get(slotKey)!;
+        // If duplicate exists, prefer locked schedule or schedule that already has an existing attendance record
+        if (!current.isLocked && sch.isLocked) {
+          canonicalScheduleMap.set(slotKey, sch);
+        } else if (existingRecords.has(sch.id!) && !existingRecords.has(current.id!)) {
+          canonicalScheduleMap.set(slotKey, sch);
+        }
+      }
+    });
+
+    const deduplicatedActiveSchedules = Array.from(canonicalScheduleMap.values());
+
+    // 5. Merge schedule items with existing attendance records
+    const items: TeacherTeachingAttendance[] = deduplicatedActiveSchedules.map(sch => {
       const existing = existingRecords.get(sch.id!);
       const resolvedTeacher = resolveTeacherForScheduleDate(sch, dateStr);
 
@@ -1960,7 +1990,7 @@ export const teacherTeachingAttendanceService = {
   // Process Teaching Check-in & Check-out via Static Class QR Code
   async processQrCheckIn(params: {
     scannedContent: string;
-    currentUser: { id?: string; uid?: string; userId?: string; name: string; teacherId?: string; role?: string };
+    currentUser: { id?: string; uid?: string; userId?: string; name: string; teacherId?: string; role?: string; roles?: string[] };
     academicYearId?: string;
     semesterId?: string;
     customTimeStr?: string; // Optional override for testing or exact time
@@ -2061,7 +2091,7 @@ export const teacherTeachingAttendanceService = {
       }
 
       // Check if session type is "halaqah"
-      if (parsedJson?.type === "halaqah" || rawContent.toLowerCase().startsWith("halaqah_qr:")) {
+      if (parsedJson?.type === "halaqah" || rawContent.toLowerCase().startsWith("halaqah_qr:") || (parsedJson && (parsedJson.groupId?.toLowerCase().includes("halaqah") || parsedJson.groupName?.toLowerCase().includes("halaqah")))) {
         console.log("[Attendance Engine] Session type 'halaqah' detected. Delegation to teacherHalaqahAttendanceService...");
         const halaqahRes = await teacherHalaqahAttendanceService.processQrCheckIn(params);
         return {
@@ -2177,7 +2207,7 @@ export const teacherTeachingAttendanceService = {
         console.warn("[QR Audit Step 6 FAILED] Teacher has no schedules today:", currentTeacherName);
         return {
           success: false,
-          message: `Akun Anda (${currentTeacherName}) tidak memiliki jadwal mengajar terdaftar pada hari ${getIndonesianDayName(todayStr)}.`
+          message: `Anda tidak memiliki jadwal mengajar untuk sesi ini (hari ${getIndonesianDayName(todayStr)}). Akun Anda (${currentTeacherName}) tidak terdaftar dalam jadwal KBM reguler hari ini.`
         };
       }
 

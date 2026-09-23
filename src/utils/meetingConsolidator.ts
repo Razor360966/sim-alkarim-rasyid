@@ -1,4 +1,5 @@
 import { Schedule } from "../types";
+import { getCanonicalClassId } from "./gradeLevelHelper";
 
 export interface ScheduleMeeting {
   id: string;
@@ -26,13 +27,14 @@ export interface ScheduleMeeting {
  * IPA Class VII on Saturday JP 1, JP 2, JP 3
  * => 1 Meeting: "Pertemuan ke-X: IPA (VII) - JP 1–3 (3 JP)"
  */
-export function consolidateSchedulesToMeetings(schedules: Schedule[]): ScheduleMeeting[] {
+export function consolidateSchedulesToMeetings(schedules: Schedule[], classes?: any[]): ScheduleMeeting[] {
   if (!schedules || schedules.length === 0) return [];
 
-  // Group by key: teacherId + classId + subjectId + day
+  // Group by key: teacherId + canonicalClassId + subjectId + day
   const groups: Record<string, Schedule[]> = {};
   schedules.forEach((s) => {
-    const key = `${s.teacherId}_${s.classId}_${s.subjectId}_${(s.day || "").toLowerCase()}`;
+    const canonClassId = classes ? getCanonicalClassId(s.classId, classes) : (s.classId || "");
+    const key = `${s.teacherId}_${canonClassId}_${s.subjectId}_${(s.day || "").toLowerCase()}`;
     if (!groups[key]) groups[key] = [];
     groups[key].push(s);
   });
@@ -50,10 +52,21 @@ export function consolidateSchedulesToMeetings(schedules: Schedule[]): ScheduleM
       return startA.localeCompare(startB);
     });
 
+    // Deduplicate any duplicate slot entries for the exact same JP sequence
+    const seenSequences = new Set<number>();
+    const uniqueGroup: Schedule[] = [];
+    group.forEach(s => {
+      const seq = parseInt(String(s.jp || "").replace(/\D/g, "")) || (s.sequence || 0);
+      if (!seenSequences.has(seq)) {
+        seenSequences.add(seq);
+        uniqueGroup.push(s);
+      }
+    });
+
     // Group consecutive JPs
     let currentChunk: Schedule[] = [];
 
-    group.forEach((sched) => {
+    uniqueGroup.forEach((sched) => {
       if (currentChunk.length === 0) {
         currentChunk.push(sched);
       } else {
@@ -62,8 +75,6 @@ export function consolidateSchedulesToMeetings(schedules: Schedule[]): ScheduleM
         const currJp = parseInt(String(sched.jp || "").replace(/\D/g, "")) || (sched.sequence || 0);
 
         if (currJp > 0 && lastJp > 0 && currJp === lastJp + 1) {
-          currentChunk.push(sched);
-        } else if (currJp === lastJp && currJp > 0) {
           currentChunk.push(sched);
         } else {
           pushChunk(currentChunk);

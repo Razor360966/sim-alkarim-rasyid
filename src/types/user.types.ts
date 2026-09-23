@@ -39,6 +39,7 @@ export type UserSystemRole =
   | "kepala sekolah"
   | "wakil kepala sekolah"
   | "guru"
+  | "guru halaqoh"
   | "musrif"
   | "tata usaha"
   | "operator"

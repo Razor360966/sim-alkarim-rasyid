@@ -33,6 +33,7 @@ import { ExecutiveMutabaahWidget } from "../components/ExecutiveMutabaahWidget";
 import { ExecutiveHalaqahAttendanceWidget } from "../components/ExecutiveHalaqahAttendanceWidget";
 import { TeacherMonthlyAttendanceSummary } from "../components/TeacherMonthlyAttendanceSummary";
 import { isStudentActive } from "../utils/studentHelper";
+import { getCanonicalActiveTeachers } from "../utils/teacherFilterHelper";
 import { 
   X,
   Users, 
@@ -515,11 +516,11 @@ export const Dashboard: React.FC = () => {
   }, [students]);
 
   const activeTeachers = React.useMemo(() => {
-    return teachers.filter(t => t.status === true || t.status === "Aktif" || t.status === undefined);
+    return getCanonicalActiveTeachers(teachers);
   }, [teachers]);
 
   const inactiveTeachers = React.useMemo(() => {
-    return teachers.filter(t => t.status === false || t.status === "Nonaktif");
+    return teachers.filter(t => t.status === false || t.status === "Nonaktif" || t.isDeleted === true);
   }, [teachers]);
 
   // Total Siswa is strictly count of active students
@@ -528,7 +529,7 @@ export const Dashboard: React.FC = () => {
   const totalInactiveStudents = inactiveStudents.length;
   const totalAllStudentRecordCount = students.length;
   const totalActiveTeachers = activeTeachers.length;
-  const totalTeachers = teachers.length;
+  const totalTeachers = activeTeachers.length;
   const totalClasses = classes.length;
   const totalSubjects = subjects.length;
 

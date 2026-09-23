@@ -19,6 +19,7 @@ import { lessonPlanService } from "./lessonPlan.service";
 import { teachingJournalService } from "./teachingJournalService";
 import { mutabaahService } from "./mutabaahService";
 import { userService } from "./user.service";
+import { getCanonicalActiveTeachers } from "../utils/teacherFilterHelper";
 import { 
   DisciplineCategory,
   DisciplineWeightsConfig,
@@ -211,10 +212,11 @@ export const teacherDisciplineService = {
 
       const activeDatesCount = calendarDates.filter(c => c.isActiveDay).length;
 
-      // 3. Filter teachers
-      let targetTeachers = allTeachers;
+      // 3. Filter canonical active genuine teachers (Pendidik / Tenaga Pengajar)
+      const activeCanonicalTeachers = getCanonicalActiveTeachers(allTeachers, allUsers);
+      let targetTeachers = activeCanonicalTeachers;
       if (filters?.teacherId && filters.teacherId !== "ALL") {
-        targetTeachers = allTeachers.filter(t => t.id === filters.teacherId);
+        targetTeachers = activeCanonicalTeachers.filter(t => t.id === filters.teacherId || t.teacherId === filters.teacherId);
       }
 
       // Filter attendances within date range

@@ -26,6 +26,14 @@ import {
 import { Schedule, Class, Teacher, LessonPeriod, CurriculumMatrix, TeacherAssignment, Subject } from "../types";
 import { scheduleService, resolveTeacherForScheduleDate } from "../services/schedule.service";
 import { teacherAssignmentService, resolveTeacherAssignmentSync } from "../services/teacherAssignment.service";
+import { 
+  normalizeGradeLevel, 
+  getTargetJPFromMatrix, 
+  getCanonicalClassId, 
+  isClassMatch, 
+  isScheduleForClass, 
+  countScheduledJP 
+} from "../utils/gradeLevelHelper";
 
 // --- TYPES FOR ANALYSES ---
 export interface PreAnalysisResult {
@@ -71,7 +79,8 @@ export const getSlotStyling = (
   day: string,
   sequence: number,
   matched: Schedule | undefined,
-  allSchedules: Schedule[]
+  allSchedules: Schedule[],
+  classes?: { id?: string; classId?: string }[]
 ) => {
   if (!matched) {
     return {
@@ -88,7 +97,7 @@ export const getSlotStyling = (
     s.teacherId === matched.teacherId && 
     s.day.toLowerCase() === day.toLowerCase() && 
     s.sequence === sequence && 
-    s.classId !== classId
+    !isClassMatch(s.classId, classId, classes)
   );
 
   if (isTeacherConflict) {
@@ -163,9 +172,8 @@ export function PreAnalysisPanel({
     let totalRequiredJp = 0;
 
     // Check slots vs JP requirements for each grade
-    ["VII", "VIII", "IX"].forEach((g) => {
-      const grade = g as "VII" | "VIII" | "IX";
-      const gradeClassesCount = activeClasses.filter(c => c.gradeLevel === grade).length;
+    (["VII", "VIII", "IX"] as const).forEach((grade) => {
+      const gradeClassesCount = activeClasses.filter(c => normalizeGradeLevel(c.gradeLevel) === grade).length;
       const requiredJp = jpByGrade[grade];
       totalRequiredJp += requiredJp * gradeClassesCount;
 
@@ -180,12 +188,18 @@ export function PreAnalysisPanel({
     const teacherLoads = new Map<string, { name: string; totalJp: number }>();
 
     activeClasses.forEach((cls) => {
-      const clsId = cls.classId || cls.id;
-      const grade = (cls.gradeLevel || "VII") as "VII" | "VIII" | "IX";
+      const clsId = getCanonicalClassId(cls);
+      const normGrade = normalizeGradeLevel(cls.gradeLevel);
+
+      if (normGrade === "INVALID_GRADE_LEVEL") {
+        warnings.push(`Kelas ${cls.name} memiliki jenjang tidak valid (${cls.gradeLevel || 'kosong'}). Harap atur jenjang (VII / VIII / IX) pada menu Master Kelas.`);
+        checks.teachers = false;
+        return;
+      }
 
       curriculumMatrix.forEach((m) => {
-        const jp = grade === "VII" ? m.jp_vii : grade === "VIII" ? m.jp_viii : m.jp_ix;
-        if (jp <= 0) return;
+        const jp = getTargetJPFromMatrix(m, normGrade);
+        if (jp === "INVALID_GRADE_LEVEL" || jp <= 0) return;
 
         // SSOT 4-Tier Class-Aware Resolver
         const resolved = resolveTeacherAssignmentSync({
@@ -193,7 +207,7 @@ export function PreAnalysisPanel({
           semesterId: selectedSemesterId,
           subjectId: m.subjectId,
           classId: clsId,
-          gradeLevel: grade,
+          gradeLevel: normGrade,
           curriculumMatrixItem: m,
           preloadedAssignments: teacherAssignments
         });
@@ -318,6 +332,8 @@ export function PostAnalysisPanel({
   classes,
   instructionalPeriods,
   teachers,
+  selectedYearId,
+  selectedSemesterId,
   onJump
 }: {
   activeSchedules: Schedule[];
@@ -325,6 +341,8 @@ export function PostAnalysisPanel({
   classes: Class[];
   instructionalPeriods: LessonPeriod[];
   teachers: Teacher[];
+  selectedYearId?: string;
+  selectedSemesterId?: string;
   onJump: (type: "class" | "teacher" | "general", targetId?: string) => void;
 }) {
   const analysis = useMemo(() => {
@@ -338,8 +356,12 @@ export function PostAnalysisPanel({
 
     // Group active schedules by class
     const classStats = activeClasses.map((cls) => {
-      const grade = cls.gradeLevel;
-      const classScheds = activeSchedules.filter(s => s.classId === cls.classId);
+      const normGrade = normalizeGradeLevel(cls.gradeLevel);
+      const classScheds = activeSchedules.filter(s => 
+        isScheduleForClass(s, cls, classes) &&
+        (!selectedYearId || !s.academicYearId || s.academicYearId === selectedYearId) &&
+        (!selectedSemesterId || !s.semesterId || s.semesterId === selectedSemesterId)
+      );
       const filledSlots = classScheds.length;
       const emptySlots = Math.max(0, numPeriods - filledSlots);
 
@@ -347,8 +369,8 @@ export function PostAnalysisPanel({
       const incompleteSubjects: { subjectId: string; subjectName: string; missingJp: number }[] = [];
       
       curriculumMatrix.forEach((m) => {
-        const required = grade === "VII" ? m.jp_vii : grade === "VIII" ? m.jp_viii : m.jp_ix;
-        if (required > 0) {
+        const required = getTargetJPFromMatrix(m, normGrade);
+        if (required !== "INVALID_GRADE_LEVEL" && required > 0) {
           const scheduled = classScheds.filter(s => s.subjectId === m.subjectId).length;
           if (scheduled < required) {
             incompleteSubjects.push({
@@ -374,19 +396,20 @@ export function PostAnalysisPanel({
     const teacherConflictDetails: string[] = [];
     const classConflictDetails: string[] = [];
 
-    const teacherDaySlotMap = new Map<string, { className: string; subjectName: string }[]>();
+    const teacherDaySlotMap = new Map<string, { className: string; subjectName: string; classId: string }[]>();
     const classDaySlotMap = new Map<string, { subjectName: string }[]>();
 
     activeSchedules.forEach((s) => {
-      const key = `${s.day}_${s.sequence}`;
+      const key = `${s.day.toLowerCase()}_${s.sequence}`;
+      const canonClassId = getCanonicalClassId(s.classId, classes);
       const teachKey = `${s.teacherId}_${key}`;
       
       if (!teacherDaySlotMap.has(teachKey)) {
         teacherDaySlotMap.set(teachKey, []);
       }
-      teacherDaySlotMap.get(teachKey)!.push({ className: s.className, subjectName: s.subjectName });
+      teacherDaySlotMap.get(teachKey)!.push({ className: s.className, subjectName: s.subjectName, classId: canonClassId });
 
-      const classKey = `${s.classId}_${key}`;
+      const classKey = `${canonClassId}_${key}`;
       if (!classDaySlotMap.has(classKey)) {
         classDaySlotMap.set(classKey, []);
       }
@@ -394,14 +417,17 @@ export function PostAnalysisPanel({
     });
 
     teacherDaySlotMap.forEach((slots, key) => {
-      if (slots.length > 1) {
-        teacherConflicts += (slots.length - 1);
+      // Teacher conflict ONLY occurs if teaching DIFFERENT classes at the same time:
+      const distinctClasses = new Set(slots.map(s => s.classId));
+      if (distinctClasses.size > 1) {
+        teacherConflicts += (distinctClasses.size - 1);
         const parts = key.split("_");
         const tId = parts[0];
         const day = parts[1];
         const seq = parts[2];
         const tName = teachers.find(t => t.id === tId)?.name || tId;
-        teacherConflictDetails.push(`Guru ${tName} bentrok mengajar di hari ${day} JP ${seq} pada kelas: ${slots.map(s => s.className).join(", ")}.`);
+        const uniqueClassNames = Array.from(new Set(slots.map(s => s.className)));
+        teacherConflictDetails.push(`Guru ${tName} bentrok mengajar di hari ${day} JP ${seq} pada kelas berbeda: ${uniqueClassNames.join(", ")}.`);
       }
     });
 
@@ -412,8 +438,8 @@ export function PostAnalysisPanel({
         const cId = parts[0];
         const day = parts[1];
         const seq = parts[2];
-        const cName = classes.find(c => c.id === cId || c.classId === cId)?.name || cId;
-        classConflictDetails.push(`Kelas ${cName} memiliki bentrok jadwal di hari ${day} JP ${seq}: ${slots.map(s => s.subjectName).join(", ")}.`);
+        const cName = classes.find(c => isClassMatch(c.id, cId, classes))?.name || cId;
+        classConflictDetails.push(`Kelas ${cName} memiliki duplikasi/bentrok jadwal di hari ${day} JP ${seq}: ${slots.map(s => s.subjectName).join(", ")}.`);
       }
     });
 
@@ -421,6 +447,14 @@ export function PostAnalysisPanel({
     const schedErrors: { message: string; type: "class" | "teacher" | "general"; targetId?: string }[] = [];
     
     classStats.forEach((stat) => {
+      const normGrade = normalizeGradeLevel(stat.class.gradeLevel);
+      if (normGrade === "INVALID_GRADE_LEVEL") {
+        schedErrors.push({
+          message: `Kelas ${stat.class.name} memiliki jenjang kelas tidak valid (${stat.class.gradeLevel || 'kosong'}). Harap atur jenjang (VII/VIII/IX) pada menu Master Kelas.`,
+          type: "class",
+          targetId: stat.class.classId
+        });
+      }
       if (stat.emptySlots > 0) {
         schedErrors.push({
           message: `Kelas ${stat.class.name} memiliki ${stat.emptySlots} slot kosong.`,
@@ -469,7 +503,7 @@ export function PostAnalysisPanel({
         ? "JADWAL VALID" 
         : "PERLU PERBAIKAN"
     } as PostAnalysisResult;
-  }, [activeSchedules, curriculumMatrix, classes, instructionalPeriods, teachers]);
+  }, [activeSchedules, curriculumMatrix, classes, instructionalPeriods, teachers, selectedYearId, selectedSemesterId]);
 
   if (!analysis) return null;
 
@@ -624,6 +658,9 @@ export function ScheduleEditorDialog({
   activeSchedules,
   subjects = [],
   teacherAssignments = [],
+  classes = [],
+  selectedYearId,
+  selectedSemesterId,
   onSave,
   onDelete,
   onAssignmentUpdated
@@ -636,6 +673,9 @@ export function ScheduleEditorDialog({
     day: string;
     sequence: number;
     jp: string;
+    gradeLevel?: string;
+    academicYearId?: string;
+    semesterId?: string;
     matchedSchedule?: Schedule;
   } | null;
   curriculumMatrix: CurriculumMatrix[];
@@ -643,6 +683,9 @@ export function ScheduleEditorDialog({
   activeSchedules: Schedule[];
   subjects?: Subject[];
   teacherAssignments?: TeacherAssignment[];
+  classes?: Class[];
+  selectedYearId?: string;
+  selectedSemesterId?: string;
   onSave: (subjectId: string, teacherId: string) => void;
   onDelete: () => void;
   onAssignmentUpdated?: () => void;
@@ -673,31 +716,40 @@ export function ScheduleEditorDialog({
 
   if (!isOpen || !slot) return null;
 
-  // Grade level of current class
-  const gradeLevel = slot.className.toUpperCase().includes("7") || slot.className.toUpperCase().includes("VII") ? "VII" :
-                     slot.className.toUpperCase().includes("8") || slot.className.toUpperCase().includes("VIII") ? "VIII" : "IX";
+  // Grade level of current class - Canonical & Non-destructive
+  const classEntity = classes?.find(c => isClassMatch(slot.classId, c, classes));
+  const rawGrade = classEntity?.gradeLevel || slot.gradeLevel || slot.className;
+  const normalizedGrade = normalizeGradeLevel(rawGrade);
 
   // Filter matrix elements for this grade level
   const relevantSubjects = curriculumMatrix.filter(m => {
-    const required = gradeLevel === "VII" ? m.jp_vii : gradeLevel === "VIII" ? m.jp_viii : m.jp_ix;
-    return required > 0;
+    const required = getTargetJPFromMatrix(m, normalizedGrade);
+    return required !== "INVALID_GRADE_LEVEL" && required > 0;
   });
 
   // Calculate detailed stats and checks for each subject option
   const options = relevantSubjects.map(m => {
-    const required = gradeLevel === "VII" ? m.jp_vii : gradeLevel === "VIII" ? m.jp_viii : m.jp_ix;
+    const target = getTargetJPFromMatrix(m, normalizedGrade);
+    const required = target === "INVALID_GRADE_LEVEL" ? 0 : target;
     
     // Count how many JPs are scheduled for this subject in this class
-    const scheduled = activeSchedules.filter(s => s.classId === slot.classId && s.subjectId === m.subjectId).length;
+    const scheduled = countScheduledJP(activeSchedules, {
+      academicYearId: selectedYearId || slot.matchedSchedule?.academicYearId,
+      semesterId: selectedSemesterId || slot.matchedSchedule?.semesterId,
+      classId: slot.classId,
+      subjectId: m.subjectId,
+      classEntity,
+      classes
+    });
     const remaining = Math.max(0, required - scheduled);
 
     // SSOT: Central Resolver for Teacher Assignment (Slot Class ID -> Grade fallback -> Matrix fallback)
     const resolved = teacherAssignmentService.resolveTeacherAssignmentSync({
-      academicYearId: slot.matchedSchedule?.academicYearId,
-      semesterId: slot.matchedSchedule?.semesterId,
+      academicYearId: selectedYearId || slot.matchedSchedule?.academicYearId,
+      semesterId: selectedSemesterId || slot.matchedSchedule?.semesterId,
       subjectId: m.subjectId,
-      classId: slot.classId,
-      gradeLevel: gradeLevel,
+      classId: classEntity?.id || slot.classId,
+      gradeLevel: normalizedGrade === "INVALID_GRADE_LEVEL" ? undefined : normalizedGrade,
       curriculumMatrixItem: m,
       preloadedAssignments: teacherAssignments
     });
@@ -710,7 +762,7 @@ export function ScheduleEditorDialog({
       s.teacherId === resolvedTeacherId && 
       s.day.toLowerCase() === slot.day.toLowerCase() && 
       s.sequence === slot.sequence && 
-      s.classId !== slot.classId
+      !isClassMatch(s.classId, slot.classId, classes)
     );
 
     return {
@@ -917,7 +969,7 @@ export function ScheduleEditorDialog({
                     disabled={opt.remaining === 0 && opt.matrixItem.subjectId !== slot.matchedSchedule?.subjectId}
                   >
                     {getSubjName(opt.matrixItem.subjectId, opt.matrixItem.subjectName)} ({opt.resolvedTeacherName}) 
-                    {opt.remaining === 0 ? " - [JP Terpenuhi]" : ` - [Kurang ${opt.remaining} JP]`}
+                    {opt.remaining === 0 ? " - [JP Terpenuhi]" : ` - [Kurang ${opt.remaining} JP (${opt.scheduled}/${opt.required} JP)]`}
                     {opt.teacherConflictClass ? ` - [Bentrok di Kelas ${opt.teacherConflictClass}]` : ""}
                   </option>
                 ))}
@@ -934,6 +986,12 @@ export function ScheduleEditorDialog({
                 <div className="flex justify-between">
                   <span className="text-slate-400">Telah Terjadwal:</span>
                   <span className="font-bold text-slate-700 dark:text-zinc-300">{currentSelectionDetails.scheduled} JP</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Sisa Alokasi:</span>
+                  <span className={`font-bold ${currentSelectionDetails.remaining === 0 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
+                    {currentSelectionDetails.remaining === 0 ? "JP Terpenuhi" : `Kurang ${currentSelectionDetails.remaining} JP`}
+                  </span>
                 </div>
                 
                 {currentSelectionDetails.teacherConflictClass && (

@@ -12,6 +12,7 @@ import { teacherService } from "./teacherService";
 import { subjectService } from "./subjectService";
 import { academicYearService } from "./academicYearService";
 import { semesterService } from "./semester.service";
+import { getCanonicalActiveTeachers, isEntityActiveStatus } from "../utils/teacherFilterHelper";
 
 export interface ExecutiveMutabaahFilter {
   academicYearId?: string;
@@ -44,11 +45,14 @@ export interface ExecutiveMutabaahRecord {
 export interface ExecutiveMutabaahSummary {
   totalTeachers: number; // Single Source of Truth: Active Teachers in Master Guru
   targetMutabaahCount: number; // Target Personil Wajib Mutabaah (Active Eligible GTK, Exclude Ketua Yayasan)
+  totalExpectedSubmissions: number; // Target Wajib x Evaluated Days (Denominator for Keterisian)
   filledCount: number;
   unfilledCount: number;
   lateCount: number;
   consistentCount: number;
-  fillRatePercentage: number;
+  fillRatePercentage: number; // Keterisian Pengisian = (filledCount / totalExpectedSubmissions) * 100
+  averageScorePercentage: number; // Rata-rata Skor Form Terisi = (totalScoreSum / filledCount)
+  overallWeightedScorePercentage: number; // Capaian terhadap Total Kewajiban = (totalScoreSum / totalExpectedSubmissions)
 }
 
 export interface ExecutiveMutabaahReport {
@@ -139,16 +143,10 @@ export const executiveMutabaahService = {
     allSubjects.forEach(s => subjectMap.set(s.id, s.name));
 
     // A. SINGLE SOURCE OF TRUTH (SSOT) FOR MASTER GURU
-    // A teacher is valid & active if:
-    // - !t.isDeleted
-    // - status is not "Nonaktif", "Pensiun", "Cuti" (or false)
-    const isTeacherActive = (t: any): boolean => {
-      if (t.isDeleted === true) return false;
-      if (t.status === false || t.status === "Nonaktif" || t.status === "Pensiun") return false;
-      return true; // "Aktif", true, or default undefined
-    };
-
-    const activeMasterTeachers = allTeachers.filter(isTeacherActive);
+    // Must be real teaching teachers (Pendidik / Tenaga Pengajar KBM & Halaqoh),
+    // strictly active, excluding non-teaching staff (TU, Operator, Satpam, Yayasan),
+    // and deduplicated so 1 human teacher = 1 canonical count.
+    const activeMasterTeachers = getCanonicalActiveTeachers(allTeachers, allUsers);
     const totalMasterTeachers = activeMasterTeachers.length;
 
     // B. TARGET MUTABAAH ELIGIBILITY & DEDUPLICATION (1 PERSON = 1 RECORD)
@@ -518,8 +516,23 @@ export const executiveMutabaahService = {
     const unfilledCount = unfilledRecords.length;
     const lateCount = lateRecords.length;
 
+    // Tingkat Keterisian Pengisian: (filledCount / totalExpectedRecords) * 100
+    // Denominator = totalExpectedRecords (Total personil target wajib x jumlah hari evaluasi)
     const fillRatePercentage = totalExpectedRecords > 0
       ? Math.round((filledCount / totalExpectedRecords) * 100)
+      : 0;
+
+    // Rata-rata Skor Mutabaah dari Formulir Terisi:
+    // Denominator = filledCount (Total formulir yang diserahkan/terisi)
+    const totalScoreSum = filledRecords.reduce((sum, r) => sum + (r.completenessPercentage || 0), 0);
+    const averageScorePercentage = filledCount > 0
+      ? Math.round(totalScoreSum / filledCount)
+      : 0;
+
+    // Capaian Kepatuhan Terhadap Total Kewajiban (Unfilled hari dihitung 0%):
+    // Denominator = totalExpectedRecords
+    const overallWeightedScorePercentage = totalExpectedRecords > 0
+      ? Math.round(totalScoreSum / totalExpectedRecords)
       : 0;
 
     // Targets with consistency >= 90%
@@ -532,11 +545,14 @@ export const executiveMutabaahService = {
     const summary: ExecutiveMutabaahSummary = {
       totalTeachers: displayTotalTeachers,
       targetMutabaahCount,
+      totalExpectedSubmissions: totalExpectedRecords,
       filledCount,
       unfilledCount,
       lateCount,
       consistentCount,
-      fillRatePercentage
+      fillRatePercentage,
+      averageScorePercentage,
+      overallWeightedScorePercentage
     };
 
     // 7. Compute Widget Statistics

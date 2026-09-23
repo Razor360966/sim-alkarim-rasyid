@@ -21,6 +21,16 @@ import { teacherService } from "./teacherService";
 import { subjectService } from "./subjectService";
 import { teacherAssignmentService } from "./teacherAssignment.service";
 import { Schedule, TeacherAssignment, LessonPeriod, LessonPeriodType, CurriculumMatrix, Class } from "../types";
+import {
+  normalizeGradeLevel,
+  getTargetJPFromMatrix,
+  getCanonicalClassId,
+  getCanonicalSlotKey,
+  isSameSlot,
+  isClassMatch,
+  isScheduleForClass,
+  formsContiguousSession
+} from "../utils/gradeLevelHelper";
 
 const COLLECTION_NAME = "schedules";
 
@@ -197,28 +207,147 @@ export interface ScheduleMetrics {
 }
 
 export const scheduleService = {
-  // 1. Get all schedules for active Academic Year & Semester
+  // 1. Get all schedules for active Academic Year & Semester (SSoT: 1 Slot = 1 Canonical Schedule)
   async getSchedules(academicYearId?: string, semesterId?: string): Promise<Schedule[]> {
     try {
       let q = query(collection(db, COLLECTION_NAME));
       if (academicYearId) {
         q = query(collection(db, COLLECTION_NAME), where("academicYearId", "==", academicYearId));
       }
-      const querySnapshot = await getDocs(q);
-      const schedules: Schedule[] = [];
+      const [querySnapshot, classes] = await Promise.all([
+        getDocs(q),
+        classService.getClasses().catch(() => [] as Class[])
+      ]);
+
+      const rawSchedules: Schedule[] = [];
       querySnapshot.forEach((docSnap) => {
         const data = docSnap.data();
-        // If semesterId was passed, filter in memory or via where (Firestore requires composite indexes for multiple wheres, so in-memory is safer for developer app setup)
         if (!semesterId || data.semesterId === semesterId) {
-          schedules.push({
+          rawSchedules.push({
             id: docSnap.id,
             ...data
           } as Schedule);
         }
       });
-      return schedules;
+
+      // Canonical slot deduplication: 1 real slot = 1 schedule instance
+      const slotMap = new Map<string, Schedule>();
+      rawSchedules.forEach((sch) => {
+        const slotKey = getCanonicalSlotKey(sch, classes);
+        if (!slotMap.has(slotKey)) {
+          slotMap.set(slotKey, sch);
+        } else {
+          const current = slotMap.get(slotKey)!;
+          // Selection heuristic for duplicate documents in Firestore:
+          // 1. Prefer locked schedule
+          // 2. Prefer schedule with assigned subject & teacher
+          // 3. Prefer newer updatedAt / createdAt
+          let preferNew = false;
+          if (!current.isLocked && sch.isLocked) {
+            preferNew = true;
+          } else if (current.isLocked === sch.isLocked) {
+            const curComplete = Boolean(current.subjectId && current.teacherId);
+            const schComplete = Boolean(sch.subjectId && sch.teacherId);
+            if (!curComplete && schComplete) {
+              preferNew = true;
+            } else if (curComplete === schComplete) {
+              const curTime = current.updatedAt || current.createdAt || "";
+              const schTime = sch.updatedAt || sch.createdAt || "";
+              if (schTime > curTime) {
+                preferNew = true;
+              }
+            }
+          }
+          if (preferNew) {
+            slotMap.set(slotKey, sch);
+          }
+        }
+      });
+
+      return Array.from(slotMap.values());
     } catch (error) {
       return handleFirestoreError(error, OperationType.LIST, COLLECTION_NAME);
+    }
+  },
+
+  // 1b. Self-healing maintenance utility: cleans duplicate schedules in Firestore
+  async cleanDuplicateSchedules(
+    academicYearId: string,
+    semesterId: string,
+    operatorId: string = "system",
+    operatorName: string = "System Maintenance"
+  ): Promise<{ cleanedCount: number; duplicateSlotsCount: number }> {
+    try {
+      const q = query(
+        collection(db, COLLECTION_NAME),
+        where("academicYearId", "==", academicYearId)
+      );
+      const [snapshot, classes] = await Promise.all([
+        getDocs(q),
+        classService.getClasses().catch(() => [] as Class[])
+      ]);
+
+      const slotGroups = new Map<string, { id: string; ref: any; data: Schedule }[]>();
+
+      snapshot.docs.forEach((docSnap) => {
+        const data = docSnap.data() as Schedule;
+        if (!semesterId || data.semesterId === semesterId) {
+          const slotKey = getCanonicalSlotKey(data, classes);
+          if (!slotGroups.has(slotKey)) {
+            slotGroups.set(slotKey, []);
+          }
+          slotGroups.get(slotKey)!.push({ id: docSnap.id, ref: docSnap.ref, data });
+        }
+      });
+
+      let cleanedCount = 0;
+      let duplicateSlotsCount = 0;
+      const batchOps: Array<(batch: any) => void> = [];
+
+      slotGroups.forEach((docs, slotKey) => {
+        if (docs.length > 1) {
+          duplicateSlotsCount++;
+          // Sort to determine canonical winner
+          docs.sort((a, b) => {
+            if (a.data.isLocked && !b.data.isLocked) return -1;
+            if (!a.data.isLocked && b.data.isLocked) return 1;
+            const aComp = (a.data.subjectId && a.data.teacherId) ? 1 : 0;
+            const bComp = (b.data.subjectId && b.data.teacherId) ? 1 : 0;
+            if (aComp !== bComp) return bComp - aComp;
+            const aTime = a.data.updatedAt || a.data.createdAt || "";
+            const bTime = b.data.updatedAt || b.data.createdAt || "";
+            return bTime.localeCompare(aTime);
+          });
+
+          // Winner is docs[0]; delete all redundant duplicates docs[1..n]
+          for (let i = 1; i < docs.length; i++) {
+            const toDelete = docs[i];
+            batchOps.push((batch) => batch.delete(toDelete.ref));
+            cleanedCount++;
+          }
+        }
+      });
+
+      if (batchOps.length > 0) {
+        const chunkSize = 400;
+        for (let i = 0; i < batchOps.length; i += chunkSize) {
+          const chunk = batchOps.slice(i, i + chunkSize);
+          const batchWrite = writeBatch(db);
+          chunk.forEach((op) => op(batchWrite));
+          await batchWrite.commit();
+        }
+
+        await logScheduleActivity(
+          operatorId,
+          operatorName,
+          "CLEAN_DUPLICATES",
+          `Membersihkan ${cleanedCount} dokumen jadwal terduplikasi dari ${duplicateSlotsCount} slot rombel.`
+        );
+      }
+
+      return { cleanedCount, duplicateSlotsCount };
+    } catch (error) {
+      return handleFirestoreError(error, OperationType.WRITE, COLLECTION_NAME);
     }
   },
 
@@ -286,7 +415,7 @@ export const scheduleService = {
     }
   },
 
-  // 4. Save bulk schedules using intelligent diff / upsert
+  // 4. Save bulk schedules using intelligent diff / upsert with Canonical Slot SSoT
   async saveSchedules(
     schedules: Schedule[], 
     academicYearId: string, 
@@ -297,12 +426,15 @@ export const scheduleService = {
     mode?: 'manual-edit' | 'auto-generate'
   ): Promise<void> {
     try {
-      // 1. Query existing schedules in Firestore for active Academic Year & Semester
+      // 1. Query existing schedules in Firestore & classes for canonical resolution
       const q = query(
         collection(db, COLLECTION_NAME),
         where("academicYearId", "==", academicYearId)
       );
-      const snapshot = await getDocs(q);
+      const [snapshot, classes] = await Promise.all([
+        getDocs(q),
+        classService.getClasses().catch(() => [] as Class[])
+      ]);
       
       // Filter by semesterId in memory
       const allExistingDocs = snapshot.docs.filter(docSnap => {
@@ -310,59 +442,96 @@ export const scheduleService = {
         return !semesterId || d.semesterId === semesterId;
       });
 
-      // 2. Determine target existing docs scope based on classIdToOverwrite
+      // 2. Determine target existing docs scope based on classIdToOverwrite (SSOT isClassMatch)
       const targetExistingDocs = allExistingDocs.filter(docSnap => {
         const d = docSnap.data();
         if (!classIdToOverwrite || classIdToOverwrite === "ALL") return true;
-        return d.classId === classIdToOverwrite;
+        return isClassMatch(d.classId, classIdToOverwrite, classes);
       });
 
-      const existingDocsMap = new Map<string, { ref: any; data: Schedule }>();
+      // Group existing docs by canonical slot key: 1 slot may have legacy duplicates
+      const existingDocsBySlot = new Map<string, { id: string; ref: any; data: Schedule }[]>();
       targetExistingDocs.forEach(docSnap => {
-        existingDocsMap.set(docSnap.id, {
-          ref: docSnap.ref,
-          data: { id: docSnap.id, ...docSnap.data() } as Schedule
-        });
+        const d = { id: docSnap.id, ...docSnap.data() } as Schedule;
+        const slotKey = getCanonicalSlotKey(d, classes);
+        if (!existingDocsBySlot.has(slotKey)) {
+          existingDocsBySlot.set(slotKey, []);
+        }
+        existingDocsBySlot.get(slotKey)!.push({ id: docSnap.id, ref: docSnap.ref, data: d });
       });
 
-      // 3. Determine target incoming schedules scope
-      const targetIncomingSchedules = schedules.filter(s => {
+      // 3. Determine target incoming schedules scope (SSOT isClassMatch)
+      const filteredIncoming = schedules.filter(s => {
         const matchesAy = !s.academicYearId || s.academicYearId === academicYearId;
         const matchesSem = !s.semesterId || s.semesterId === semesterId;
-        const matchesClass = !classIdToOverwrite || classIdToOverwrite === "ALL" || s.classId === classIdToOverwrite;
+        const matchesClass = !classIdToOverwrite || classIdToOverwrite === "ALL" || isClassMatch(s.classId, classIdToOverwrite, classes);
         return matchesAy && matchesSem && matchesClass;
       });
 
-      const incomingIdsSet = new Set<string>();
-      targetIncomingSchedules.forEach(s => {
-        if (s.id) incomingIdsSet.add(s.id);
+      // Deduplicate incoming schedules by canonical slot: 1 slot = 1 incoming item
+      const incomingBySlot = new Map<string, Schedule>();
+      filteredIncoming.forEach(s => {
+        const slotKey = getCanonicalSlotKey(s, classes);
+        if (!incomingBySlot.has(slotKey)) {
+          incomingBySlot.set(slotKey, s);
+        } else {
+          // If incoming has duplicate, prefer locked or more complete
+          const current = incomingBySlot.get(slotKey)!;
+          if (!current.isLocked && s.isLocked) {
+            incomingBySlot.set(slotKey, s);
+          } else if (!current.subjectId && s.subjectId) {
+            incomingBySlot.set(slotKey, s);
+          }
+        }
       });
 
-      // 4. Prepare Batch Write Operations
+      const claimedExistingDocIds = new Set<string>();
       const batchOps: Array<(batch: any) => void> = [];
       let updatedCount = 0;
       let addedCount = 0;
       let deletedCount = 0;
 
-      // A. Identify deletions: docs in DB scope that are NOT in incoming set
-      targetExistingDocs.forEach(docSnap => {
-        const data = docSnap.data();
-        if (!incomingIdsSet.has(docSnap.id)) {
-          // Do NOT delete locked schedules!
-          if (!data.isLocked) {
-            batchOps.push((batch) => batch.delete(docSnap.ref));
-            deletedCount++;
+      // 4. Process incoming schedules (Match existing slot or create new)
+      incomingBySlot.forEach((sched, slotKey) => {
+        const existingDocsForSlot = existingDocsBySlot.get(slotKey) || [];
+
+        // Determine matching canonical class entity to store canonical classId and proper name
+        const matchedClass = classes.find(c => isClassMatch(c.id, sched.classId, classes));
+        const canonicalClassId = matchedClass ? getCanonicalClassId(matchedClass) : (sched.classId || "");
+        const canonicalClassName = matchedClass?.name || sched.className || "";
+
+        let targetDocId = sched.id;
+        let targetRef: any = null;
+        let isExistingLocked = false;
+        let existingAssignments: TeacherAssignment[] = [];
+
+        if (existingDocsForSlot.length > 0) {
+          // Pick winner existing doc: prefer doc with exact ID match, or locked doc, or first doc
+          const winnerDoc = existingDocsForSlot.find(d => d.id === sched.id) ||
+                            existingDocsForSlot.find(d => d.data.isLocked) ||
+                            existingDocsForSlot[0];
+          
+          targetDocId = winnerDoc.id;
+          targetRef = winnerDoc.ref;
+          isExistingLocked = Boolean(winnerDoc.data.isLocked);
+          existingAssignments = winnerDoc.data.teacherAssignments || [];
+          claimedExistingDocIds.add(winnerDoc.id);
+
+          // Delete any extra duplicate documents that existed for this same slot in Firestore!
+          for (const extraDoc of existingDocsForSlot) {
+            if (extraDoc.id !== winnerDoc.id) {
+              claimedExistingDocIds.add(extraDoc.id);
+              batchOps.push((batch) => batch.delete(extraDoc.ref));
+              deletedCount++;
+            }
           }
         }
-      });
 
-      // B. Process incoming schedules (Updates & Creates)
-      targetIncomingSchedules.forEach((sched) => {
         const cleanPayload = {
           academicYearId: sched.academicYearId || academicYearId,
           semesterId: sched.semesterId || semesterId,
-          classId: sched.classId || "",
-          className: sched.className || "",
+          classId: canonicalClassId,
+          className: canonicalClassName,
           day: sched.day || "",
           sequence: sched.sequence || 1,
           jp: sched.jp || `JP ${sched.sequence || 1}`,
@@ -372,33 +541,25 @@ export const scheduleService = {
           teacherName: sched.teacherName || "",
           teacherAssignments: (sched.teacherAssignments && sched.teacherAssignments.length > 0)
             ? sched.teacherAssignments
-            : (existingDocsMap.get(sched.id || "")?.data.teacherAssignments || []),
-          isLocked: sched.isLocked || false,
+            : existingAssignments,
+          isLocked: sched.isLocked || isExistingLocked,
           lessonPeriodId: sched.lessonPeriodId || "LPERIOD_FALLBACK",
           createdBy: sched.createdBy || operatorId,
           createdAt: sched.createdAt || new Date().toISOString(),
           updatedAt: new Date().toISOString()
         };
 
-        if (sched.id && existingDocsMap.has(sched.id)) {
-          // Existing document: UPSERT/UPDATE with same ID
-          const existingItem = existingDocsMap.get(sched.id)!;
-          const targetRef = existingItem.ref;
-          
-          // Preserve locked status if existing was locked
-          if (existingItem.data.isLocked) {
-            cleanPayload.isLocked = true;
-          }
-
+        if (targetRef) {
+          // Update existing doc
+          sched.id = targetDocId;
           batchOps.push((batch) => {
-            batch.set(targetRef, { ...cleanPayload, id: sched.id }, { merge: true });
+            batch.set(targetRef, { ...cleanPayload, id: targetDocId }, { merge: true });
           });
           updatedCount++;
         } else {
-          // New document: CREATE with new ID
+          // Create new doc
           const newDocRef = doc(collection(db, COLLECTION_NAME));
-          sched.id = newDocRef.id; // Assign generated ID back to memory object!
-
+          sched.id = newDocRef.id;
           batchOps.push((batch) => {
             batch.set(newDocRef, {
               ...cleanPayload,
@@ -409,7 +570,19 @@ export const scheduleService = {
         }
       });
 
-      // 5. Execute Batch Operations in Chunks (max 400 per batch)
+      // 5. Identify deletions: docs in target scope that were NOT claimed by any incoming slot
+      targetExistingDocs.forEach(docSnap => {
+        if (!claimedExistingDocIds.has(docSnap.id)) {
+          const data = docSnap.data();
+          // Do NOT delete locked schedules unless explicitly reset
+          if (!data.isLocked) {
+            batchOps.push((batch) => batch.delete(docSnap.ref));
+            deletedCount++;
+          }
+        }
+      });
+
+      // 6. Execute Batch Operations in Chunks (max 400 per batch)
       const chunkSize = 400;
       for (let i = 0; i < batchOps.length; i += chunkSize) {
         const chunk = batchOps.slice(i, i + chunkSize);
@@ -419,8 +592,8 @@ export const scheduleService = {
       }
 
       const desc = mode === 'auto-generate' || (classIdToOverwrite && classIdToOverwrite !== "ALL")
-        ? `Menyimpan jadwal hasil sinkronisasi (${addedCount} baru, ${updatedCount} diperbarui, ${deletedCount} dihapus).`
-        : `Menyimpan perubahan jadwal pelajaran (${updatedCount} diperbarui, ${addedCount} ditambahkan, ${deletedCount} dihapus).`;
+        ? `Menyimpan jadwal hasil sinkronisasi (${addedCount} baru, ${updatedCount} diperbarui, ${deletedCount} dibersihkan/dihapus).`
+        : `Menyimpan perubahan jadwal pelajaran (${updatedCount} diperbarui, ${addedCount} ditambahkan, ${deletedCount} dibersihkan/dihapus).`;
 
       await logScheduleActivity(
         operatorId,
@@ -743,31 +916,44 @@ export const scheduleService = {
     // key: teacherId_day -> current hours of teaching
     const teacherDailyHours = new Map<string, number>();
 
-    // Lock schedules that we should preserve
+    // Lock schedules that we should preserve (deduplicated by canonical slot)
     const preservedSchedules: Schedule[] = [];
+    const preservedSlotKeys = new Set<string>();
 
     existingSchedules.forEach((sched) => {
       // Determine if this schedule should be locked (preserved)
       let shouldPreserve = false;
       if (sched.isLocked || optimize) {
         shouldPreserve = true;
-      } else if (targetClassId && sched.classId !== targetClassId) {
+      } else if (targetClassId && !isClassMatch(sched.classId, targetClassId, classes)) {
         // Rule 22: Generate specific class leaves all other classes untouched
         shouldPreserve = true;
       }
 
       if (shouldPreserve) {
-        preservedSchedules.push(sched);
-        
-        const slotKey = `${sched.classId}_${sched.day.toLowerCase()}_${sched.sequence}`;
-        classOccupation.set(slotKey, sched.subjectId);
+        const canonSlot = getCanonicalSlotKey(sched, classes);
+        if (!preservedSlotKeys.has(canonSlot)) {
+          preservedSlotKeys.add(canonSlot);
+          preservedSchedules.push(sched);
+          
+          const dayLower = sched.day.toLowerCase();
+          const canonClassId = getCanonicalClassId(sched.classId, classes);
 
-        const teachSlotKey = `${sched.teacherId}_${sched.day.toLowerCase()}_${sched.sequence}`;
-        teacherOccupation.set(teachSlotKey, sched.classId);
+          classOccupation.set(`${sched.classId}_${dayLower}_${sched.sequence}`, sched.subjectId);
+          classOccupation.set(`${canonClassId}_${dayLower}_${sched.sequence}`, sched.subjectId);
 
-        const teachDayKey = `${sched.teacherId}_${sched.day.toLowerCase()}`;
-        const currentHours = teacherDailyHours.get(teachDayKey) || 0;
-        teacherDailyHours.set(teachDayKey, currentHours + 1);
+          const matchedClassEntity = classes.find(c => isClassMatch(sched.classId, c, classes));
+          if (matchedClassEntity?.name) {
+            classOccupation.set(`${matchedClassEntity.name.toLowerCase()}_${dayLower}_${sched.sequence}`, sched.subjectId);
+          }
+
+          const teachSlotKey = `${sched.teacherId}_${dayLower}_${sched.sequence}`;
+          teacherOccupation.set(teachSlotKey, canonClassId);
+
+          const teachDayKey = `${sched.teacherId}_${dayLower}`;
+          const currentHours = teacherDailyHours.get(teachDayKey) || 0;
+          teacherDailyHours.set(teachDayKey, currentHours + 1);
+        }
       }
     });
 
@@ -789,27 +975,31 @@ export const scheduleService = {
 
     // Filter classes to schedule
     const classesToSchedule = targetClassId 
-      ? classes.filter(c => c.classId === targetClassId)
+      ? classes.filter(c => isClassMatch(targetClassId, c))
       : classes;
 
     // For each class, find curriculum matrix requirements
     classesToSchedule.forEach((cls) => {
-      const grade = cls.gradeLevel; // "VII", "VIII", "IX"
+      const normGrade = normalizeGradeLevel(cls.gradeLevel);
+      if (normGrade === "INVALID_GRADE_LEVEL") {
+        console.warn(`[AutoScheduler] Class ${cls.name} has invalid gradeLevel "${cls.gradeLevel}". Skipping task creation.`);
+        return;
+      }
+      const canonicalClassId = getCanonicalClassId(cls);
       
       // Get curriculum matrix items for this grade level
       const classMatrix = matrixList.filter(item => {
-        if (grade === "VII") return item.jp_vii > 0;
-        if (grade === "VIII") return item.jp_viii > 0;
-        if (grade === "IX") return item.jp_ix > 0;
-        return false;
+        const target = getTargetJPFromMatrix(item, normGrade);
+        return target !== "INVALID_GRADE_LEVEL" && target > 0;
       });
 
       classMatrix.forEach((m) => {
-        const reqJp = grade === "VII" ? m.jp_vii : grade === "VIII" ? m.jp_viii : m.jp_ix;
+        const reqJp = getTargetJPFromMatrix(m, normGrade);
+        if (reqJp === "INVALID_GRADE_LEVEL" || reqJp <= 0) return;
         
         // Count how many JPs are already assigned to locked schedules for this class + subject
         const lockedJpCount = preservedSchedules.filter(s => 
-          s.classId === cls.classId && 
+          isScheduleForClass(s, cls, classes) && 
           s.subjectId === m.subjectId
         ).length;
 
@@ -820,8 +1010,8 @@ export const scheduleService = {
           academicYearId,
           semesterId,
           subjectId: m.subjectId,
-          classId: cls.id || cls.classId,
-          gradeLevel: cls.gradeLevel,
+          classId: canonicalClassId,
+          gradeLevel: normGrade,
           curriculumMatrixItem: m,
           preloadedAssignments: assignmentsList
         });
@@ -835,9 +1025,9 @@ export const scheduleService = {
 
         if (remainingJp > 0) {
           tasksRaw.push({
-            classId: cls.classId,
+            classId: canonicalClassId,
             className: cls.name,
-            gradeLevel: cls.gradeLevel,
+            gradeLevel: normGrade,
             subjectId: m.subjectId,
             subjectName: displaySubjectName,
             teacherId: resolvedTeacherId,
@@ -970,18 +1160,21 @@ export const scheduleService = {
           return;
         }
 
-        // Check Rule 9: Mapel yang sama tidak boleh muncul 2x dalam satu hari
-        // Check if this class already has this subject on this day (excluding locked if they are on other days)
-        let subjectAlreadyOnDay = false;
-        // In-memory quick check
+        // Check Rule 9: Mapel yang sama tidak boleh muncul sebagai 2 sesi terpisah dalam satu hari.
+        // Check existing occurrences of this subject on this day for this class
+        const existingSequencesOnDay: number[] = [];
         for (let idx = 0; idx < dayPeriods.length; idx++) {
           const checkKey = `${task.classId}_${dayLower}_${dayPeriods[idx].sequence}`;
           if (classOccupation.get(checkKey) === task.subjectId) {
-            subjectAlreadyOnDay = true;
-            break;
+            existingSequencesOnDay.push(dayPeriods[idx].sequence);
           }
         }
-        if (subjectAlreadyOnDay) return;
+
+        // If subject is already on this day and the incoming task is multi-block (>1 JP),
+        // placing it would create either an over-budget session or disjoint sessions.
+        if (existingSequencesOnDay.length > 0 && task.blockSize > 1) {
+          return;
+        }
 
         // Check if teacher has enough budget for the day (Rule 10 with Custom Rule priority limit)
         const teachDayKey = `${task.teacherId}_${dayLower}`;
@@ -1005,26 +1198,43 @@ export const scheduleService = {
               break;
             }
 
-            // Exclude fixed activities: BREAK (Istirahat) or ROUTINE
+            // Exclude fixed activities: BREAK (Istirahat), ROUTINE, or non-instructional
             const isFixedActivity = currentPeriod.type === LessonPeriodType.ROUTINE ||
                                     currentPeriod.type === LessonPeriodType.BREAK ||
+                                    !currentPeriod.instructional ||
                                     currentPeriod.title.toLowerCase().includes("istirahat") ||
-                                    currentPeriod.type === ("BREAK" as any);
+                                    currentPeriod.title.toLowerCase().includes("apel") ||
+                                    currentPeriod.title.toLowerCase().includes("upacara") ||
+                                    currentPeriod.title.toLowerCase().includes("dhuha") ||
+                                    currentPeriod.title.toLowerCase().includes("senam");
             if (isFixedActivity) {
               isValid = false;
               break;
             }
 
             // Check if slot is occupied for Class or Teacher
+            const canonTaskClassId = getCanonicalClassId(task.classId, classes);
             const slotKey = `${task.classId}_${dayLower}_${currentPeriod.sequence}`;
+            const canonSlotKey = `${canonTaskClassId}_${dayLower}_${currentPeriod.sequence}`;
             const teachSlotKey = `${task.teacherId}_${dayLower}_${currentPeriod.sequence}`;
 
-            if (classOccupation.has(slotKey) || teacherOccupation.has(teachSlotKey)) {
+            if (classOccupation.has(slotKey) || classOccupation.has(canonSlotKey) || teacherOccupation.has(teachSlotKey)) {
               isValid = false;
               break;
             }
 
             candidatePeriods.push(currentPeriod);
+          }
+
+          // If subject was already scheduled on this day, ensure candidate block forms
+          // a contiguous single session (e.g. 1 JP + 1 JP = 2 JP session) without gaps
+          if (isValid && existingSequencesOnDay.length > 0) {
+            const candidateSeqs = candidatePeriods.map(p => p.sequence);
+            const isContiguous = formsContiguousSession(existingSequencesOnDay, candidateSeqs);
+            const totalCombined = existingSequencesOnDay.length + candidateSeqs.length;
+            if (!isContiguous || totalCombined > 3) {
+              isValid = false;
+            }
           }
 
           if (isValid) {
@@ -1067,13 +1277,16 @@ export const scheduleService = {
     // Apply placements in state
     const applyPlacement = (task: BlockTask, placement: Placement, assignedList: Schedule[]) => {
       const dayLower = placement.day.toLowerCase();
+      const canonClassId = getCanonicalClassId(task.classId, classes);
       
       placement.periods.forEach((period) => {
         const slotKey = `${task.classId}_${dayLower}_${period.sequence}`;
+        const canonSlotKey = `${canonClassId}_${dayLower}_${period.sequence}`;
         const teachSlotKey = `${task.teacherId}_${dayLower}_${period.sequence}`;
         
         classOccupation.set(slotKey, task.subjectId);
-        teacherOccupation.set(teachSlotKey, task.classId);
+        classOccupation.set(canonSlotKey, task.subjectId);
+        teacherOccupation.set(teachSlotKey, canonClassId);
 
         const teachDayKey = `${task.teacherId}_${dayLower}`;
         teacherDailyHours.set(teachDayKey, (teacherDailyHours.get(teachDayKey) || 0) + 1);
@@ -1082,7 +1295,7 @@ export const scheduleService = {
         assignedList.push({
           academicYearId,
           semesterId,
-          classId: task.classId,
+          classId: canonClassId,
           className: task.className,
           day: placement.day,
           lessonPeriodId: period.id || "LPERIOD_FALLBACK",
@@ -1103,13 +1316,16 @@ export const scheduleService = {
     // Remove placement from state
     const removePlacement = (task: BlockTask, placement: Placement, assignedList: Schedule[]) => {
       const dayLower = placement.day.toLowerCase();
+      const canonClassId = getCanonicalClassId(task.classId, classes);
       const sequenceSet = new Set(placement.periods.map(p => p.sequence));
 
       placement.periods.forEach((period) => {
         const slotKey = `${task.classId}_${dayLower}_${period.sequence}`;
+        const canonSlotKey = `${canonClassId}_${dayLower}_${period.sequence}`;
         const teachSlotKey = `${task.teacherId}_${dayLower}_${period.sequence}`;
         
         classOccupation.delete(slotKey);
+        classOccupation.delete(canonSlotKey);
         teacherOccupation.delete(teachSlotKey);
 
         const teachDayKey = `${task.teacherId}_${dayLower}`;
@@ -1117,10 +1333,10 @@ export const scheduleService = {
         teacherDailyHours.set(teachDayKey, currHours - 1);
       });
 
-      // Filter in-place
+      // Filter in-place with isClassMatch to ensure clean rollback
       for (let i = assignedList.length - 1; i >= 0; i--) {
         const s = assignedList[i];
-        if (s.classId === task.classId && s.day.toLowerCase() === dayLower && sequenceSet.has(s.sequence)) {
+        if (isClassMatch(s.classId, task.classId, classes) && s.day.toLowerCase() === dayLower && sequenceSet.has(s.sequence)) {
           assignedList.splice(i, 1);
         }
       }
@@ -1180,14 +1396,140 @@ export const scheduleService = {
       return false;
     };
 
-    // Run solve starting with preserved schedules
+    // --- PASS 1: SOLVE WITH STRICT/PREFERRED BLOCK DECOMPOSITION ---
     const currentList = [...preservedSchedules];
     const initialSkipped: BlockTask[] = [];
 
-    const isSolvedPerfectly = solve(0, currentList, initialSkipped);
-    
+    const isSolvedPass1 = solve(0, currentList, initialSkipped);
+    const pass1Schedules = bestAssignment.length > 0 ? bestAssignment : currentList;
+
+    // --- STAGE 5: TWO-PASS AUTO SCHEDULER LOGIC ([3] -> [2, 1] FALLBACK) ---
+    // Identify subjects that still have remaining unfulfilled JP requirements after Pass 1
+    const pass2BlockTasks: BlockTask[] = [];
+
+    tasksRaw.forEach((task) => {
+      const scheduledCount = pass1Schedules.filter(s => 
+        isClassMatch(s.classId, task.classId, classes) && 
+        s.subjectId === task.subjectId
+      ).length;
+
+      const missingJp = Math.max(0, task.totalJpRequired - scheduledCount);
+      if (missingJp > 0) {
+        // Fallback decomposition: 3 JP -> [2, 1], 4 JP -> [2, 1, 1], 5 JP -> [2, 2, 1], etc.
+        const fallbackSizes = decomposeJP(missingJp, true);
+        const isCore = isCoreSubject(task.subjectName);
+        fallbackSizes.forEach((size) => {
+          pass2BlockTasks.push({
+            classId: task.classId,
+            className: task.className,
+            subjectId: task.subjectId,
+            subjectName: task.subjectName,
+            teacherId: task.teacherId,
+            teacherName: task.teacherName,
+            blockSize: size,
+            isCore
+          });
+        });
+      }
+    });
+
+    let pass2Schedules = pass1Schedules;
+
+    if (pass2BlockTasks.length > 0) {
+      // Re-populate occupancy maps based on pass1Schedules
+      classOccupation.clear();
+      teacherOccupation.clear();
+      teacherDailyHours.clear();
+
+      pass1Schedules.forEach((sched) => {
+        const slotKey = `${sched.classId}_${sched.day.toLowerCase()}_${sched.sequence}`;
+        classOccupation.set(slotKey, sched.subjectId);
+
+        const matchedClassEntity = classes.find(c => isClassMatch(sched.classId, c));
+        if (matchedClassEntity) {
+          const canonKey = `${getCanonicalClassId(matchedClassEntity)}_${sched.day.toLowerCase()}_${sched.sequence}`;
+          classOccupation.set(canonKey, sched.subjectId);
+        }
+
+        const teachSlotKey = `${sched.teacherId}_${sched.day.toLowerCase()}_${sched.sequence}`;
+        teacherOccupation.set(teachSlotKey, sched.classId);
+
+        const teachDayKey = `${sched.teacherId}_${sched.day.toLowerCase()}`;
+        const currentHours = teacherDailyHours.get(teachDayKey) || 0;
+        teacherDailyHours.set(teachDayKey, currentHours + 1);
+      });
+
+      // Sort pass2BlockTasks: larger blocks first, core subjects first
+      const pass2TeacherLoads = new Map<string, number>();
+      pass2BlockTasks.forEach(bt => {
+        pass2TeacherLoads.set(bt.teacherId, (pass2TeacherLoads.get(bt.teacherId) || 0) + bt.blockSize);
+      });
+
+      pass2BlockTasks.sort((a, b) => {
+        if (a.blockSize !== b.blockSize) return b.blockSize - a.blockSize;
+        if (a.isCore !== b.isCore) return a.isCore ? -1 : 1;
+        const loadA = pass2TeacherLoads.get(a.teacherId) || 0;
+        const loadB = pass2TeacherLoads.get(b.teacherId) || 0;
+        return loadB - loadA;
+      });
+
+      // Reset solver trackers for Pass 2
+      bestAssignment = [...pass1Schedules];
+      bestSuccessCount = pass1Schedules.length;
+      bestUnassigned = [];
+      iterations = 0;
+
+      const solvePass2 = (
+        taskIdx: number, 
+        currentAssigned: Schedule[], 
+        skippedTasks: BlockTask[]
+      ): boolean => {
+        iterations++;
+
+        const successCount = currentAssigned.length;
+        if (successCount > bestSuccessCount) {
+          bestSuccessCount = successCount;
+          bestAssignment = [...currentAssigned];
+          bestUnassigned = [...skippedTasks, ...pass2BlockTasks.slice(taskIdx)];
+        }
+
+        if (taskIdx >= pass2BlockTasks.length) {
+          return true;
+        }
+
+        if (iterations > MAX_ITERATIONS) {
+          return false;
+        }
+
+        const task = pass2BlockTasks[taskIdx];
+        const placements = findValidPlacementsForBlock(task);
+        sortPlacementsForBlock(placements, task);
+
+        for (const placement of placements) {
+          applyPlacement(task, placement, currentAssigned);
+
+          if (solvePass2(taskIdx + 1, currentAssigned, skippedTasks)) {
+            return true;
+          }
+
+          removePlacement(task, placement, currentAssigned);
+        }
+
+        if (skippedTasks.length < 20) {
+          if (solvePass2(taskIdx + 1, currentAssigned, [...skippedTasks, task])) {
+            return true;
+          }
+        }
+
+        return false;
+      };
+
+      solvePass2(0, [...pass1Schedules], []);
+      pass2Schedules = bestAssignment.length > 0 ? bestAssignment : pass1Schedules;
+    }
+
     // Choose the best assignment
-    const finalSchedules = bestAssignment.length > 0 ? bestAssignment : currentList;
+    const finalSchedules = pass2Schedules;
 
     // --- STEP 5: COMPUTE PREVIEW METRICS & QUALITY SCORE ---
     const teachersMap = new Map<string, string>();
@@ -1206,11 +1548,15 @@ export const scheduleService = {
     // Calculate required JPs in curriculum matrix for this academic run
     let totalJpRequired = 0;
     classesToSchedule.forEach((cls) => {
-      const grade = cls.gradeLevel;
-      matrixList.forEach((m) => {
-        const req = grade === "VII" ? m.jp_vii : grade === "VIII" ? m.jp_viii : m.jp_ix;
-        totalJpRequired += req;
-      });
+      const normGrade = normalizeGradeLevel(cls.gradeLevel);
+      if (normGrade !== "INVALID_GRADE_LEVEL") {
+        matrixList.forEach((m) => {
+          const req = getTargetJPFromMatrix(m, normGrade);
+          if (req !== "INVALID_GRADE_LEVEL") {
+            totalJpRequired += req;
+          }
+        });
+      }
     });
 
     // Check conflicts (as double insurance)
@@ -1218,22 +1564,23 @@ export const scheduleService = {
     let classConflicts = 0;
     let teacherOverloads = 0;
 
-    const teacherDaySlotMap = new Map<string, string[]>();
+    const teacherDaySlotMap = new Map<string, { classId: string; className: string }[]>();
     const classDaySlotMap = new Map<string, string[]>();
     const teacherDailyHoursMap = new Map<string, number>();
 
     finalSchedules.forEach((s) => {
-      const key = `${s.day}_${s.sequence}`;
+      const key = `${s.day.toLowerCase()}_${s.sequence}`;
+      const canonClassId = getCanonicalClassId(s.classId, classes);
       
       // Teacher conflicts
       const teachKey = `${s.teacherId}_${key}`;
       if (!teacherDaySlotMap.has(teachKey)) {
         teacherDaySlotMap.set(teachKey, []);
       }
-      teacherDaySlotMap.get(teachKey)!.push(s.className);
+      teacherDaySlotMap.get(teachKey)!.push({ classId: canonClassId, className: s.className });
 
       // Class conflicts
-      const classKey = `${s.classId}_${key}`;
+      const classKey = `${canonClassId}_${key}`;
       if (!classDaySlotMap.has(classKey)) {
         classDaySlotMap.set(classKey, []);
       }
@@ -1244,9 +1591,11 @@ export const scheduleService = {
       teacherDailyHoursMap.set(teachDayKey, (teacherDailyHoursMap.get(teachDayKey) || 0) + 1);
     });
 
-    teacherDaySlotMap.forEach((classes, key) => {
-      if (classes.length > 1) {
-        teacherConflicts += (classes.length - 1);
+    teacherDaySlotMap.forEach((slots, key) => {
+      // Teacher conflict ONLY occurs if teaching DIFFERENT classes at the same time:
+      const distinctClasses = new Set(slots.map(s => s.classId));
+      if (distinctClasses.size > 1) {
+        teacherConflicts += (distinctClasses.size - 1);
       }
     });
 

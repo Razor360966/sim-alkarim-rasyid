@@ -1684,7 +1684,7 @@ export const MusrifJournals: React.FC = () => {
               options={[
                 { value: "", label: "-- Pilih Guru Halaqoh / Guru --" },
                 ...systemUsers
-                  .filter((u) => u.role === "musrif" || u.role === "guru" || u.role === "admin")
+                  .filter((u) => u.role === "musrif" || u.role === "guru" || u.role === "guru halaqoh" || (u.roles && u.roles.includes("guru halaqoh")) || u.role === "admin")
                   .map((u) => ({ value: u.id, label: u.name || u.email }))
               ]}
               required

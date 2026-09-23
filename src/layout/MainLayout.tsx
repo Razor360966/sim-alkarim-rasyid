@@ -174,7 +174,7 @@ export const MainLayout: React.FC = () => {
     { name: "Referensi Akademik", path: "/academic-references", icon: SettingsIcon, roles: ["admin", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Perencanaan Akademik" },
 
     // Monitoring Pembelajaran
-    { name: "Scan QR Mengajar", path: "/teaching-qr-checkin", icon: QrCode, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "tata usaha", "operator", "ketua yayasan"], group: "Monitoring Pembelajaran" },
+    { name: "Scan QR Mengajar", path: "/teaching-qr-checkin", icon: QrCode, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "musrif", "tata usaha", "operator", "ketua yayasan", "guru halaqoh"], group: "Monitoring Pembelajaran" },
     { name: "QR Simulation (Sandbox)", path: "/teaching-qr-simulation", icon: FlaskConical, roles: ["admin", "wakil kepala sekolah", "operator"], group: "Monitoring Pembelajaran" },
     { name: "Absensi Siswa / Santri", path: "/student-attendance", icon: Users, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Monitoring Pembelajaran" },
     { name: "Absensi Mengajar Guru", path: "/teacher-teaching-attendance", icon: ClipboardList, roles: ["admin", "wakil kepala sekolah", "kepala sekolah", "pimpinan", "ketua yayasan", "operator"], group: "Monitoring Pembelajaran" },
@@ -244,6 +244,9 @@ export const MainLayout: React.FC = () => {
     if (role === "tata_usaha" || role === "tata usaha") {
       return ["tata usaha", "operator"];
     }
+    if (role === "guru_halaqoh" || role === "guru halaqoh") {
+      return ["guru halaqoh"];
+    }
     return [role];
   };
 
@@ -282,9 +285,10 @@ export const MainLayout: React.FC = () => {
       { name: "Tentang Aplikasi", path: "/about", icon: Info, roles: ["musrif"], group: "Akun Saya" },
       { name: "Pengaturan Akun", path: "/change-password", icon: SettingsIcon, roles: ["musrif"], group: "Akun Saya" }
     ];
-  } else if (user.role === "guru halaqoh") {
+  } else if (activeMappedRoles.includes("guru halaqoh") || user.role === "guru halaqoh") {
     allowedMenuItems = [
       { name: "Dashboard", path: "/", icon: LayoutDashboard, roles: ["guru halaqoh"] },
+      { name: "Scan QR Halaqah", path: "/teaching-qr-checkin", icon: QrCode, roles: ["guru halaqoh"], group: "Halaqah Al-Qur'an (Tahfidz)" },
       { name: "Kelompok Halaqah", path: "/musrif-journals?tab=kelompok", icon: Users, roles: ["guru halaqoh"], group: "Halaqah Al-Qur'an (Tahfidz)" },
       { name: "Jurnal Halaqah", path: "/musrif-journals?tab=jurnal", icon: BookOpen, roles: ["guru halaqoh"], group: "Halaqah Al-Qur'an (Tahfidz)" },
       { name: "Rekap Halaqah", path: "/musrif-journals?tab=rekap", icon: Award, roles: ["guru halaqoh"], group: "Halaqah Al-Qur'an (Tahfidz)" },

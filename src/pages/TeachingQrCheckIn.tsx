@@ -19,15 +19,21 @@ import {
   Info,
   Check,
   ChevronRight,
-  Users
+  Users,
+  ShieldAlert,
+  BookOpen
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { teacherTeachingAttendanceService, getTodayDateStr } from "../services/teacherTeachingAttendance.service";
 import { academicYearService } from "../services/academicYearService";
 import { semesterService } from "../services/semester.service";
 import { classService } from "../services/classService";
+import { halaqahGroupService } from "../services/halaqahGroupService";
+import { teacherHalaqahAttendanceService } from "../services/teacherHalaqahAttendance.service";
 import { Class } from "../types";
 import { TeacherTeachingAttendance } from "../types/teacherTeachingAttendance.types";
+import { HalaqahGroup } from "../types/musrifJournal.types";
+import { TeacherHalaqahAttendance } from "../types/halaqahAttendance.types";
 import { ClassQrCardsModal } from "../components/ClassQrCardsModal";
 import { HalaqahGroupQrCardsModal } from "../components/HalaqahGroupQrCardsModal";
 
@@ -122,6 +128,30 @@ const playAudioFeedback = (type: "success_checkin" | "success_checkout" | "warni
   }
 };
 
+interface TodayHalaqahSession {
+  groupId: string;
+  groupName: string;
+  startTime: string;
+  endTime: string;
+  musrifName: string;
+  record?: TeacherHalaqahAttendance | null;
+  status: "BELUM_SCAN" | "SEDANG_MEMBIMBING" | "SELESAI";
+}
+
+const ALLOWED_SCANNER_ROLES = [
+  "admin",
+  "kepala sekolah",
+  "wakil kepala sekolah",
+  "pimpinan",
+  "operator",
+  "ketua yayasan",
+  "guru",
+  "musrif",
+  "guru halaqoh",
+  "guru_halaqoh",
+  "tata usaha"
+];
+
 export const TeachingQrCheckInPage: React.FC = () => {
   const { user } = useAuth();
   const [activeAyId, setActiveAyId] = useState<string>("");
@@ -143,7 +173,9 @@ export const TeachingQrCheckInPage: React.FC = () => {
 
   const [processing, setProcessing] = useState<boolean>(false);
   const [todaySchedules, setTodaySchedules] = useState<TeacherTeachingAttendance[]>([]);
+  const [todayHalaqahSessions, setTodayHalaqahSessions] = useState<TodayHalaqahSession[]>([]);
   const [classes, setClasses] = useState<Class[]>([]);
+  const [halaqahGroups, setHalaqahGroups] = useState<HalaqahGroup[]>([]);
   const [selectedManualClass, setSelectedManualClass] = useState<string>("");
   const [isClassQrModalOpen, setIsClassQrModalOpen] = useState<boolean>(false);
   const [isHalaqahQrModalOpen, setIsHalaqahQrModalOpen] = useState<boolean>(false);
@@ -155,6 +187,11 @@ export const TeachingQrCheckInPage: React.FC = () => {
   const isProcessingRef = useRef<boolean>(false);
   const lastScanTimeRef = useRef<number>(0);
   const lastScannedContentRef = useRef<string>("");
+
+  // Role Checks
+  const userRole = (user?.role || "").toLowerCase();
+  const userRoles = (user?.roles || []).map(r => (r || "").toLowerCase());
+  const isAuthorizedForScanner = ALLOWED_SCANNER_ROLES.some(r => userRole === r || userRoles.includes(r));
 
   // Check roles for Wakakur / Admin capabilities
   const isWakakurOrAdmin = user && (
@@ -171,6 +208,10 @@ export const TeachingQrCheckInPage: React.FC = () => {
       user.roles.includes("wakakur")
     ))
   );
+
+  const isGuruHalaqoh = userRole === "guru halaqoh" || userRole === "guru_halaqoh" || userRoles.includes("guru halaqoh") || userRoles.includes("guru_halaqoh");
+  const isRegularTeacher = userRole === "guru" || userRoles.includes("guru") || isWakakurOrAdmin;
+  const isOnlyGuruHalaqoh = isGuruHalaqoh && !isRegularTeacher;
 
   // Live Time Updates
   useEffect(() => {
@@ -195,10 +236,11 @@ export const TeachingQrCheckInPage: React.FC = () => {
   useEffect(() => {
     const initData = async () => {
       try {
-        const [ays, sems, classList] = await Promise.all([
+        const [ays, sems, classList, allHGroups] = await Promise.all([
           academicYearService.getAcademicYears(),
           semesterService.getSemesters(),
-          classService.getClasses()
+          classService.getClasses(),
+          halaqahGroupService.getGroups()
         ]);
         const activeAy = ays.find(a => a.isActive);
         const activeSem = sems.find(s => s.isActive);
@@ -208,6 +250,7 @@ export const TeachingQrCheckInPage: React.FC = () => {
         setActiveAyId(ayId);
         setActiveSemId(semId);
         setClasses(classList);
+        setHalaqahGroups(allHGroups);
 
         await fetchTodaySchedules(ayId, semId);
       } catch (err) {
@@ -221,20 +264,66 @@ export const TeachingQrCheckInPage: React.FC = () => {
   const fetchTodaySchedules = async (ayId: string, semId: string) => {
     if (!user) return;
     const todayStr = getTodayDateStr();
-    try {
-      const { items } = await teacherTeachingAttendanceService.getAttendanceForDate(todayStr, ayId, semId);
-      const teacherNameClean = (user.name || "").toLowerCase().trim();
-      const teacherId = user.teacherId || user.id;
+    const teacherNameClean = (user.name || user.displayName || "").toLowerCase().trim();
+    const teacherId = user.teacherId || user.id || user.uid;
 
-      const myItems = items.filter(item => {
-        const matchesId = (item.teacherId && item.teacherId === teacherId) || (item.substituteTeacherId && item.substituteTeacherId === teacherId);
-        const matchesName = (item.teacherName || "").toLowerCase().trim() === teacherNameClean || (item.substituteTeacherName || "").toLowerCase().trim() === teacherNameClean;
-        return matchesId || matchesName;
-      });
+    // 1. Fetch Regular KBM Schedules if user is teacher, multi-role, or admin
+    if (!isOnlyGuruHalaqoh) {
+      try {
+        const { items } = await teacherTeachingAttendanceService.getAttendanceForDate(todayStr, ayId, semId);
+        const myItems = items.filter(item => {
+          const matchesId = (item.teacherId && item.teacherId === teacherId) || (item.substituteTeacherId && item.substituteTeacherId === teacherId);
+          const matchesName = (item.teacherName || "").toLowerCase().trim() === teacherNameClean || (item.substituteTeacherName || "").toLowerCase().trim() === teacherNameClean;
+          return matchesId || matchesName;
+        });
 
-      setTodaySchedules(myItems);
-    } catch (err) {
-      console.error("Error fetching today's teacher schedules:", err);
+        setTodaySchedules(myItems);
+      } catch (err) {
+        console.error("Error fetching today's teacher schedules:", err);
+      }
+    }
+
+    // 2. Fetch Halaqah Sessions if user has Halaqah role, musrif role, or admin
+    if (isGuruHalaqoh || isWakakurOrAdmin || userRole === "musrif" || userRoles.includes("musrif")) {
+      try {
+        const now = new Date();
+        const currentDay = now.toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta", weekday: "long" });
+        const [allGroups, halAttendances, agendaTime] = await Promise.all([
+          halaqahGroupService.getGroups(),
+          teacherHalaqahAttendanceService.getAttendanceForDate(todayStr, ayId, semId),
+          teacherHalaqahAttendanceService.getHalaqahAgendaTimeForDay(currentDay)
+        ]);
+
+        const myGroups = allGroups.filter(g => {
+          if (isWakakurOrAdmin) return true;
+          const matchesMusrifId = g.musrifId && (g.musrifId === teacherId || g.musrifId === user.id || g.musrifId === user.uid);
+          const matchesMusrifName = (g.musrifName || "").toLowerCase().trim() === teacherNameClean;
+          return matchesMusrifId || matchesMusrifName;
+        });
+
+        const sessions: TodayHalaqahSession[] = myGroups.map(group => {
+          const rec = halAttendances.find(a => a.groupId === group.id);
+          let status: "BELUM_SCAN" | "SEDANG_MEMBIMBING" | "SELESAI" = "BELUM_SCAN";
+          if (rec?.checkOutTime) {
+            status = "SELESAI";
+          } else if (rec?.checkInTime) {
+            status = "SEDANG_MEMBIMBING";
+          }
+          return {
+            groupId: group.id,
+            groupName: group.groupName,
+            startTime: agendaTime.startTime,
+            endTime: agendaTime.endTime,
+            musrifName: group.musrifName || user.name || "Ustadz Pembimbing",
+            record: rec || null,
+            status
+          };
+        });
+
+        setTodayHalaqahSessions(sessions);
+      } catch (hErr) {
+        console.warn("Error fetching today's halaqah sessions:", hErr);
+      }
     }
   };
 
@@ -272,7 +361,8 @@ export const TeachingQrCheckInPage: React.FC = () => {
           uid: userUid,
           name: userName,
           teacherId: user.teacherId || "",
-          role: user.role || ""
+          role: user.role || "",
+          roles: user.roles || []
         },
         academicYearId: activeAyId,
         semesterId: activeSemId
@@ -380,11 +470,26 @@ export const TeachingQrCheckInPage: React.FC = () => {
       setIsScanning(false);
       setScanResult({
         type: "error",
-        message: "Gagal mengakses kamera. Pastikan izin kamera telah diberikan atau gunakan pilihan simulasi kelas di bawah."
+        message: "Gagal mengakses kamera. Pastikan izin kamera telah diberikan atau gunakan pilihan simulasi di bawah."
       });
       isProcessingRef.current = false;
     }
   };
+
+  if (user && !isAuthorizedForScanner) {
+    return (
+      <div className="min-h-[50vh] flex flex-col items-center justify-center p-6 text-center space-y-4">
+        <ShieldAlert className="w-16 h-16 text-rose-500" />
+        <h2 className="text-xl font-bold text-slate-900 dark:text-white">Akses Dibatasi</h2>
+        <p className="text-sm text-slate-600 dark:text-zinc-400 max-w-md">
+          Role akun Anda ({user.role || "Tamu"}) tidak memiliki otorisasi untuk mengakses modul Scan QR Absensi. Silakan hubungi Administrator jika Anda memerlukan akses.
+        </p>
+        <Link to="/" className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-md">
+          Kembali ke Dashboard
+        </Link>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 pb-12">
@@ -397,17 +502,19 @@ export const TeachingQrCheckInPage: React.FC = () => {
             <div className="flex items-center gap-2">
               <span className="px-3 py-1 bg-indigo-500/30 text-indigo-200 border border-indigo-400/30 rounded-full text-xs font-black tracking-wider uppercase flex items-center gap-1.5">
                 <QrCode className="w-3.5 h-3.5 text-indigo-400" />
-                Teaching Check-in Modul
+                {isOnlyGuruHalaqoh ? "Halaqah Check-in Modul" : "Teaching Check-in Modul"}
               </span>
               <span className="text-xs text-slate-300 font-medium">
-                Mandiri Guru
+                {isOnlyGuruHalaqoh ? "Mandiri Pembimbing" : "Mandiri Guru"}
               </span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
-              Scan QR Check-In Mengajar
+              {isOnlyGuruHalaqoh ? "Scan QR Presensi Halaqah" : "Scan QR Check-In Mengajar"}
             </h1>
             <p className="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed">
-              Scan QR Code statis kelas yang terpasang di ruang kelas/meja guru untuk konfirmasi <strong>Check In</strong> saat mulai mengajar dan <strong>Check Out</strong> saat pembelajaran selesai.
+              {isOnlyGuruHalaqoh
+                ? "Scan QR Code kartu kelompok Halaqah untuk konfirmasi Check In saat mulai membimbing dan Check Out saat sesi halaqah selesai."
+                : "Scan QR Code statis kelas yang terpasang di ruang kelas/meja guru untuk konfirmasi Check In saat mulai mengajar dan Check Out saat pembelajaran selesai."}
             </p>
           </div>
 
@@ -463,7 +570,9 @@ export const TeachingQrCheckInPage: React.FC = () => {
                 </div>
                 <div>
                   <h2 className="text-base font-bold text-slate-900 dark:text-zinc-100">Pemindai QR Code Kamera</h2>
-                  <p className="text-xs text-slate-500 dark:text-zinc-400">Arahkan kamera HP / Laptop ke stiker QR kelas</p>
+                  <p className="text-xs text-slate-500 dark:text-zinc-400">
+                    {isOnlyGuruHalaqoh ? "Arahkan kamera ke kartu QR kelompok Halaqah" : "Arahkan kamera ke stiker QR kelas atau kartu Halaqah"}
+                  </p>
                 </div>
               </div>
 
@@ -501,7 +610,7 @@ export const TeachingQrCheckInPage: React.FC = () => {
                   <div>
                     <h3 className="text-sm font-bold text-white">Kamera Belum Aktif</h3>
                     <p className="text-xs text-slate-400 mt-1 max-w-xs mx-auto">
-                      Klik tombol <strong>"Buka Kamera Scan"</strong> untuk memulai pemindaian QR Code kelas.
+                      Klik tombol <strong>"Buka Kamera Scan"</strong> untuk memulai pemindaian QR Code.
                     </p>
                   </div>
                   <button
@@ -521,7 +630,7 @@ export const TeachingQrCheckInPage: React.FC = () => {
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-slate-700 dark:text-zinc-300 flex items-center gap-1.5">
                   <Sparkles className="w-4 h-4 text-amber-500" />
-                  Simulasi Scan QR Kelas (Pengujian / Alt):
+                  Simulasi Scan QR ({isOnlyGuruHalaqoh ? "Kelompok Halaqah" : "Kelas / Halaqah"}):
                 </span>
                 <span className="text-[10px] text-slate-400">Gunakan jika tanpa kamera</span>
               </div>
@@ -531,20 +640,40 @@ export const TeachingQrCheckInPage: React.FC = () => {
                   onChange={(e) => setSelectedManualClass(e.target.value)}
                   className="flex-1 px-3 py-2 bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-xl text-xs font-medium text-slate-800 dark:text-zinc-200 shadow-xs"
                 >
-                  <option value="">-- Pilih Kelas untuk Simulasi QR --</option>
-                  {classes.map(c => (
-                    <option
-                      key={c.id || c.name}
-                      value={JSON.stringify({
-                        type: "SCHOOL_CLASS_QR",
-                        classId: c.id,
-                        className: c.name,
-                        roomCode: c.roomCode || ""
-                      })}
-                    >
-                      {c.name} {c.roomCode ? `(${c.roomCode})` : ""}
-                    </option>
-                  ))}
+                  <option value="">-- Pilih Target Simulasi QR --</option>
+                  {halaqahGroups.length > 0 && (
+                    <optgroup label="Kelompok Halaqah">
+                      {halaqahGroups.map(g => (
+                        <option
+                          key={g.id}
+                          value={JSON.stringify({
+                            type: "halaqah",
+                            groupId: g.id,
+                            groupName: g.groupName
+                          })}
+                        >
+                          Halaqah: {g.groupName} ({g.musrifName || "Tanpa Pembimbing"})
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {!isOnlyGuruHalaqoh && classes.length > 0 && (
+                    <optgroup label="Kelas KBM Reguler">
+                      {classes.map(c => (
+                        <option
+                          key={c.id || c.name}
+                          value={JSON.stringify({
+                            type: "SCHOOL_CLASS_QR",
+                            classId: c.id,
+                            className: c.name,
+                            roomCode: c.roomCode || ""
+                          })}
+                        >
+                          Kelas: {c.name} {c.roomCode ? `(${c.roomCode})` : ""}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
                 <button
                   type="button"
@@ -664,127 +793,259 @@ export const TeachingQrCheckInPage: React.FC = () => {
             </div>
 
             <div className="p-3.5 bg-slate-50 dark:bg-zinc-850 rounded-2xl border border-slate-100 dark:border-zinc-800 text-xs space-y-2">
-              <div className="flex justify-between items-center text-slate-600 dark:text-zinc-400">
-                <span>Jadwal Mengajar Hari Ini ({currentDayName}):</span>
-                <strong className="text-slate-900 dark:text-zinc-100 font-extrabold">{todaySchedules.length} Sesi</strong>
-              </div>
+              {(isGuruHalaqoh || todayHalaqahSessions.length > 0) && (
+                <div className="flex justify-between items-center text-slate-600 dark:text-zinc-400">
+                  <span>Kelompok Halaqah Hari Ini ({currentDayName}):</span>
+                  <strong className="text-teal-600 dark:text-teal-400 font-extrabold">{todayHalaqahSessions.length} Kelompok</strong>
+                </div>
+              )}
+              {!isOnlyGuruHalaqoh && (
+                <div className="flex justify-between items-center text-slate-600 dark:text-zinc-400">
+                  <span>Jadwal KBM Hari Ini ({currentDayName}):</span>
+                  <strong className="text-indigo-600 dark:text-indigo-400 font-extrabold">{todaySchedules.length} Sesi</strong>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Today's Schedules List */}
-          <div className="bg-white dark:bg-zinc-900 rounded-3xl p-6 shadow-md border border-slate-200 dark:border-zinc-800 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-zinc-800">
-              <h3 className="text-sm font-bold text-slate-900 dark:text-zinc-100 flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-indigo-600" />
-                Jadwal & Status Check-In Hari Ini
-              </h3>
-              <button
-                onClick={() => fetchTodaySchedules(activeAyId, activeSemId)}
-                className="p-1.5 text-slate-400 hover:text-indigo-600 rounded-lg hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors"
-                title="Refresh Jadwal"
-              >
-                <RefreshCw className="w-4 h-4" />
-              </button>
-            </div>
-
-            {todaySchedules.length === 0 ? (
-              <div className="p-8 text-center text-xs text-slate-500 dark:text-zinc-400">
-                Anda tidak memiliki jadwal mengajar terdaftar pada hari ini ({currentDayName}).
+          {/* Today's Halaqah Sessions List */}
+          {(isGuruHalaqoh || todayHalaqahSessions.length > 0) && (
+            <div className="bg-white dark:bg-zinc-900 rounded-3xl p-6 shadow-md border border-slate-200 dark:border-zinc-800 space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-zinc-800">
+                <h3 className="text-sm font-bold text-slate-900 dark:text-zinc-100 flex items-center gap-2">
+                  <BookOpen className="w-4 h-4 text-teal-600" />
+                  Jadwal Halaqah Hari Ini
+                </h3>
+                <button
+                  onClick={() => fetchTodaySchedules(activeAyId, activeSemId)}
+                  className="p-1.5 text-slate-400 hover:text-teal-600 rounded-lg hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors"
+                  title="Refresh Jadwal Halaqah"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </button>
               </div>
-            ) : (
-              <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
-                {todaySchedules.map((sch, idx) => {
-                  const hasCheckedOut = !!sch.checkOutTime;
-                  const hasCheckedIn = !!sch.checkInTime;
 
-                  return (
-                    <div
-                      key={sch.scheduleId || idx}
-                      className={`p-4 rounded-2xl border transition-all text-xs space-y-2.5 ${
-                        hasCheckedOut
-                          ? "bg-slate-50 dark:bg-zinc-850/60 border-slate-200 dark:border-zinc-800"
-                          : hasCheckedIn
-                            ? "bg-emerald-50/50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60"
-                            : "bg-white dark:bg-zinc-850 border-slate-200 dark:border-zinc-750"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="px-2.5 py-0.5 bg-slate-900 text-white dark:bg-zinc-100 dark:text-slate-900 text-[10px] font-black rounded-lg uppercase">
-                            Kelas {sch.className}
+              {todayHalaqahSessions.length === 0 ? (
+                <div className="p-8 text-center text-xs text-slate-500 dark:text-zinc-400">
+                  Anda tidak memiliki kelompok Halaqah yang ditugaskan pada hari ini ({currentDayName}).
+                </div>
+              ) : (
+                <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
+                  {todayHalaqahSessions.map((session, idx) => {
+                    const isCompleted = session.status === "SELESAI";
+                    const isOngoing = session.status === "SEDANG_MEMBIMBING";
+
+                    return (
+                      <div
+                        key={session.groupId || idx}
+                        className={`p-4 rounded-2xl border transition-all text-xs space-y-2.5 ${
+                          isCompleted
+                            ? "bg-slate-50 dark:bg-zinc-850/60 border-slate-200 dark:border-zinc-800"
+                            : isOngoing
+                              ? "bg-emerald-50/50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60"
+                              : "bg-white dark:bg-zinc-850 border-slate-200 dark:border-zinc-750"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="px-2.5 py-0.5 bg-teal-900 text-white dark:bg-teal-700 text-[10px] font-black rounded-lg uppercase">
+                              {session.groupName}
+                            </span>
+                            <span className="font-bold text-teal-600 dark:text-teal-400">
+                              {session.startTime} - {session.endTime}
+                            </span>
+                          </div>
+                          <span className={`px-2.5 py-0.5 text-[10px] font-black rounded-full uppercase ${
+                            isCompleted
+                              ? "bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 border border-blue-300"
+                              : isOngoing
+                                ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300 animate-pulse"
+                                : "bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 border border-slate-300"
+                          }`}>
+                            {isCompleted
+                              ? "SESI SELESAI"
+                              : isOngoing
+                                ? "SEDANG MEMBIMBING"
+                                : "BELUM SCAN"}
                           </span>
-                          <span className="font-bold text-indigo-600 dark:text-indigo-400">{sch.jp}</span>
                         </div>
-                        <span className={`px-2.5 py-0.5 text-[10px] font-black rounded-full uppercase ${
+
+                        <div className="font-extrabold text-slate-800 dark:text-zinc-200 text-sm">
+                          Halaqah Qur'an
+                        </div>
+                        <div className="text-[11px] text-slate-500 dark:text-zinc-400">
+                          Pembimbing: <strong className="text-slate-700 dark:text-zinc-200">{session.musrifName}</strong>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2 text-[11px] pt-2 border-t border-slate-100 dark:border-zinc-800 text-slate-600 dark:text-zinc-400">
+                          <div>
+                            <span className="block text-[9px] font-bold text-slate-400 uppercase">Jam Check-In</span>
+                            <span className="font-mono font-bold text-slate-800 dark:text-zinc-200">
+                              {session.record?.checkInTime ? `${session.record.checkInTime} WIB` : "-"}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="block text-[9px] font-bold text-slate-400 uppercase">Jam Check-Out</span>
+                            <span className="font-mono font-bold text-slate-800 dark:text-zinc-200">
+                              {session.record?.checkOutTime
+                                ? `${session.record.checkOutTime} WIB`
+                                : session.record?.checkInTime
+                                ? "Belum dilakukan"
+                                : "-"}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="block text-[9px] font-bold text-slate-400 uppercase">Durasi Membimbing</span>
+                            <span className="font-bold text-teal-600 dark:text-teal-400">
+                              {session.record?.duration && session.record?.checkOutTime
+                                ? `${session.record.duration} Menit`
+                                : session.record?.checkInTime
+                                ? "Sedang Berlangsung"
+                                : "-"}
+                            </span>
+                          </div>
+                        </div>
+
+                        {isOngoing && (
+                          <div className="p-2 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/40 rounded-xl text-[10px] font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
+                            <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                            <span>Menunggu waktu Check-Out... (Pindai QR setelah Halaqah selesai)</span>
+                          </div>
+                        )}
+
+                        <div className="pt-1 text-right">
+                          <Link
+                            to={`/musrif-journals?tab=jurnal&groupId=${session.groupId}`}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-teal-800 bg-teal-100 hover:bg-teal-200 dark:bg-teal-950 dark:text-teal-300 rounded-lg transition-colors"
+                          >
+                            <BookOpen className="w-3.5 h-3.5" />
+                            Jurnal Halaqah Kelompok Ini
+                          </Link>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Today's KBM Schedules List */}
+          {!isOnlyGuruHalaqoh && (
+            <div className="bg-white dark:bg-zinc-900 rounded-3xl p-6 shadow-md border border-slate-200 dark:border-zinc-800 space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-zinc-800">
+                <h3 className="text-sm font-bold text-slate-900 dark:text-zinc-100 flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-indigo-600" />
+                  Jadwal & Status Check-In KBM Hari Ini
+                </h3>
+                <button
+                  onClick={() => fetchTodaySchedules(activeAyId, activeSemId)}
+                  className="p-1.5 text-slate-400 hover:text-indigo-600 rounded-lg hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors"
+                  title="Refresh Jadwal KBM"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </button>
+              </div>
+
+              {todaySchedules.length === 0 ? (
+                <div className="p-8 text-center text-xs text-slate-500 dark:text-zinc-400">
+                  Anda tidak memiliki jadwal mengajar terdaftar pada hari ini ({currentDayName}).
+                </div>
+              ) : (
+                <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
+                  {todaySchedules.map((sch, idx) => {
+                    const hasCheckedOut = !!sch.checkOutTime;
+                    const hasCheckedIn = !!sch.checkInTime;
+
+                    return (
+                      <div
+                        key={sch.scheduleId || idx}
+                        className={`p-4 rounded-2xl border transition-all text-xs space-y-2.5 ${
                           hasCheckedOut
-                            ? "bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 border border-blue-300"
+                            ? "bg-slate-50 dark:bg-zinc-850/60 border-slate-200 dark:border-zinc-800"
                             : hasCheckedIn
-                              ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300 animate-pulse"
-                              : "bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 border border-slate-300"
-                        }`}>
-                          {hasCheckedOut
-                            ? "SESI SELESAI"
-                            : hasCheckedIn
-                              ? "SEDANG MENGAJAR"
-                              : "BELUM CHECK-IN"}
-                        </span>
-                      </div>
-
-                      <div className="font-extrabold text-slate-800 dark:text-zinc-200 text-sm">
-                        {sch.subjectName}
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-2 text-[11px] pt-2 border-t border-slate-100 dark:border-zinc-800 text-slate-600 dark:text-zinc-400">
-                        <div>
-                          <span className="block text-[9px] font-bold text-slate-400 uppercase">Jam Check-In</span>
-                          <span className="font-mono font-bold text-slate-800 dark:text-zinc-200">
-                            {sch.checkInTime ? `${sch.checkInTime} WIB` : "-"}
+                              ? "bg-emerald-50/50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60"
+                              : "bg-white dark:bg-zinc-850 border-slate-200 dark:border-zinc-750"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="px-2.5 py-0.5 bg-slate-900 text-white dark:bg-zinc-100 dark:text-slate-900 text-[10px] font-black rounded-lg uppercase">
+                              Kelas {sch.className}
+                            </span>
+                            <span className="font-bold text-indigo-600 dark:text-indigo-400">{sch.jp}</span>
+                          </div>
+                          <span className={`px-2.5 py-0.5 text-[10px] font-black rounded-full uppercase ${
+                            hasCheckedOut
+                              ? "bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 border border-blue-300"
+                              : hasCheckedIn
+                                ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300 animate-pulse"
+                                : "bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 border border-slate-300"
+                          }`}>
+                            {hasCheckedOut
+                              ? "SESI SELESAI"
+                              : hasCheckedIn
+                                ? "SEDANG MENGAJAR"
+                                : "BELUM CHECK-IN"}
                           </span>
                         </div>
-                        <div>
-                          <span className="block text-[9px] font-bold text-slate-400 uppercase">Jam Check-Out</span>
-                          <span className="font-mono font-bold text-slate-800 dark:text-zinc-200">
-                            {sch.checkOutTime
-                              ? `${sch.checkOutTime} WIB`
-                              : sch.checkInTime
-                              ? "Belum dilakukan"
-                              : "-"}
-                          </span>
+
+                        <div className="font-extrabold text-slate-800 dark:text-zinc-200 text-sm">
+                          {sch.subjectName}
                         </div>
-                        <div>
-                          <span className="block text-[9px] font-bold text-slate-400 uppercase">Durasi Mengajar</span>
-                          <span className="font-bold text-indigo-600 dark:text-indigo-400">
-                            {sch.teachingDurationMinutes && sch.checkOutTime
-                              ? `${sch.teachingDurationMinutes} Menit`
-                              : sch.checkInTime
-                              ? "Sedang Mengajar"
-                              : "-"}
-                          </span>
+
+                        <div className="grid grid-cols-3 gap-2 text-[11px] pt-2 border-t border-slate-100 dark:border-zinc-800 text-slate-600 dark:text-zinc-400">
+                          <div>
+                            <span className="block text-[9px] font-bold text-slate-400 uppercase">Jam Check-In</span>
+                            <span className="font-mono font-bold text-slate-800 dark:text-zinc-200">
+                              {sch.checkInTime ? `${sch.checkInTime} WIB` : "-"}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="block text-[9px] font-bold text-slate-400 uppercase">Jam Check-Out</span>
+                            <span className="font-mono font-bold text-slate-800 dark:text-zinc-200">
+                              {sch.checkOutTime
+                                ? `${sch.checkOutTime} WIB`
+                                : sch.checkInTime
+                                ? "Belum dilakukan"
+                                : "-"}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="block text-[9px] font-bold text-slate-400 uppercase">Durasi Mengajar</span>
+                            <span className="font-bold text-indigo-600 dark:text-indigo-400">
+                              {sch.teachingDurationMinutes && sch.checkOutTime
+                                ? `${sch.teachingDurationMinutes} Menit`
+                                : sch.checkInTime
+                                ? "Sedang Mengajar"
+                                : "-"}
+                            </span>
+                          </div>
+                        </div>
+
+                        {hasCheckedIn && !hasCheckedOut && (
+                          <div className="p-2 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/40 rounded-xl text-[10px] font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
+                            <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                            <span>Menunggu waktu Check-out... (Pindai QR setelah KBM selesai)</span>
+                          </div>
+                        )}
+
+                        <div className="pt-1 text-right">
+                          <Link
+                            to={`/student-attendance`}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 rounded-lg transition-colors"
+                          >
+                            <Users className="w-3.5 h-3.5" />
+                            Absensi Siswa Kelas Ini
+                          </Link>
                         </div>
                       </div>
-
-                      {hasCheckedIn && !hasCheckedOut && (
-                        <div className="p-2 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/40 rounded-xl text-[10px] font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
-                          <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                          <span>Menunggu waktu Check-out... (Pindai QR setelah KBM selesai)</span>
-                        </div>
-                      )}
-
-                      <div className="pt-1 text-right">
-                        <Link
-                          to={`/student-attendance`}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 rounded-lg transition-colors"
-                        >
-                          <Users className="w-3.5 h-3.5" />
-                          Absensi Siswa Kelas Ini
-                        </Link>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

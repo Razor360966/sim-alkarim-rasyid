@@ -25,6 +25,7 @@ export const ROLE_PRIORITIES = [
   "kepala sekolah",
   "wakil kepala sekolah",
   "guru",
+  "guru halaqoh",
   "musrif",
   "tata usaha",
   "operator",

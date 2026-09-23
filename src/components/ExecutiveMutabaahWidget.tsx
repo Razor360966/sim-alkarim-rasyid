@@ -58,7 +58,7 @@ export const ExecutiveMutabaahWidget: React.FC = () => {
         </div>
 
         {/* CLICKABLE METRIC CARDS */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 text-xs">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
           {/* Total Guru */}
           <div
             onClick={() => handleOpenDrilldown("ALL")}
@@ -68,7 +68,7 @@ export const ExecutiveMutabaahWidget: React.FC = () => {
             <div className="text-2xl font-black text-white mt-1">
               {isLoading ? "..." : summary?.totalTeachers ?? 0}
             </div>
-            <span className="text-[9px] text-slate-400 mt-0.5 block">Asatidz/ah Aktif</span>
+            <span className="text-[9px] text-slate-400 mt-0.5 block">Master Guru Aktif</span>
           </div>
 
           {/* Sudah Mengisi */}
@@ -101,7 +101,7 @@ export const ExecutiveMutabaahWidget: React.FC = () => {
 
           {/* Persentase Keterisian */}
           <div className="bg-indigo-950/40 border border-indigo-500/30 p-3.5 rounded-2xl">
-            <span className="text-[10px] text-indigo-300 uppercase font-bold block">Keterisian Hari Ini</span>
+            <span className="text-[10px] text-indigo-300 uppercase font-bold block">Keterisian Periode</span>
             <div className="text-2xl font-black text-indigo-200 mt-1">
               {isLoading ? "..." : `${summary?.fillRatePercentage ?? 0}%`}
             </div>
@@ -113,10 +113,19 @@ export const ExecutiveMutabaahWidget: React.FC = () => {
             </div>
           </div>
 
+          {/* Rata-rata Skor Mutabaah */}
+          <div className="bg-teal-950/40 border border-teal-500/30 p-3.5 rounded-2xl">
+            <span className="text-[10px] text-teal-300 uppercase font-bold block">Rata-rata Skor</span>
+            <div className="text-2xl font-black text-teal-200 mt-1">
+              {isLoading ? "..." : `${summary?.averageScorePercentage ?? 0}%`}
+            </div>
+            <span className="text-[9px] text-teal-400 mt-0.5 block">Form Terisi</span>
+          </div>
+
           {/* Terlambat */}
           <div
             onClick={() => handleOpenDrilldown("Terlambat")}
-            className="bg-purple-950/40 border border-purple-500/30 p-3.5 rounded-2xl cursor-pointer hover:bg-purple-900/50 transition-all group col-span-2 md:col-span-1"
+            className="bg-purple-950/40 border border-purple-500/30 p-3.5 rounded-2xl cursor-pointer hover:bg-purple-900/50 transition-all group"
           >
             <span className="text-[10px] text-purple-300 uppercase font-bold flex items-center gap-1">
               <Clock className="w-3 h-3 text-purple-400" /> Terlambat

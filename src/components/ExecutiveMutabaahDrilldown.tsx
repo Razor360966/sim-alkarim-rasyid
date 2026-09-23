@@ -475,23 +475,27 @@ export const ExecutiveMutabaahDrilldown: React.FC<ExecutiveMutabaahDrilldownProp
 
       {/* TARGET METRIC TRANSPARENCY BANNER */}
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 bg-slate-100 dark:bg-zinc-850 rounded-2xl text-xs border border-slate-200 dark:border-zinc-800 text-slate-600 dark:text-slate-300">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
           <span>
             <strong>Master Guru Aktif:</strong> {summary?.totalTeachers ?? 0} Asatidz/ah
           </span>
           <span className="text-slate-300 dark:text-zinc-700">|</span>
           <span>
-            <strong>Target Evaluasi Mutabaah:</strong> {summary?.targetMutabaahCount ?? 0} SDM Wajib
+            <strong>Target Wajib Mutabaah:</strong> {summary?.targetMutabaahCount ?? 0} SDM
+          </span>
+          <span className="text-slate-300 dark:text-zinc-700">|</span>
+          <span>
+            <strong>Rata-rata Skor Pengisian:</strong> {summary?.averageScorePercentage ?? 0}%
           </span>
         </div>
-        <div className="text-[11px] text-slate-400 dark:text-zinc-400 italic">
-          *Akun non-evaluasi (Ketua Yayasan, Super Admin) dikecualikan dari target dan denominator.
+        <div className="text-[11px] text-slate-500 dark:text-zinc-400">
+          💡 <strong>Denominator Adil:</strong> Keterisian = ({summary?.filledCount ?? 0}/{summary?.totalExpectedSubmissions ?? 0} form target) | Skor = rata-rata dari {summary?.filledCount ?? 0} form masuk. Akun Yayasan/Admin dikecualikan.
         </div>
       </div>
 
       {/* MONITORING KEPATUHAN SUMMARY CARDS (CLICKABLE DRILLDOWN) */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3">
         {/* Total Guru */}
         <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-200 dark:border-zinc-800 p-4 shadow-2xs space-y-1">
           <span className="text-[10px] font-black uppercase text-slate-400">Jumlah Guru</span>
@@ -532,9 +536,20 @@ export const ExecutiveMutabaahDrilldown: React.FC<ExecutiveMutabaahDrilldownProp
             {summary?.fillRatePercentage ?? 0}%
           </div>
           <p className="text-[10px] text-indigo-100">
-            {summary?.targetMutabaahCount !== undefined
-              ? `${summary.targetMutabaahCount} Target Wajib`
-              : "Rata-rata Periode"}
+            {summary?.totalExpectedSubmissions
+              ? `${summary.filledCount}/${summary.totalExpectedSubmissions} Wajib`
+              : `${summary?.targetMutabaahCount ?? 0} Target Wajib`}
+          </p>
+        </div>
+
+        {/* Rata-rata Skor Mutabaah */}
+        <div className="bg-gradient-to-br from-emerald-600 to-teal-700 text-white p-4 rounded-2xl shadow-sm space-y-1">
+          <span className="text-[10px] font-black uppercase text-emerald-100">Rata-rata Skor</span>
+          <div className="text-2xl font-black">
+            {summary?.averageScorePercentage ?? 0}%
+          </div>
+          <p className="text-[10px] text-emerald-100">
+            Kualitas Form Terisi
           </p>
         </div>
 

@@ -270,18 +270,17 @@ export const teacherHalaqahAttendanceService = {
         }
       }
 
-      // Step 2. Verify Master Group Halaqah (All 4 groups fetched from SSOT)
+      // Step 2. Verify Master Group Halaqah (All groups fetched strictly from SSOT in Firestore)
       const groups = await halaqahGroupService.getGroups();
       const matchedGroup = groups.find(g => 
         g.id.toLowerCase() === targetGroupId.toLowerCase() ||
-        (g.groupName && g.groupName.toLowerCase() === targetGroupId.toLowerCase()) ||
-        (parsedJson?.groupName && g.groupName.toLowerCase() === parsedJson.groupName.toLowerCase())
+        (g.groupName && g.groupName.toLowerCase() === targetGroupId.toLowerCase())
       );
 
       if (!matchedGroup) {
         return {
           success: false,
-          message: `QR Code Halaqah tidak mengenali Group ID '${targetGroupId}'. Pastikan QR yang dipindai adalah QR Group Halaqah yang sah.`
+          message: "QR Code tidak dikenali atau bukan merupakan QR Group Halaqah yang sah."
         };
       }
 
@@ -307,33 +306,53 @@ export const teacherHalaqahAttendanceService = {
       const scheduledStartTime = agendaTime.startTime;
       const scheduledEndTime = agendaTime.endTime;
 
-      // Step 5. Validate Teacher Assignment
+      // Step 5. Validate Teacher Assignment & Role Authorization
+      // Strict: Never trust teacherId/musrifId/role from QR payload. Use only authenticated user & Firestore master group.
       const userTeacherId = params.currentUser.teacherId || params.currentUser.id || params.currentUser.uid || "";
       const userNameNorm = (params.currentUser.name || "").toLowerCase().trim();
 
       const groupMusrifId = matchedGroup.musrifId || "";
       const groupMusrifName = (matchedGroup.musrifName || "").toLowerCase().trim();
 
+      const userRole = (params.currentUser.role || "").toLowerCase();
+      const userRoles = (params.currentUser.roles || []).map(r => (r || "").toLowerCase());
+
+      const isAuthorizedRole = 
+        userRole === "guru halaqoh" ||
+        userRole === "guru_halaqoh" ||
+        userRole === "musrif" ||
+        userRole === "guru" ||
+        userRole === "admin" ||
+        userRole === "wakil kepala sekolah" ||
+        userRole === "kepala sekolah" ||
+        userRole === "pimpinan" ||
+        userRoles.includes("guru halaqoh") ||
+        userRoles.includes("guru_halaqoh") ||
+        userRoles.includes("musrif") ||
+        userRoles.includes("guru") ||
+        userRoles.includes("admin") ||
+        userRoles.includes("wakil kepala sekolah") ||
+        userRoles.includes("kepala sekolah") ||
+        userRoles.includes("pimpinan");
+
       const isAdminOrPimpinan = 
-        params.currentUser.role === "admin" ||
-        params.currentUser.role === "wakil kepala sekolah" ||
-        params.currentUser.role === "kepala sekolah" ||
-        params.currentUser.role === "pimpinan" ||
-        (params.currentUser.roles && (
-          params.currentUser.roles.includes("admin") ||
-          params.currentUser.roles.includes("wakil kepala sekolah") ||
-          params.currentUser.roles.includes("wakakur")
-        ));
+        userRole === "admin" ||
+        userRole === "wakil kepala sekolah" ||
+        userRole === "kepala sekolah" ||
+        userRole === "pimpinan" ||
+        userRoles.includes("admin") ||
+        userRoles.includes("wakil kepala sekolah") ||
+        userRoles.includes("wakakur");
 
       const isTeacherAssigned = 
-        groupMusrifId === userTeacherId ||
+        (groupMusrifId && (groupMusrifId === userTeacherId || groupMusrifId === params.currentUser.id || groupMusrifId === params.currentUser.uid)) ||
         (groupMusrifName && groupMusrifName === userNameNorm) ||
         isAdminOrPimpinan;
 
-      if (!isTeacherAssigned) {
+      if (!isAuthorizedRole || !isTeacherAssigned) {
         return {
           success: false,
-          message: `Ditolak: Anda (${params.currentUser.name}) bukan Guru Pembimbing resmi untuk ${groupName}.\n\nPembimbing Resmi: ${matchedGroup.musrifName || "Ustadz Pembimbing"}.`
+          message: "Anda tidak ditugaskan sebagai pembimbing pada kelompok Halaqah ini."
         };
       }
 
@@ -362,7 +381,7 @@ export const teacherHalaqahAttendanceService = {
             isAlreadyCompleted: true,
             groupId,
             groupName,
-            message: `Absensi Halaqah hari ini sudah selesai.\n\nCheck In:\n${existingRecord.checkInTime} WIB\n\nCheck Out:\n${existingRecord.checkOutTime} WIB`
+            message: `Sesi Halaqah ini sudah selesai. Anda sudah melakukan Check-Out sebelumnya pada pukul ${existingRecord.checkOutTime} WIB.`
           };
         }
 
@@ -388,7 +407,7 @@ export const teacherHalaqahAttendanceService = {
             isAlreadyCompleted: false,
             groupId,
             groupName,
-            message: `Scan terdeteksi kembali.\nCheck-in Anda sudah tercatat pukul ${formattedCheckIn}.\nCheck-out dilakukan setelah pembelajaran selesai.`,
+            message: `Anda sudah melakukan check-in untuk sesi ini (pukul ${formattedCheckIn} WIB). Check-out dilakukan setelah halaqah selesai.`,
             record: existingRecord
           };
         }
