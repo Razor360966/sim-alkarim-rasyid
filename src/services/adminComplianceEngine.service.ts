@@ -510,7 +510,7 @@ export const adminComplianceEngineService = {
       const jTarget = Math.max(0, comparison.expectedCount);
       const jActual = Math.min(comparison.actualCount, jTarget);
       const jMissing = comparison.missingCount;
-      const jPct = jTarget > 0 ? Math.min(100, Math.round((jActual / jTarget) * 100)) : 100;
+      const jPct = jTarget > 0 ? Math.min(100, Math.round((jActual / jTarget) * 100)) : 0;
 
       let jStatus: ComponentCompliance["status"] = "Sangat Baik";
       if (jPct < 60) jStatus = "Pembinaan Khusus";
@@ -635,7 +635,7 @@ export const adminComplianceEngineService = {
         // Jurnal Kelengkapan Score
         const jurnalKelengkapanScore = expectedSessionsCount > 0 
           ? Math.min(100, Math.round((actualJournalsCount / expectedSessionsCount) * 100))
-          : (teacherJournals.length > 0 ? 100 : 80);
+          : (teacherJournals.length > 0 ? 100 : 0);
 
         // Jurnal Ketepatan Score (Tepat Waktu based on QR check-out)
         let jurnalKetepatanScore: number | null = null;
@@ -668,10 +668,11 @@ export const adminComplianceEngineService = {
 
         // Disiplin Mengajar Metrics
         const discMetric = discMap.get(teacher.id) || {};
-        const disciplineScore = discMetric.disciplineScore ?? 100;
-        const attendanceRate = discMetric.attendancePercentage ?? 100;
-        const onTimeCheckInRate = discMetric.checkInOnTimePercentage ?? 100;
-        const onTimeCheckOutRate = discMetric.checkOutOnTimePercentage ?? 100;
+        const hasScheduled = expectedSessionsCount > 0 || ((discMetric.totalJpScheduled ?? 0) > 0);
+        const disciplineScore = hasScheduled ? (discMetric.disciplineScore ?? 0) : 0;
+        const attendanceRate = hasScheduled ? (discMetric.attendancePercentage ?? 0) : 0;
+        const onTimeCheckInRate = hasScheduled ? (discMetric.checkInOnTimePercentage ?? 0) : 0;
+        const onTimeCheckOutRate = hasScheduled ? (discMetric.checkOutOnTimePercentage ?? 0) : 0;
         const lateCount = discMetric.totalTerlambat ?? 0;
         const alphaCount = discMetric.totalAlpha ?? 0;
         const izinCount = discMetric.totalIzin ?? 0;

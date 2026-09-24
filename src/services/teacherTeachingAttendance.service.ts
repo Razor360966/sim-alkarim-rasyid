@@ -33,6 +33,10 @@ import { semesterService } from "./semester.service";
 import { teacherHalaqahAttendanceService } from "./teacherHalaqahAttendance.service";
 import { evaluateLateness, getEffectiveLateTolerance, isLate } from "../utils/attendanceToleranceHelper";
 import { getCanonicalSlotKey, getCanonicalClassId } from "../utils/gradeLevelHelper";
+import { initializeApp, getApp } from "firebase/app";
+import { getAuth, signInWithEmailAndPassword, signOut } from "firebase/auth";
+import { userService } from "./user.service";
+import firebaseConfigJson from "../../firebase-applet-config.json";
 
 const COLLECTION_NAME = "teacher_teaching_attendances";
 const AUDIT_LOGS_COLLECTION = "teacher_attendance_audit_logs";
@@ -3646,6 +3650,569 @@ export const teacherTeachingAttendanceService = {
     );
 
     return { deletedCount };
+  },
+
+  // ==========================================
+  // ASSISTED CHECK-IN (OFFICE TERMINAL) METHODS
+  // ==========================================
+
+  // 1. Verify Teacher Credentials securely via isolated secondary Auth instance
+  async verifyTeacherCredentials(
+    identifier: string,
+    password: string
+  ): Promise<{
+    success: boolean;
+    message?: string;
+    teacher?: {
+      teacherId: string;
+      teacherName: string;
+      niy: string;
+      userId: string;
+      userName: string;
+      email: string;
+      role: string;
+    };
+  }> {
+    try {
+      const cleanIdentifier = (identifier || "").trim();
+      if (!cleanIdentifier) {
+        return { success: false, message: "Email atau Username wajib diisi." };
+      }
+      if (!password) {
+        return { success: false, message: "Kata sandi wajib diisi." };
+      }
+
+      // Resolve email if identifier is username
+      let targetEmail = cleanIdentifier;
+      if (!cleanIdentifier.includes("@")) {
+        const resolvedEmail = await userService.getEmailByUsername(cleanIdentifier);
+        if (!resolvedEmail) {
+          return { success: false, message: `Username "${cleanIdentifier}" tidak terdaftar di sistem SIMAK.` };
+        }
+        targetEmail = resolvedEmail;
+      }
+
+      // Authenticate using isolated secondary Firebase Auth app so terminal session is never disturbed
+      let secondaryApp;
+      const appName = `AssistedCheckInAuth_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+      try {
+        secondaryApp = initializeApp(firebaseConfigJson, appName);
+      } catch (e) {
+        secondaryApp = getApp(appName);
+      }
+      const secondaryAuth = getAuth(secondaryApp);
+
+      let userCredential;
+      try {
+        userCredential = await signInWithEmailAndPassword(secondaryAuth, targetEmail, password);
+      } catch (authErr: any) {
+        try { await signOut(secondaryAuth); } catch (e) {}
+        console.warn("[AssistedCheckIn] Auth failed for:", targetEmail, authErr?.code);
+        if (authErr?.code === "auth/wrong-password" || authErr?.code === "auth/invalid-credential") {
+          return { success: false, message: "Kata sandi yang Anda masukkan salah." };
+        }
+        if (authErr?.code === "auth/user-not-found") {
+          return { success: false, message: "Akun pengguna tidak ditemukan." };
+        }
+        return { success: false, message: authErr?.message || "Autentikasi gagal. Periksa kembali akun dan kata sandi." };
+      }
+
+      const uid = userCredential.user.uid;
+      try { await signOut(secondaryAuth); } catch (e) {}
+
+      // Lookup user in Firestore users collection
+      const userDocRef = doc(db, "users", uid);
+      const userDocSnap = await getDoc(userDocRef);
+
+      if (!userDocSnap.exists()) {
+        return { success: false, message: "Data profil pengguna tidak ditemukan di sistem." };
+      }
+
+      const userData = userDocSnap.data();
+
+      // Enforce active status
+      if (userData.status && userData.status !== "Aktif") {
+        return { success: false, message: `Akun Anda sedang berstatus "${userData.status}". Silakan hubungi Administrator.` };
+      }
+
+      // Enforce teacherId presence
+      const teacherId = userData.teacherId;
+      if (!teacherId) {
+        return { success: false, message: "Akun ini tidak tertaut dengan data Guru. Fitur Assisted Check-in khusus untuk Guru." };
+      }
+
+      // Fetch Teacher Master Document for exact title/full name & NIY
+      let teacherName = userData.teacherName || userData.name || "";
+      let niy = userData.niy || "";
+
+      try {
+        const teacherDocRef = doc(db, "teachers", teacherId);
+        const teacherDocSnap = await getDoc(teacherDocRef);
+        if (teacherDocSnap.exists()) {
+          const tData = teacherDocSnap.data();
+          if (tData.isDeleted) {
+            return { success: false, message: "Data Guru sudah tidak aktif / dihapus dari sistem." };
+          }
+          const front = tData.frontTitle ? tData.frontTitle.trim() + " " : "";
+          const back = tData.backTitle ? ", " + tData.backTitle.trim() : "";
+          if (tData.name) {
+            teacherName = `${front}${tData.name}${back}`;
+          }
+          if (tData.niy) {
+            niy = tData.niy;
+          }
+        }
+      } catch (err) {
+        console.warn("[AssistedCheckIn] Error loading teacher doc details:", err);
+      }
+
+      return {
+        success: true,
+        teacher: {
+          teacherId,
+          teacherName,
+          niy,
+          userId: uid,
+          userName: userData.name || teacherName,
+          email: targetEmail,
+          role: userData.role || "guru"
+        }
+      };
+    } catch (error: any) {
+      console.error("[AssistedCheckIn] Verification error:", error);
+      return { success: false, message: error?.message || "Terjadi kesalahan saat memverifikasi identitas guru." };
+    }
+  },
+
+  // 2. Load today's teaching sessions strictly for the verified teacher
+  async getTeacherAssistedSessions(
+    teacherId: string,
+    academicYearId?: string,
+    semesterId?: string,
+    isSimulation?: boolean
+  ): Promise<{
+    sessions: Array<{
+      sessionKey: string;
+      scheduleId: string;
+      subjectId: string;
+      subjectName: string;
+      classId: string;
+      className: string;
+      jpLabel: string;
+      startStr: string;
+      endStr: string;
+      startM: number;
+      endM: number;
+      status: string;
+      checkInTime?: string;
+      checkOutTime?: string;
+      checkInType?: string;
+      method?: string;
+      notes?: string;
+      items: TeacherTeachingAttendance[];
+    }>;
+    isKbmDisabled: boolean;
+    lockReason?: string;
+    todayStr: string;
+  }> {
+    const todayStr = getTodayDateStr();
+
+    // Resolve AY & Semester if not provided
+    let ayId = academicYearId || "";
+    let semId = semesterId || "";
+    if (!ayId || !semId) {
+      try {
+        const [ays, sems] = await Promise.all([
+          academicYearService.getAcademicYears(),
+          semesterService.getSemesters()
+        ]);
+        const activeAy = ays.find(a => a.isActive);
+        const activeSem = sems.find(s => s.isActive);
+        if (activeAy) ayId = activeAy.id;
+        if (activeSem) semId = activeSem.id;
+      } catch (e) {
+        console.warn("[AssistedCheckIn] Error resolving active AY/Semester:", e);
+      }
+    }
+
+    const attendanceData = await this.getAttendanceForDate(todayStr, ayId, semId, isSimulation);
+
+    if (attendanceData.isKbmDisabled) {
+      return {
+        sessions: [],
+        isKbmDisabled: true,
+        lockReason: attendanceData.lockReason,
+        todayStr
+      };
+    }
+
+    // Filter strictly for verified teacher (or substitute teacher assignment)
+    const teacherItems = attendanceData.items.filter(item => {
+      const itemTeacherId = item.teacherId || "";
+      const itemSubId = item.substituteTeacherId || "";
+      return itemTeacherId === teacherId || itemSubId === teacherId;
+    });
+
+    // Sort by sequence
+    teacherItems.sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
+
+    // Group contiguous JPs with same classId and subjectId into session blocks
+    const groupedSessions: Array<{
+      sessionKey: string;
+      scheduleId: string;
+      subjectId: string;
+      subjectName: string;
+      classId: string;
+      className: string;
+      jpLabel: string;
+      startStr: string;
+      endStr: string;
+      startM: number;
+      endM: number;
+      status: string;
+      checkInTime?: string;
+      checkOutTime?: string;
+      checkInType?: string;
+      method?: string;
+      notes?: string;
+      items: TeacherTeachingAttendance[];
+    }> = [];
+
+    const processedIds = new Set<string>();
+
+    for (const item of teacherItems) {
+      if (processedIds.has(item.id || item.scheduleId)) continue;
+
+      // Find all items belonging to same contiguous session
+      const clusterItems: TeacherTeachingAttendance[] = [item];
+      processedIds.add(item.id || item.scheduleId);
+
+      for (const candidate of teacherItems) {
+        if (processedIds.has(candidate.id || candidate.scheduleId)) continue;
+        if (candidate.classId === item.classId && candidate.subjectId === item.subjectId) {
+          const lastClusterItem = clusterItems[clusterItems.length - 1];
+          // Check if contiguous (sequence difference is 1)
+          if ((candidate.sequence || 0) === (lastClusterItem.sequence || 0) + 1) {
+            clusterItems.push(candidate);
+            processedIds.add(candidate.id || candidate.scheduleId);
+          }
+        }
+      }
+
+      clusterItems.sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
+      const firstItem = clusterItems[0];
+      const lastItem = clusterItems[clusterItems.length - 1];
+
+      const firstRange = getLessonPeriodTimeRange({ timeSlot: firstItem.timeSlot, sequence: firstItem.sequence });
+      const lastRange = getLessonPeriodTimeRange({ timeSlot: lastItem.timeSlot, sequence: lastItem.sequence });
+
+      const jpLabels = clusterItems.map(it => it.jp || `JP ${it.sequence}`);
+      const jpDisplay = jpLabels.length > 1
+        ? `${jpLabels[0]} - ${jpLabels[jpLabels.length - 1]}`
+        : (jpLabels[0] || `JP ${firstItem.sequence}`);
+
+      const sessionStatus = firstItem.status || "Belum Diverifikasi";
+      const sessionCheckIn = firstItem.checkInTime || undefined;
+      const sessionCheckOut = lastItem.checkOutTime || undefined;
+      const sessionMethod = firstItem.method || (firstItem.checkInType === "Check-in Dibantu" ? "Check-in Dibantu" : undefined);
+
+      groupedSessions.push({
+        sessionKey: `${firstItem.classId}_${firstItem.subjectId}_${firstItem.sequence}`,
+        scheduleId: firstItem.scheduleId,
+        subjectId: firstItem.subjectId,
+        subjectName: firstItem.subjectName,
+        classId: firstItem.classId,
+        className: firstItem.className,
+        jpLabel: jpDisplay,
+        startStr: firstRange.startStr,
+        endStr: lastRange.endStr,
+        startM: firstRange.startM,
+        endM: lastRange.endM,
+        status: sessionStatus,
+        checkInTime: sessionCheckIn,
+        checkOutTime: sessionCheckOut,
+        checkInType: firstItem.checkInType,
+        method: sessionMethod,
+        notes: firstItem.notes,
+        items: clusterItems
+      });
+    }
+
+    return {
+      sessions: groupedSessions,
+      isKbmDisabled: false,
+      todayStr
+    };
+  },
+
+  // 3. Process Assisted Check-In / Check-Out for a verified teacher
+  async processAssistedCheckIn(params: {
+    teacherId: string;
+    teacherName: string;
+    scheduleId: string;
+    verifiedUserId: string;
+    verifiedUserName: string;
+    action?: "CHECK_IN" | "CHECK_OUT";
+    academicYearId?: string;
+    semesterId?: string;
+    customTimeStr?: string;
+    isSimulation?: boolean;
+  }): Promise<{
+    success: boolean;
+    action?: "CHECK_IN" | "CHECK_OUT" | "DUPLICATE";
+    message: string;
+    record?: TeacherTeachingAttendance;
+  }> {
+    try {
+      if (!params.teacherId || !params.scheduleId) {
+        return {
+          success: false,
+          message: "Parameter tidak lengkap (teacherId dan scheduleId wajib disertakan)."
+        };
+      }
+
+      const todayStr = getTodayDateStr();
+      const now = new Date();
+      let defaultTimeStr = "";
+      try {
+        defaultTimeStr = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit", hour12: false }).format(now);
+      } catch (e) {
+        defaultTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      }
+      const currentTimeStr = params.customTimeStr || defaultTimeStr;
+      const currentM = parseTimeToMinutes(currentTimeStr);
+
+      // Resolve AY & Semester
+      let ayId = params.academicYearId || "";
+      let semId = params.semesterId || "";
+      if (!ayId || !semId) {
+        try {
+          const [ays, sems] = await Promise.all([
+            academicYearService.getAcademicYears(),
+            semesterService.getSemesters()
+          ]);
+          const activeAy = ays.find(a => a.isActive);
+          const activeSem = sems.find(s => s.isActive);
+          if (activeAy) ayId = activeAy.id;
+          if (activeSem) semId = activeSem.id;
+        } catch (e) {
+          console.warn("[AssistedCheckIn] Error resolving active AY/Semester:", e);
+        }
+      }
+
+      // Check Kaldik status
+      const kaldikInfo = await this.checkKaldikStatus(todayStr, ayId, semId);
+      if (kaldikInfo.isKbmDisabled) {
+        return {
+          success: false,
+          message: `Check-in tidak dapat dilakukan: ${kaldikInfo.lockReason || "KBM Ditiadakan Hari Ini"}.`
+        };
+      }
+
+      // Load today's attendance records
+      const attendanceData = await this.getAttendanceForDate(todayStr, ayId, semId, params.isSimulation);
+      const targetItem = attendanceData.items.find(it => it.scheduleId === params.scheduleId);
+
+      if (!targetItem) {
+        return {
+          success: false,
+          message: "Jadwal mengajar tidak ditemukan untuk hari ini."
+        };
+      }
+
+      // Security Ownership Check: enforce teacherId matches
+      const isOwner = targetItem.teacherId === params.teacherId || targetItem.substituteTeacherId === params.teacherId;
+      if (!isOwner) {
+        return {
+          success: false,
+          message: "Otorisasi ditolak: Jadwal ini bukan milik guru yang terverifikasi."
+        };
+      }
+
+      // Find all contiguous items belonging to this session block
+      const teacherItems = attendanceData.items.filter(it => 
+        (it.teacherId === params.teacherId || it.substituteTeacherId === params.teacherId) &&
+        it.classId === targetItem.classId &&
+        it.subjectId === targetItem.subjectId
+      );
+      teacherItems.sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
+
+      const firstItem = teacherItems[0];
+      const lastItem = teacherItems[teacherItems.length - 1];
+
+      const firstRange = getLessonPeriodTimeRange({ timeSlot: firstItem.timeSlot, sequence: firstItem.sequence });
+      const lastRange = getLessonPeriodTimeRange({ timeSlot: lastItem.timeSlot, sequence: lastItem.sequence });
+      const sessionStartM = firstRange.startM;
+      const sessionEndM = lastRange.endM;
+
+      const jpLabels = teacherItems.map(it => it.jp || `JP ${it.sequence}`);
+      const jpSummary = jpLabels.join(", ");
+
+      // Check for Completed / Duplicate state
+      if (firstItem.checkInTime && firstItem.checkOutTime) {
+        return {
+          success: false,
+          action: "DUPLICATE",
+          message: `Sesi ini telah selesai (Check-in: ${firstItem.checkInTime} WIB, Check-out: ${firstItem.checkOutTime} WIB). Tidak dapat di-check-in ulang.`,
+          record: firstItem
+        };
+      }
+
+      // CHECK-OUT ACTION
+      if (params.action === "CHECK_OUT" || (firstItem.checkInTime && !firstItem.checkOutTime && params.action !== "CHECK_IN")) {
+        const durationMinutes = calculateDurationInMinutes(firstItem.checkInTime, currentTimeStr);
+        for (const item of teacherItems) {
+          item.checkOutTime = currentTimeStr;
+          item.teachingDurationMinutes = durationMinutes;
+          item.updatedAt = new Date().toISOString();
+          if (!item.checkInLogs || item.checkInLogs.length === 0) {
+            item.checkInLogs = [{ checkIn: firstItem.checkInTime || currentTimeStr, checkOut: currentTimeStr, durationMinutes, note: "Check-in Dibantu" }];
+          } else {
+            const lastLog = item.checkInLogs[item.checkInLogs.length - 1];
+            lastLog.checkOut = currentTimeStr;
+            lastLog.durationMinutes = durationMinutes;
+          }
+          await this.saveSingleSessionAttendance(
+            todayStr,
+            item,
+            params.verifiedUserId,
+            params.verifiedUserName,
+            `Assisted Check-Out (${item.jp || "JP " + item.sequence}): ${currentTimeStr}`,
+            params.isSimulation
+          );
+        }
+
+        // Add audit log
+        const auditColRef = collection(db, params.isSimulation ? "teacher_attendance_audit_logs_simulation" : AUDIT_LOGS_COLLECTION);
+        await addDoc(auditColRef, sanitizeFirestorePayload({
+          attendanceDate: todayStr,
+          inputTimestamp: new Date().toISOString(),
+          userId: params.verifiedUserId,
+          userName: params.verifiedUserName,
+          scheduleId: targetItem.scheduleId,
+          teacherId: targetItem.teacherId,
+          teacherName: targetItem.teacherName,
+          classId: targetItem.classId,
+          className: targetItem.className,
+          subjectId: targetItem.subjectId,
+          subjectName: targetItem.subjectName,
+          jp: jpSummary,
+          scanTime: `${currentTimeStr} WIB`,
+          previousStatus: firstItem.status,
+          newStatus: firstItem.status,
+          action: "CHECK_OUT_ASSISTED",
+          reason: "Check-out Dibantu di Kantor (Guru lupa membawa HP)",
+          method: "Check-in Dibantu",
+          validationResult: "Sukses",
+          isLateInput: false
+        }));
+
+        return {
+          success: true,
+          action: "CHECK_OUT",
+          message: `Check-out berhasil untuk ${targetItem.subjectName} di kelas ${targetItem.className} (${jpSummary}). Durasi mengajar: ${durationMinutes} menit. Metode: Check-in Dibantu.`,
+          record: firstItem
+        };
+      }
+
+      // DUPLICATE CHECK-IN DETECTION
+      if (firstItem.checkInTime) {
+        return {
+          success: false,
+          action: "DUPLICATE",
+          message: `Sesi ini (${jpSummary}) sudah tercatat Check-in pada pukul ${firstItem.checkInTime} WIB. Tidak membuat absensi duplikat.`,
+          record: firstItem
+        };
+      }
+
+      // CHECK-IN ACTION
+      const schoolSettings = await schoolSettingsService.getSettings();
+      const checkInTolerance = getEffectiveLateTolerance(schoolSettings);
+      const lateEval = evaluateLateness(currentM, sessionStartM, checkInTolerance);
+
+      let status: AttendanceTeachingStatus = "Hadir Mengajar";
+      let notes = "";
+      let lateMinutes = 0;
+
+      if (currentM >= sessionEndM) {
+        status = "Tidak Hadir";
+        notes = `Check-in dilakukan pada ${currentTimeStr} setelah sesi berakhir (${lastRange.endStr} WIB) [Check-in Dibantu]`;
+      } else if (lateEval.isLate) {
+        status = "Terlambat";
+        lateMinutes = lateEval.lateMinutes;
+        notes = `Terlambat ${lateMinutes} menit (Jadwal: ${firstRange.startStr} WIB, Batas: ${lateEval.cutoffTimeStr} WIB) [Check-in Dibantu]`;
+      } else {
+        status = "Hadir Mengajar";
+        notes = (currentM > sessionStartM)
+          ? `Hadir dalam batas toleransi (+${currentM - sessionStartM} mnt dari jam ${firstRange.startStr} WIB) [Check-in Dibantu]`
+          : "Hadir tepat waktu [Check-in Dibantu]";
+      }
+
+      for (const item of teacherItems) {
+        item.status = status;
+        item.checkInTime = currentTimeStr;
+        item.checkInType = "Check-in Dibantu";
+        item.method = "Check-in Dibantu";
+        item.checkInMethod = "Check-in Dibantu";
+        item.lateMinutes = lateMinutes;
+        item.scheduleStartTime = firstRange.startStr;
+        item.scheduleEndTime = lastRange.endStr;
+        item.attendanceStatus = "Approved";
+        item.approvalType = "Automatic";
+        item.requiresLateValidation = false;
+        item.notes = notes;
+        item.updatedAt = new Date().toISOString();
+        if (!item.checkInLogs) item.checkInLogs = [];
+        item.checkInLogs.push({ checkIn: currentTimeStr, note: "Check-in Dibantu" });
+
+        await this.saveSingleSessionAttendance(
+          todayStr,
+          item,
+          params.verifiedUserId,
+          params.verifiedUserName,
+          `Assisted Check-In (${item.jp || "JP " + item.sequence}): ${currentTimeStr}`,
+          params.isSimulation
+        );
+      }
+
+      // Add audit log
+      const auditColRef = collection(db, params.isSimulation ? "teacher_attendance_audit_logs_simulation" : AUDIT_LOGS_COLLECTION);
+      await addDoc(auditColRef, sanitizeFirestorePayload({
+        attendanceDate: todayStr,
+        inputTimestamp: new Date().toISOString(),
+        userId: params.verifiedUserId,
+        userName: params.verifiedUserName,
+        scheduleId: targetItem.scheduleId,
+        teacherId: targetItem.teacherId,
+        teacherName: targetItem.teacherName,
+        classId: targetItem.classId,
+        className: targetItem.className,
+        subjectId: targetItem.subjectId,
+        subjectName: targetItem.subjectName,
+        jp: jpSummary,
+        scanTime: `${currentTimeStr} WIB`,
+        previousStatus: "BELUM ABSEN",
+        newStatus: status,
+        action: "CHECK_IN_ASSISTED",
+        reason: "Check-in Dibantu di Kantor (Guru lupa membawa HP)",
+        method: "Check-in Dibantu",
+        validationResult: "Sukses",
+        isLateInput: status === "Terlambat"
+      }));
+
+      return {
+        success: true,
+        action: "CHECK_IN",
+        message: `Check-in berhasil di kelas ${targetItem.className} (${targetItem.subjectName} - ${jpSummary}). Status: ${status}. Metode: Check-in Dibantu.`,
+        record: firstItem
+      };
+    } catch (error: any) {
+      console.error("[AssistedCheckIn] Process error:", error);
+      return {
+        success: false,
+        message: error?.message || "Terjadi kesalahan saat memproses Assisted Check-in."
+      };
+    }
   },
 
   validateCheckInWindow,

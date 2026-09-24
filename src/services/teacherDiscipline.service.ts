@@ -765,12 +765,17 @@ export const teacherDisciplineService = {
 
         // If JML JP is 0 (no attendance recorded yet), calculate expected JP from schedule
         if (jmlJp === 0) {
-          jmlJp = totalJpScheduled > 0 ? totalJpScheduled : 1;
-          kehadiranJp = jmlJp; // Default perfect until attendance logged
+          if (totalJpScheduled > 0) {
+            jmlJp = totalJpScheduled;
+            kehadiranJp = jmlJp; // Default perfect until attendance logged
+          } else {
+            jmlJp = 0;
+            kehadiranJp = 0;
+          }
         }
 
         // Attendance Calculations
-        const kehadiranDasarPercentage = Math.min(100, Math.round((kehadiranJp / jmlJp) * 1000) / 10);
+        const kehadiranDasarPercentage = jmlJp > 0 ? Math.min(100, Math.round((kehadiranJp / jmlJp) * 1000) / 10) : 0;
         const rasioKeterlambatan = jmlJp > 0 ? (terlambatJp / jmlJp) : 0;
         const penaltiKeterlambatan = Math.round(rasioKeterlambatan * config.latePenaltyFactor * 1000) / 10;
         const rawAttendanceDiscipline = kehadiranDasarPercentage - penaltiKeterlambatan;

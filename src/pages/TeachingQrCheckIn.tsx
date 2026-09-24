@@ -21,7 +21,8 @@ import {
   ChevronRight,
   Users,
   ShieldAlert,
-  BookOpen
+  BookOpen,
+  ArrowRight
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { teacherTeachingAttendanceService, getTodayDateStr } from "../services/teacherTeachingAttendance.service";
@@ -557,6 +558,23 @@ export const TeachingQrCheckInPage: React.FC = () => {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Assisted Check-In Callout for Teachers who forgot phone */}
+      <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/80 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900 dark:text-amber-200 shadow-2xs">
+        <div className="flex items-center gap-2.5">
+          <span className="px-2.5 py-1 bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-300 rounded-lg font-bold text-[11px] shrink-0">
+            Lupa Membawa HP?
+          </span>
+          <span>Gunakan Terminal Assisted Check-In di Kantor Sekolah untuk verifikasi dan absensi mengajar resmi.</span>
+        </div>
+        <Link
+          to="/assisted-check-in"
+          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl shrink-0 self-start sm:self-auto transition-colors shadow-2xs"
+        >
+          <span>Assisted Check-In</span>
+          <ArrowRight className="w-3.5 h-3.5" />
+        </Link>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

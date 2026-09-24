@@ -10,6 +10,7 @@ import { classService } from "../services/classService";
 import { academicYearService } from "../services/academicYearService";
 import { semesterService } from "../services/semester.service";
 import { ClassQrCardsModal } from "../components/ClassQrCardsModal";
+import { OfficeBarcodeModal } from "../components/OfficeBarcodeModal";
 import { ExecutiveTeachingAnalyticsWidget, StatusJpLegend } from "../components/ExecutiveTeachingAnalyticsWidget";
 import { TeacherAttendanceTimeline } from "../components/TeacherAttendanceTimeline";
 import { HalaqahAttendanceRecapSection } from "../components/HalaqahAttendanceRecapSection";
@@ -365,6 +366,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
   });
 
   const [isClassQrModalOpen, setIsClassQrModalOpen] = useState<boolean>(false);
+  const [isOfficeBarcodeModalOpen, setIsOfficeBarcodeModalOpen] = useState<boolean>(false);
   const [manualCheckOutModal, setManualCheckOutModal] = useState<{
     isOpen: boolean;
     item?: TeacherTeachingAttendance;
@@ -1343,7 +1345,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Link
                 to="/teaching-qr-checkin"
                 className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2"
@@ -1358,6 +1360,15 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
               >
                 <Printer className="w-4 h-4" />
                 <span>Cetak QR Kelas</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsOfficeBarcodeModalOpen(true)}
+                className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer"
+                title="Cetak 1 Barcode Khusus Kantor untuk Guru yang Lupa Membawa HP"
+              >
+                <Printer className="w-4 h-4" />
+                <span>Barcode Kantor (Assisted)</span>
               </button>
             </div>
           </div>
@@ -3995,6 +4006,12 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
       <ClassQrCardsModal
         isOpen={isClassQrModalOpen}
         onClose={() => setIsClassQrModalOpen(false)}
+      />
+
+      {/* Office Barcode Modal for Assisted Check-In */}
+      <OfficeBarcodeModal
+        isOpen={isOfficeBarcodeModalOpen}
+        onClose={() => setIsOfficeBarcodeModalOpen(false)}
       />
     </div>
   );

@@ -67,7 +67,9 @@ export interface TeacherTeachingAttendance {
   checkInTime?: string; // e.g. "07:32:10"
   checkOutTime?: string; // e.g. "08:14:45"
   teachingDurationMinutes?: number;
-  checkInType?: "Scan QR" | "Manual Wakakur" | "Manual Admin" | "Auto";
+  checkInType?: "Scan QR" | "Manual Wakakur" | "Manual Admin" | "Auto" | "Check-in Dibantu";
+  method?: string; // e.g. "Check-in Dibantu", "QR Mandiri", "Otomatis"
+  checkInMethod?: string;
   checkInLogs?: { checkIn: string; checkOut?: string; durationMinutes?: number; note?: string }[];
   isManualCheckOut?: boolean;
   manualCheckOutByUserId?: string;

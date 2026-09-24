@@ -68,6 +68,7 @@ const TeachingQrSimulationPage = lazyRetry(() => import("./pages/TeachingQrSimul
 const StudentAttendancePage = lazyRetry(() => import("./pages/StudentAttendance"), "StudentAttendance");
 const TeacherDisciplinePage = lazyRetry(() => import("./pages/TeacherDiscipline"), "TeacherDiscipline");
 const ExecutiveMutabaahGuruPage = lazyRetry(() => import("./pages/ExecutiveMutabaahGuruPage"), "ExecutiveMutabaahGuruPage");
+const AssistedCheckInPage = lazyRetry(() => import("./pages/AssistedCheckIn"), "AssistedCheckIn");
 const ERaporTeacherInput = lazyRetry(() => import("./pages/ERaporTeacherInput"), "ERaporTeacherInput");
 const ERaporHomeroomView = lazyRetry(() => import("./pages/ERaporHomeroomView"), "ERaporHomeroomView");
 const ERaporStudentBiodataPage = lazyRetry(() => import("./pages/ERaporStudentBiodataPage"), "ERaporStudentBiodataPage");
@@ -130,6 +131,8 @@ export default function App() {
                         <Route path="/register" element={<Navigate to="/login" replace />} />
                         <Route path="/change-password" element={<ChangePassword />} />
                         <Route path="/offline" element={<OfflinePage />} />
+                        {/* Office Assisted Check-In (Standalone Kiosk / Direct Barcode Access) */}
+                        <Route path="/assisted-check-in" element={<AssistedCheckInPage />} />
 
                       {/* Protected School Master Data routes */}
                       <Route path="/" element={<MainLayout />}>
@@ -179,6 +182,7 @@ export default function App() {
                         {/* Monitoring Pembelajaran - Absensi Mengajar Guru & Siswa */}
                         <Route path="teacher-teaching-attendance" element={<TeacherTeachingAttendancePage />} />
                         <Route path="teaching-qr-checkin" element={<TeachingQrCheckInPage />} />
+                        <Route path="assisted-check-in" element={<AssistedCheckInPage />} />
                         <Route path="teaching-qr-simulation" element={<TeachingQrSimulationPage />} />
                         <Route path="student-attendance" element={<StudentAttendancePage />} />
                         <Route path="teacher-discipline" element={<TeacherDisciplinePage />} />
