@@ -70,11 +70,13 @@ export function getCanonicalClassId(
     return cls.id || cls.classId || "";
   }
   const cleanCls = String(cls).trim();
+  const normGrade = normalizeGradeLevel(cleanCls);
   if (classes && classes.length > 0) {
     const found = classes.find(c => 
       c.id === cleanCls || 
       c.classId === cleanCls || 
       (c.name && c.name.toLowerCase().trim() === cleanCls.toLowerCase()) ||
+      (normGrade !== "INVALID_GRADE_LEVEL" && c.gradeLevel && normalizeGradeLevel(c.gradeLevel) === normGrade) ||
       (c.gradeLevel && cleanCls.toUpperCase() === c.gradeLevel.toUpperCase())
     );
     if (found) {
@@ -103,7 +105,8 @@ export function getCanonicalSlotKey(
   const ay = (item.academicYearId || "").trim();
   const sem = (item.semesterId || "").trim();
   const cid = getCanonicalClassId(item.classId, classes);
-  const d = (item.day || "").trim().toLowerCase();
+  let d = (item.day || "").trim().toLowerCase();
+  if (d === "ahad") d = "minggu";
   const seq = item.sequence || 0;
   return `${ay}__${sem}__${cid}__${d}__${seq}`;
 }
@@ -118,7 +121,11 @@ export function isSameSlot(
 ): boolean {
   if (!a || !b) return false;
   if ((a.sequence || 0) !== (b.sequence || 0)) return false;
-  if ((a.day || "").trim().toLowerCase() !== (b.day || "").trim().toLowerCase()) return false;
+  const dayA = (a.day || "").trim().toLowerCase();
+  const dayB = (b.day || "").trim().toLowerCase();
+  const normDayA = dayA === "ahad" ? "minggu" : dayA;
+  const normDayB = dayB === "ahad" ? "minggu" : dayB;
+  if (normDayA !== normDayB) return false;
   if (a.academicYearId && b.academicYearId && a.academicYearId !== b.academicYearId) return false;
   if (a.semesterId && b.semesterId && a.semesterId !== b.semesterId) return false;
   return isClassMatch(a.classId, b.classId, classes);
@@ -135,58 +142,51 @@ export function isClassMatch(
 ): boolean {
   if (!classIdA || !classEntityOrIdB) return false;
 
-  // Direct string comparison
-  if (typeof classEntityOrIdB === "string") {
-    if (classIdA === classEntityOrIdB) return true;
-    if (classIdA.toLowerCase().trim() === classEntityOrIdB.toLowerCase().trim()) return true;
+  const idB = typeof classEntityOrIdB === "string" ? classEntityOrIdB : (classEntityOrIdB.id || classEntityOrIdB.classId || "");
+  const nameB = typeof classEntityOrIdB === "string" ? classEntityOrIdB : (classEntityOrIdB.name || "");
+  const gradeB = typeof classEntityOrIdB === "string" ? classEntityOrIdB : (classEntityOrIdB.gradeLevel || "");
 
-    // Cross-match via classes array if available
-    if (classes && classes.length > 0) {
-      const target = classes.find(c => 
-        c.id === classEntityOrIdB || 
-        c.classId === classEntityOrIdB || 
-        (c.name && c.name.toLowerCase().trim() === classEntityOrIdB.toLowerCase().trim())
-      );
-      if (target) {
-        if (classIdA === target.id || (target.classId && classIdA === target.classId)) return true;
-        if (target.name && classIdA.toLowerCase().trim() === target.name.toLowerCase().trim()) return true;
-      }
+  // Direct ID check
+  if (classIdA === idB) return true;
+  if (classIdA.toLowerCase().trim() === idB.toLowerCase().trim()) return true;
 
-      const source = classes.find(c => 
-        c.id === classIdA || 
-        c.classId === classIdA || 
-        (c.name && c.name.toLowerCase().trim() === classIdA.toLowerCase().trim())
-      );
-      if (source) {
-        if (source.id === classEntityOrIdB || (source.classId && source.classId === classEntityOrIdB)) return true;
-        if (target && (source.id === target.id || (source.classId && target.classId && source.classId === target.classId))) return true;
-      }
-    }
-    return false;
-  }
-
-  // classEntityOrIdB is an object { id, classId, name, gradeLevel }
-  if (classIdA === classEntityOrIdB.id || (classEntityOrIdB.classId && classIdA === classEntityOrIdB.classId)) {
-    return true;
-  }
-  if (classEntityOrIdB.name && classIdA.toLowerCase().trim() === classEntityOrIdB.name.toLowerCase().trim()) {
-    return true;
-  }
-  if (classEntityOrIdB.gradeLevel && classIdA.toUpperCase().trim() === classEntityOrIdB.gradeLevel.toUpperCase().trim()) {
+  // Grade level normalization check (e.g. "IX" matches "9", "Kelas IX")
+  const normGradeA = normalizeGradeLevel(classIdA);
+  const normGradeB = normalizeGradeLevel(gradeB || idB || nameB);
+  if (normGradeA !== "INVALID_GRADE_LEVEL" && normGradeB !== "INVALID_GRADE_LEVEL" && normGradeA === normGradeB) {
     return true;
   }
 
-  // Cross-match via classes list for object entity
+  // Cross-match via classes directory
   if (classes && classes.length > 0) {
+    const target = classes.find(c => 
+      c.id === idB || 
+      c.classId === idB || 
+      (c.name && c.name.toLowerCase().trim() === nameB.toLowerCase().trim()) ||
+      (c.name && c.name.toLowerCase().trim() === idB.toLowerCase().trim()) ||
+      (normGradeB !== "INVALID_GRADE_LEVEL" && c.gradeLevel && normalizeGradeLevel(c.gradeLevel) === normGradeB)
+    );
+
     const source = classes.find(c => 
       c.id === classIdA || 
       c.classId === classIdA || 
-      (c.name && c.name.toLowerCase().trim() === classIdA.toLowerCase().trim())
+      (c.name && c.name.toLowerCase().trim() === classIdA.toLowerCase().trim()) ||
+      (normGradeA !== "INVALID_GRADE_LEVEL" && c.gradeLevel && normalizeGradeLevel(c.gradeLevel) === normGradeA)
     );
+
+    if (target && source) {
+      if (target.id && source.id && target.id === source.id) return true;
+      if (target.classId && source.classId && target.classId === source.classId) return true;
+    }
+
+    if (target) {
+      if (classIdA === target.id || (target.classId && classIdA === target.classId)) return true;
+      if (target.name && classIdA.toLowerCase().trim() === target.name.toLowerCase().trim()) return true;
+    }
+
     if (source) {
-      if (classEntityOrIdB.id && source.id === classEntityOrIdB.id) return true;
-      if (classEntityOrIdB.classId && source.classId && source.classId === classEntityOrIdB.classId) return true;
-      if (classEntityOrIdB.name && source.name && source.name.toLowerCase().trim() === classEntityOrIdB.name.toLowerCase().trim()) return true;
+      if (idB === source.id || (source.classId && idB === source.classId)) return true;
+      if (source.name && idB.toLowerCase().trim() === source.name.toLowerCase().trim()) return true;
     }
   }
 

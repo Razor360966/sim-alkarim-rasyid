@@ -57,6 +57,10 @@ export function useSchedules(academicYearId?: string, semesterId?: string) {
     }) => scheduleService.saveSchedules(scheds, ayId, semId, operatorId, operatorName, classIdToOverwrite, mode),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["schedules"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherTeachingAttendance"] });
+      queryClient.invalidateQueries({ queryKey: ["attendanceValidationStats"] });
+      queryClient.invalidateQueries({ queryKey: ["qrMonitoringStats"] });
+      queryClient.invalidateQueries({ queryKey: ["todayTeachingAttendances"] });
       toast("Jadwal pelajaran berhasil disimpan ke database!", "success");
     },
     onError: (err: any) => {
@@ -78,6 +82,10 @@ export function useSchedules(academicYearId?: string, semesterId?: string) {
     }) => scheduleService.resetSchedules(ayId, semId, operatorId, operatorName, classId),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["schedules"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherTeachingAttendance"] });
+      queryClient.invalidateQueries({ queryKey: ["attendanceValidationStats"] });
+      queryClient.invalidateQueries({ queryKey: ["qrMonitoringStats"] });
+      queryClient.invalidateQueries({ queryKey: ["todayTeachingAttendances"] });
       toast(
         variables.classId 
           ? "Jadwal untuk kelas terpilih berhasil direset (kecuali slot dikunci)!" 
@@ -97,6 +105,7 @@ export function useSchedules(academicYearId?: string, semesterId?: string) {
       scheduleService.toggleLockSchedule(id, isLocked, operatorId, operatorName),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["schedules"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherTeachingAttendance"] });
       toast("Status kunci slot jadwal berhasil diperbarui!", "success");
     },
     onError: (err: any) => {
@@ -109,6 +118,11 @@ export function useSchedules(academicYearId?: string, semesterId?: string) {
   const publishMutation = useMutation({
     mutationFn: (desc: string) => scheduleService.publishSchedules(operatorId, operatorName, desc),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["schedules"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherTeachingAttendance"] });
+      queryClient.invalidateQueries({ queryKey: ["attendanceValidationStats"] });
+      queryClient.invalidateQueries({ queryKey: ["qrMonitoringStats"] });
+      queryClient.invalidateQueries({ queryKey: ["todayTeachingAttendances"] });
       toast("Jadwal berhasil dipublikasikan!", "success");
     },
     onError: (err: any) => {

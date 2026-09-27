@@ -165,7 +165,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
 
   // Selected or Active Academic Year & Semester
   const activeAy = academicYears.find(y => y.isActive) || academicYears[0];
-  const [selectedAyId, setSelectedAyId] = useState<string>("");
+  const [selectedAyId, setSelectedAyId] = useState<string>(activeAy?.id || "");
   const [selectedSemesterId, setSelectedSemesterId] = useState<string>("");
 
   useEffect(() => {
@@ -401,10 +401,13 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
   // --- TAB 1: INPUT ABSENSI ---
   const dayName = getIndonesianDayName(selectedDate);
 
+  const effectiveAyId = selectedAyId || activeAy?.id || "";
+  const effectiveSemId = selectedSemesterId || activeSem?.id || "";
+
   const { data: dailyAttendanceData, isLoading: isLoadingAttendance, refetch: refetchAttendance } = useQuery({
-    queryKey: ["teacherTeachingAttendance", selectedDate, selectedAyId, selectedSemesterId],
-    queryFn: () => teacherTeachingAttendanceService.getAttendanceForDate(selectedDate, selectedAyId, selectedSemesterId),
-    enabled: !!selectedDate
+    queryKey: ["teacherTeachingAttendance", selectedDate, effectiveAyId, effectiveSemId],
+    queryFn: () => teacherTeachingAttendanceService.getAttendanceForDate(selectedDate, effectiveAyId, effectiveSemId),
+    enabled: !!selectedDate && !!effectiveAyId && !!effectiveSemId
   });
 
   const isKbmDisabled = !!dailyAttendanceData?.isKbmDisabled && !overrideKbmLock;

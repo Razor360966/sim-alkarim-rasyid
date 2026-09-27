@@ -622,11 +622,18 @@ export const teacherTeachingAttendanceService = {
     const kaldikInfo = await this.checkKaldikStatus(dateStr, academicYearId, semesterId);
 
     // 2. Load schedules for active AY, Semester, and Day
-    const allSchedules = await scheduleService.getSchedules();
+    const allSchedules = await scheduleService.getSchedules(academicYearId, semesterId);
+
+    const normalizeDay = (d?: string) => {
+      const clean = (d || "").trim().toLowerCase();
+      if (clean === "ahad") return "minggu";
+      return clean;
+    };
+
     const activeSchedules = allSchedules.filter(s => {
       const matchesAy = !academicYearId || s.academicYearId === academicYearId;
       const matchesSem = !semesterId || s.semesterId === semesterId;
-      const matchesDay = (s.day || "").trim().toLowerCase() === dayName.toLowerCase();
+      const matchesDay = normalizeDay(s.day) === normalizeDay(dayName);
       const resolved = resolveTeacherForScheduleDate(s, dateStr);
       const hasTeacher = !!resolved.teacherId && resolved.teacherId !== "none" && resolved.teacherId !== "";
       return matchesAy && matchesSem && matchesDay && hasTeacher;
@@ -688,7 +695,7 @@ export const teacherTeachingAttendanceService = {
       const resolvedTeacher = resolveTeacherForScheduleDate(sch, dateStr);
 
       // Find period for dayName
-      const dayPeriods = lessonPeriods.filter(p => (p.day || "").trim().toLowerCase() === dayName.toLowerCase());
+      const dayPeriods = lessonPeriods.filter(p => normalizeDay(p.day) === normalizeDay(dayName));
       
       let period = dayPeriods.find(p => p.id === sch.lessonPeriodId);
       if (!period && sch.sequence) {
@@ -725,14 +732,22 @@ export const teacherTeachingAttendanceService = {
       }
 
       if (existing) {
+        // If session was already recorded with actual presence (Hadir, Terlambat, Izin, Sakit, etc.), preserve historical presence.
+        // If session is still unverified ("Belum Diverifikasi"), the SSOT is the published schedule (sch.subjectId, sch.subjectName, resolvedTeacher)!
+        const isVerifiedOrConducted = Boolean(
+          existing.status &&
+          existing.status !== "Belum Diverifikasi" &&
+          existing.status !== "KBM Ditiadakan"
+        );
+
         return {
           ...existing,
           scheduleId: sch.id!,
-          // IMMUTABILITY: Keep saved teacher if already recorded in Firestore, otherwise fallback to date-resolved teacher
-          teacherId: existing.teacherId || resolvedTeacher.teacherId,
-          teacherName: existing.teacherName || resolvedTeacher.teacherName,
-          subjectId: existing.subjectId || sch.subjectId,
-          subjectName: existing.subjectName || sch.subjectName,
+          // IMMUTABILITY: Keep saved teacher if attendance was already recorded/verified, otherwise sync with published schedule
+          teacherId: isVerifiedOrConducted ? (existing.teacherId || resolvedTeacher.teacherId) : (resolvedTeacher.teacherId || sch.teacherId),
+          teacherName: isVerifiedOrConducted ? (existing.teacherName || resolvedTeacher.teacherName) : (resolvedTeacher.teacherName || sch.teacherName),
+          subjectId: isVerifiedOrConducted ? (existing.subjectId || sch.subjectId) : sch.subjectId,
+          subjectName: isVerifiedOrConducted ? (existing.subjectName || sch.subjectName) : sch.subjectName,
           classId: sch.classId,
           className: sch.className,
           gradeLevel: cls?.gradeLevel || "",
