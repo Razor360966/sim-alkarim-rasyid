@@ -82,32 +82,27 @@ export function resolveTeacherForScheduleDate(
 
   const assignments = schedule.teacherAssignments;
   if (Array.isArray(assignments) && assignments.length > 0) {
-    // Sort assignments: newest effectiveFrom first
-    const sorted = [...assignments].sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom));
+    // PATCH 4: Only consider assignments matching current schedule's subject if subjectId is specified
+    const matchingAssignments = assignments.filter(a => !a.subjectId || !schedule.subjectId || a.subjectId === schedule.subjectId);
 
-    // Find assignment matching target date
-    const matched = sorted.find(a => {
-      const isAfterStart = a.effectiveFrom <= dateStr;
-      const isBeforeEnd = !a.effectiveUntil || a.effectiveUntil >= dateStr;
-      return isAfterStart && isBeforeEnd;
-    });
+    if (matchingAssignments.length > 0) {
+      // Sort assignments: newest effectiveFrom first
+      const sorted = [...matchingAssignments].sort((a, b) => (b.effectiveFrom || "").localeCompare(a.effectiveFrom || ""));
 
-    if (matched) {
-      return {
-        teacherId: matched.teacherId,
-        teacherName: matched.teacherName,
-        assignment: matched
-      };
-    }
+      // Find assignment matching target date
+      const matched = sorted.find(a => {
+        const isAfterStart = !a.effectiveFrom || a.effectiveFrom <= dateStr;
+        const isBeforeEnd = !a.effectiveUntil || a.effectiveUntil >= dateStr;
+        return isAfterStart && isBeforeEnd;
+      });
 
-    // If dateStr is before the earliest assignment, use the earliest assignment or fallback to base
-    const earliest = [...assignments].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))[0];
-    if (earliest && dateStr < earliest.effectiveFrom) {
-      return {
-        teacherId: earliest.teacherId,
-        teacherName: earliest.teacherName,
-        assignment: earliest
-      };
+      if (matched && matched.teacherId) {
+        return {
+          teacherId: matched.teacherId,
+          teacherName: matched.teacherName,
+          assignment: matched
+        };
+      }
     }
   }
 
@@ -504,6 +499,7 @@ export const scheduleService = {
         let targetRef: any = null;
         let isExistingLocked = false;
         let existingAssignments: TeacherAssignment[] = [];
+        let existingSubjectId = "";
 
         if (existingDocsForSlot.length > 0) {
           // Pick winner existing doc: prefer doc with exact ID match, or locked doc, or first doc
@@ -515,6 +511,7 @@ export const scheduleService = {
           targetRef = winnerDoc.ref;
           isExistingLocked = Boolean(winnerDoc.data.isLocked);
           existingAssignments = winnerDoc.data.teacherAssignments || [];
+          existingSubjectId = winnerDoc.data.subjectId || "";
           claimedExistingDocIds.add(winnerDoc.id);
 
           // Delete any extra duplicate documents that existed for this same slot in Firestore!
@@ -525,6 +522,24 @@ export const scheduleService = {
               deletedCount++;
             }
           }
+        }
+
+        // PATCH 3: Jika subjectId schedule baru BERBEDA dengan subjectId schedule sebelumnya,
+        // JANGAN mewariskan teacherAssignments lama dari mata pelajaran sebelumnya.
+        const isSubjectChanged = Boolean(
+          existingSubjectId &&
+          sched.subjectId &&
+          existingSubjectId !== sched.subjectId
+        );
+
+        let finalTeacherAssignments: TeacherAssignment[] = [];
+        if (sched.teacherAssignments && sched.teacherAssignments.length > 0) {
+          finalTeacherAssignments = sched.teacherAssignments;
+        } else if (!isSubjectChanged) {
+          finalTeacherAssignments = existingAssignments;
+        } else {
+          // Subject changed: filter out any assignments that belonged to old subject
+          finalTeacherAssignments = existingAssignments.filter(a => a.subjectId === sched.subjectId);
         }
 
         const cleanPayload = {
@@ -539,9 +554,7 @@ export const scheduleService = {
           subjectName: sched.subjectName || "",
           teacherId: sched.teacherId || "",
           teacherName: sched.teacherName || "",
-          teacherAssignments: (sched.teacherAssignments && sched.teacherAssignments.length > 0)
-            ? sched.teacherAssignments
-            : existingAssignments,
+          teacherAssignments: finalTeacherAssignments,
           isLocked: sched.isLocked || isExistingLocked,
           lessonPeriodId: sched.lessonPeriodId || "LPERIOD_FALLBACK",
           createdBy: sched.createdBy || operatorId,

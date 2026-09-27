@@ -58,6 +58,10 @@ export function useSchedules(academicYearId?: string, semesterId?: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["schedules"] });
       queryClient.invalidateQueries({ queryKey: ["teacherTeachingAttendance"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherAttendanceRecap"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherDailyStats"] });
+      queryClient.invalidateQueries({ queryKey: ["leadershipMonitoringStats"] });
+      queryClient.invalidateQueries({ queryKey: ["incompleteAttendanceDates"] });
       queryClient.invalidateQueries({ queryKey: ["attendanceValidationStats"] });
       queryClient.invalidateQueries({ queryKey: ["qrMonitoringStats"] });
       queryClient.invalidateQueries({ queryKey: ["todayTeachingAttendances"] });
@@ -83,6 +87,10 @@ export function useSchedules(academicYearId?: string, semesterId?: string) {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["schedules"] });
       queryClient.invalidateQueries({ queryKey: ["teacherTeachingAttendance"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherAttendanceRecap"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherDailyStats"] });
+      queryClient.invalidateQueries({ queryKey: ["leadershipMonitoringStats"] });
+      queryClient.invalidateQueries({ queryKey: ["incompleteAttendanceDates"] });
       queryClient.invalidateQueries({ queryKey: ["attendanceValidationStats"] });
       queryClient.invalidateQueries({ queryKey: ["qrMonitoringStats"] });
       queryClient.invalidateQueries({ queryKey: ["todayTeachingAttendances"] });
@@ -120,6 +128,10 @@ export function useSchedules(academicYearId?: string, semesterId?: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["schedules"] });
       queryClient.invalidateQueries({ queryKey: ["teacherTeachingAttendance"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherAttendanceRecap"] });
+      queryClient.invalidateQueries({ queryKey: ["teacherDailyStats"] });
+      queryClient.invalidateQueries({ queryKey: ["leadershipMonitoringStats"] });
+      queryClient.invalidateQueries({ queryKey: ["incompleteAttendanceDates"] });
       queryClient.invalidateQueries({ queryKey: ["attendanceValidationStats"] });
       queryClient.invalidateQueries({ queryKey: ["qrMonitoringStats"] });
       queryClient.invalidateQueries({ queryKey: ["todayTeachingAttendances"] });

@@ -172,6 +172,46 @@ export function isClassMatching(itemClassName?: string, targetClassName?: string
   return false;
 }
 
+/**
+ * PATCH 1: Evaluasi apakah sebuah record attendance memiliki bukti aktivitas kehadiran riil/final
+ * (Scan QR aktual, Assisted Check-in, Check-out, Validasi pimpinan/wakakur, Penggantian guru, Pertukaran jadwal,
+ * atau status kehadiran definitif seperti Hadir Mengajar, Terlambat, Izin, Sakit, Tugas Dinas, Tidak Hadir).
+ * 
+ * BUKAN status placeholder/default/unconfirmed seperti "Belum Diverifikasi", "Belum Dimulai", "Belum Terkonfirmasi", atau "KBM Ditiadakan".
+ */
+export function hasRealAttendanceActivity(record?: TeacherTeachingAttendance | null): boolean {
+  if (!record) return false;
+
+  // 1. Bukti aktivitas scan QR, assisted check-in, atau check-out aktual
+  if (Boolean(record.checkInTime || record.checkOutTime)) return true;
+  if (Array.isArray(record.checkInLogs) && record.checkInLogs.length > 0) return true;
+
+  // 2. Bukti penggantian guru (substitusi) atau pertukaran jadwal resmi
+  if (Boolean(record.isSubstitution || record.isReplaced || record.replacementId)) return true;
+  if (Boolean(record.exchangedWithTeacherId || record.exchangedScheduleId)) return true;
+
+  // 3. Bukti validasi / approval kehadiran riil oleh pimpinan atau wakakur
+  if (Boolean(record.validatedByUserId || record.validatedAt)) return true;
+
+  // 4. Status kehadiran definitif yang sudah dicatat pengguna secara nyata
+  const definitiveStatuses: AttendanceTeachingStatus[] = [
+    "Hadir Mengajar",
+    "Terlambat",
+    "Izin",
+    "Sakit",
+    "Tugas Dinas",
+    "Digantikan Guru Lain",
+    "Tukar Jadwal",
+    "Tidak Hadir"
+  ];
+
+  if (record.status && definitiveStatuses.includes(record.status)) {
+    return true;
+  }
+
+  return false;
+}
+
 export function getTodayDateStr(timeZone = "Asia/Jakarta"): string {
   try {
     const formatter = new Intl.DateTimeFormat("en-CA", {
@@ -654,13 +694,36 @@ export const teacherTeachingAttendanceService = {
     const q = query(colRef, where("date", "==", dateStr));
     const snap = await getDocs(q);
     const existingRecords = new Map<string, TeacherTeachingAttendance>();
+    const existingBySlotKey = new Map<string, TeacherTeachingAttendance>();
+
     snap.forEach(d => {
       const data = d.data() as TeacherTeachingAttendance;
       const recordId = d.id;
-      existingRecords.set(data.scheduleId || recordId, { ...data, id: recordId });
+      const rec: TeacherTeachingAttendance = { ...data, id: recordId };
+      if (data.scheduleId) {
+        existingRecords.set(data.scheduleId, rec);
+      }
+      existingRecords.set(recordId, rec);
+
+      // Index by canonical slot key
+      const slotKey = getCanonicalSlotKey(
+        {
+          academicYearId: data.academicYearId || academicYearId,
+          semesterId: data.semesterId || semesterId,
+          classId: data.classId,
+          day: dayName,
+          sequence: data.sequence
+        },
+        classes
+      );
+      if (!existingBySlotKey.has(slotKey)) {
+        existingBySlotKey.set(slotKey, rec);
+      }
     });
 
     // 4. Canonical deduplication: ensure exactly 1 schedule item per real class slot
+    // SSOT: Canonical rules must prioritize the operational schedule (locked, assigned, newer updatedAt/createdAt).
+    // Invariant: Attendance records NEVER determine which schedule is canonical!
     const canonicalScheduleMap = new Map<string, Schedule>();
     activeSchedules.forEach(sch => {
       const slotKey = getCanonicalSlotKey(
@@ -678,10 +741,24 @@ export const teacherTeachingAttendanceService = {
         canonicalScheduleMap.set(slotKey, sch);
       } else {
         const current = canonicalScheduleMap.get(slotKey)!;
-        // If duplicate exists, prefer locked schedule or schedule that already has an existing attendance record
+        let preferNew = false;
         if (!current.isLocked && sch.isLocked) {
-          canonicalScheduleMap.set(slotKey, sch);
-        } else if (existingRecords.has(sch.id!) && !existingRecords.has(current.id!)) {
+          preferNew = true;
+        } else if (current.isLocked === sch.isLocked) {
+          const curComplete = Boolean(current.subjectId && current.teacherId);
+          const schComplete = Boolean(sch.subjectId && sch.teacherId);
+          if (!curComplete && schComplete) {
+            preferNew = true;
+          } else if (curComplete === schComplete) {
+            const curTime = current.updatedAt || current.createdAt || "";
+            const schTime = sch.updatedAt || sch.createdAt || "";
+            if (schTime > curTime) {
+              preferNew = true;
+            }
+          }
+        }
+        if (preferNew) {
+          console.warn(`[Canonical Schedule Deduplication] Overriding slot ${slotKey} with newer schedule ${sch.id} over ${current.id}`);
           canonicalScheduleMap.set(slotKey, sch);
         }
       }
@@ -691,7 +768,17 @@ export const teacherTeachingAttendanceService = {
 
     // 5. Merge schedule items with existing attendance records
     const items: TeacherTeachingAttendance[] = deduplicatedActiveSchedules.map(sch => {
-      const existing = existingRecords.get(sch.id!);
+      const slotKey = getCanonicalSlotKey(
+        {
+          academicYearId: sch.academicYearId || academicYearId,
+          semesterId: sch.semesterId || semesterId,
+          classId: sch.classId,
+          day: dayName,
+          sequence: sch.sequence
+        },
+        classes
+      );
+      const existing = existingRecords.get(sch.id!) || existingBySlotKey.get(slotKey);
       const resolvedTeacher = resolveTeacherForScheduleDate(sch, dateStr);
 
       // Find period for dayName
@@ -732,35 +819,57 @@ export const teacherTeachingAttendanceService = {
       }
 
       if (existing) {
-        // If session was already recorded with actual presence (Hadir, Terlambat, Izin, Sakit, etc.), preserve historical presence.
-        // If session is still unverified ("Belum Diverifikasi"), the SSOT is the published schedule (sch.subjectId, sch.subjectName, resolvedTeacher)!
-        const isVerifiedOrConducted = Boolean(
-          existing.status &&
-          existing.status !== "Belum Diverifikasi" &&
-          existing.status !== "KBM Ditiadakan"
-        );
+        const hasRealActivity = hasRealAttendanceActivity(existing);
 
-        return {
-          ...existing,
-          scheduleId: sch.id!,
-          // IMMUTABILITY: Keep saved teacher if attendance was already recorded/verified, otherwise sync with published schedule
-          teacherId: isVerifiedOrConducted ? (existing.teacherId || resolvedTeacher.teacherId) : (resolvedTeacher.teacherId || sch.teacherId),
-          teacherName: isVerifiedOrConducted ? (existing.teacherName || resolvedTeacher.teacherName) : (resolvedTeacher.teacherName || sch.teacherName),
-          subjectId: isVerifiedOrConducted ? (existing.subjectId || sch.subjectId) : sch.subjectId,
-          subjectName: isVerifiedOrConducted ? (existing.subjectName || sch.subjectName) : sch.subjectName,
-          classId: sch.classId,
-          className: sch.className,
-          gradeLevel: cls?.gradeLevel || "",
-          lessonPeriodId: sch.lessonPeriodId,
-          sequence: seq,
-          jp: formattedJp,
-          roomName: existing.roomName || roomName,
-          timeSlot: timeSlot || existing.timeSlot,
-          academicYearId: sch.academicYearId || academicYearId,
-          semesterId: sch.semesterId || semesterId,
-          day: dayName,
-          date: dateStr
-        };
+        if (hasRealActivity) {
+          // IMMUTABILITY: Jika kehadiran riil sudah tercatat (Hadir, Scan QR, Terlambat, Izin, Sakit, Pengganti, dll.),
+          // pertahankan snapshot historis attendance tersebut agar riwayat KBM tidak rusak!
+          return {
+            ...existing,
+            scheduleId: sch.id!,
+            teacherId: existing.teacherId || resolvedTeacher.teacherId || sch.teacherId,
+            teacherName: existing.teacherName || resolvedTeacher.teacherName || sch.teacherName,
+            subjectId: existing.subjectId || sch.subjectId,
+            subjectName: existing.subjectName || sch.subjectName,
+            classId: sch.classId,
+            className: sch.className,
+            gradeLevel: cls?.gradeLevel || existing.gradeLevel || "",
+            lessonPeriodId: sch.lessonPeriodId,
+            sequence: seq,
+            jp: formattedJp,
+            roomName: existing.roomName || roomName,
+            timeSlot: timeSlot || existing.timeSlot,
+            academicYearId: sch.academicYearId || academicYearId,
+            semesterId: sch.semesterId || semesterId,
+            day: dayName,
+            date: dateStr
+          };
+        } else {
+          // SSOT JADWAL OPERASIONAL: Belum ada aktivitas kehadiran riil/final.
+          // Identitas sesi (subjectId, subjectName, teacherId, teacherName, class, lesson period)
+          // WAJIB mengikuti jadwal operasional pondok yang terbaru dan dipublikasikan!
+          return {
+            ...existing,
+            scheduleId: sch.id!,
+            teacherId: resolvedTeacher.teacherId || sch.teacherId,
+            teacherName: resolvedTeacher.teacherName || sch.teacherName,
+            subjectId: sch.subjectId,
+            subjectName: sch.subjectName,
+            classId: sch.classId,
+            className: sch.className,
+            gradeLevel: cls?.gradeLevel || "",
+            lessonPeriodId: sch.lessonPeriodId,
+            sequence: seq,
+            jp: formattedJp,
+            roomName,
+            timeSlot,
+            academicYearId: sch.academicYearId || academicYearId,
+            semesterId: sch.semesterId || semesterId,
+            day: dayName,
+            date: dateStr,
+            status: kaldikInfo.isKbmDisabled ? "KBM Ditiadakan" : (existing.status && existing.status !== "KBM Ditiadakan" ? existing.status : "Belum Diverifikasi")
+          };
+        }
       }
 
       // Default item if not saved yet
