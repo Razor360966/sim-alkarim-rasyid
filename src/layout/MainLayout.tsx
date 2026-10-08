@@ -41,7 +41,9 @@ import {
   FlaskConical,
   UserCheck,
   Layers,
-  Info
+  Info,
+  TrendingUp,
+  ClipboardCheck
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -179,12 +181,15 @@ export const MainLayout: React.FC = () => {
     { name: "QR Simulation (Sandbox)", path: "/teaching-qr-simulation", icon: FlaskConical, roles: ["admin", "wakil kepala sekolah", "operator"], group: "Monitoring Pembelajaran" },
     { name: "Absensi Siswa / Santri", path: "/student-attendance", icon: Users, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Monitoring Pembelajaran" },
     { name: "Absensi Mengajar Guru", path: "/teacher-teaching-attendance", icon: ClipboardList, roles: ["admin", "wakil kepala sekolah", "kepala sekolah", "pimpinan", "ketua yayasan", "operator"], group: "Monitoring Pembelajaran" },
+    { name: "Progres Pembelajaran", path: "/learning-progress-monitoring", icon: TrendingUp, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan", "operator"], group: "Monitoring Pembelajaran" },
+    { name: "Rekap Absensi Guru Halaqoh", path: "/halaqoh-attendance-recap", icon: ClipboardCheck, roles: ["admin", "wakil kepala sekolah", "kepala sekolah", "pimpinan", "ketua yayasan", "operator"], group: "Monitoring Pembelajaran" },
     { name: "Rekap Guru Halaqoh", path: "/teacher-teaching-attendance?tab=rekap_halaqah", icon: Award, roles: ["admin", "wakil kepala sekolah", "kepala sekolah", "pimpinan", "ketua yayasan", "operator"], group: "Monitoring Pembelajaran" },
     { name: "Kedisiplinan Guru", path: "/teacher-discipline", icon: Shield, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Monitoring Pembelajaran" },
 
     // Perencanaan Pembelajaran
     { name: "Program Tahunan", path: "/annual-programs", icon: Calendar, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan"], group: "Perencanaan Pembelajaran" },
     { name: "Program Semester", path: "/semester-programs", icon: Grid, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan"], group: "Perencanaan Pembelajaran" },
+    { name: "RPM — Rancangan Pembelajaran", path: "/rpm", icon: BookOpen, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan"], group: "Perencanaan Pembelajaran" },
     { name: "Modul Ajar", path: "/lesson-plans", icon: FileText, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan"], group: "Perencanaan Pembelajaran" },
     { name: "Jurnal Mengajar", path: "/teaching-journals", icon: BookOpen, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan"], group: "Perencanaan Pembelajaran" },
     { name: "Jadwal Mengajar Saya", path: "/my-schedule", icon: CalendarDays, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "ketua yayasan"], group: "Perencanaan Pembelajaran" },
@@ -218,6 +223,7 @@ export const MainLayout: React.FC = () => {
     { name: "Input Nilai Mapel", path: "/e-rapor/input", icon: BookOpen, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "operator"], group: "Modul e-Rapor" },
     { name: "Wali Kelas & Verifikasi", path: "/e-rapor/wali-kelas", icon: Shield, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "operator"], group: "Modul e-Rapor" },
     { name: "Leger Nilai", path: "/e-rapor/leger", icon: Layers, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "operator"], group: "Modul e-Rapor" },
+    { name: "Rapor Tengah Semester", path: "/rapor-tengah-semester", icon: FileText, roles: ["admin", "guru", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "operator"], group: "Modul e-Rapor" },
     { name: "Executive Dashboard", path: "/e-rapor/dashboard", icon: LayoutDashboard, roles: ["admin", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "operator", "ketua yayasan"], group: "Modul e-Rapor" },
     { name: "Pengaturan Bobot", path: "/e-rapor/settings", icon: SettingsIcon, roles: ["admin", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "operator"], group: "Modul e-Rapor" },
 

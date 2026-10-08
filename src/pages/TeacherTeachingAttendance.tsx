@@ -24,6 +24,8 @@ import { Teacher } from "../types";
 import { Loading } from "../components/Loading";
 import { Dialog } from "../components/Dialog";
 import { getAttendanceStatusDisplay } from "../utils/teacherAttendanceDisplayHelper";
+import { useSchoolSettings } from "../hooks/schoolSettings.hook";
+import { getEffectiveLateTolerance, isLate, isRecordOverTolerance, getRecordDelayMinutes } from "../utils/attendanceToleranceHelper";
 import { 
   ClipboardList, 
   Calendar, 
@@ -112,6 +114,9 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
     ))
   );
 
+  const { settings: schoolSettings } = useSchoolSettings();
+  const toleranceMinutes = getEffectiveLateTolerance(schoolSettings);
+
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab") as "input" | "validasi" | "rekap" | "absensi_halaqah" | "rekap_halaqah" | null;
 
@@ -165,7 +170,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
 
   // Selected or Active Academic Year & Semester
   const activeAy = academicYears.find(y => y.isActive) || academicYears[0];
-  const [selectedAyId, setSelectedAyId] = useState<string>(activeAy?.id || "");
+  const [selectedAyId, setSelectedAyId] = useState<string>("");
   const [selectedSemesterId, setSelectedSemesterId] = useState<string>("");
 
   useEffect(() => {
@@ -401,13 +406,10 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
   // --- TAB 1: INPUT ABSENSI ---
   const dayName = getIndonesianDayName(selectedDate);
 
-  const effectiveAyId = selectedAyId || activeAy?.id || "";
-  const effectiveSemId = selectedSemesterId || activeSem?.id || "";
-
   const { data: dailyAttendanceData, isLoading: isLoadingAttendance, refetch: refetchAttendance } = useQuery({
-    queryKey: ["teacherTeachingAttendance", selectedDate, effectiveAyId, effectiveSemId],
-    queryFn: () => teacherTeachingAttendanceService.getAttendanceForDate(selectedDate, effectiveAyId, effectiveSemId),
-    enabled: !!selectedDate && !!effectiveAyId && !!effectiveSemId
+    queryKey: ["teacherTeachingAttendance", selectedDate, selectedAyId, selectedSemesterId],
+    queryFn: () => teacherTeachingAttendanceService.getAttendanceForDate(selectedDate, selectedAyId, selectedSemesterId),
+    enabled: !!selectedDate
   });
 
   const isKbmDisabled = !!dailyAttendanceData?.isKbmDisabled && !overrideKbmLock;
@@ -763,18 +765,35 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
       setRekapStartDate(selectedDate || todayStr);
       setRekapEndDate(selectedDate || todayStr);
     } else if (rekapPeriodType === "mingguan") {
-      const day = now.getDay();
-      const diffToMon = day === 0 ? -6 : 1 - day;
-      const monObj = new Date(now);
-      monObj.setDate(now.getDate() + diffToMon);
-      const sunObj = new Date(monObj);
-      sunObj.setDate(monObj.getDate() + 6);
+      if (isKepalaSekolah) {
+        // Khusus akun Kepala Sekolah: Periode mingguan adalah Sabtu–Kamis
+        const day = now.getDay(); // 0 = Ahad, 1 = Senin, ..., 6 = Sabtu
+        const diffToSat = (day + 1) % 7;
+        const satObj = new Date(now);
+        satObj.setDate(now.getDate() - diffToSat);
+        const thuObj = new Date(satObj);
+        thuObj.setDate(satObj.getDate() + 5);
 
-      const monStr = `${monObj.getFullYear()}-${String(monObj.getMonth() + 1).padStart(2, "0")}-${String(monObj.getDate()).padStart(2, "0")}`;
-      const sunStr = `${sunObj.getFullYear()}-${String(sunObj.getMonth() + 1).padStart(2, "0")}-${String(sunObj.getDate()).padStart(2, "0")}`;
+        const pad = (n: number) => String(n).padStart(2, "0");
+        const satStr = `${satObj.getFullYear()}-${pad(satObj.getMonth() + 1)}-${pad(satObj.getDate())}`;
+        const thuStr = `${thuObj.getFullYear()}-${pad(thuObj.getMonth() + 1)}-${pad(thuObj.getDate())}`;
 
-      setRekapStartDate(monStr);
-      setRekapEndDate(sunStr);
+        setRekapStartDate(satStr);
+        setRekapEndDate(thuStr);
+      } else {
+        const day = now.getDay();
+        const diffToMon = day === 0 ? -6 : 1 - day;
+        const monObj = new Date(now);
+        monObj.setDate(now.getDate() + diffToMon);
+        const sunObj = new Date(monObj);
+        sunObj.setDate(monObj.getDate() + 6);
+
+        const monStr = `${monObj.getFullYear()}-${String(monObj.getMonth() + 1).padStart(2, "0")}-${String(monObj.getDate()).padStart(2, "0")}`;
+        const sunStr = `${sunObj.getFullYear()}-${String(sunObj.getMonth() + 1).padStart(2, "0")}-${String(sunObj.getDate()).padStart(2, "0")}`;
+
+        setRekapStartDate(monStr);
+        setRekapEndDate(sunStr);
+      }
     } else if (rekapPeriodType === "bulanan") {
       const y = now.getFullYear();
       const m = String(now.getMonth() + 1).padStart(2, "0");
@@ -785,7 +804,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
       setRekapStartDate("");
       setRekapEndDate("");
     }
-  }, [rekapPeriodType, selectedDate, todayStr]);
+  }, [rekapPeriodType, selectedDate, todayStr, isKepalaSekolah]);
 
   // Pending replacement check
   const pendingReplacementExchanges = useMemo(() => {
@@ -793,7 +812,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
   }, [scheduleExchangesList]);
 
   const { data: rekapData, isLoading: isLoadingRekap } = useQuery({
-    queryKey: ["teacherAttendanceRecap", selectedAyId, selectedSemesterId, rekapStartDate, rekapEndDate, filterTeacherId, filterSubjectId, filterGradeLevel, filterClassId],
+    queryKey: ["teacherAttendanceRecap", selectedAyId, selectedSemesterId, rekapStartDate, rekapEndDate, filterTeacherId, filterSubjectId, filterGradeLevel, filterClassId, toleranceMinutes],
     queryFn: () => teacherTeachingAttendanceService.getAttendanceRecap({
       academicYearId: selectedAyId,
       semesterId: rekapPeriodType === "tahunan" ? undefined : selectedSemesterId,
@@ -802,7 +821,8 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
       teacherId: filterTeacherId || undefined,
       subjectId: filterSubjectId || undefined,
       gradeLevel: filterGradeLevel || undefined,
-      classId: filterClassId || undefined
+      classId: filterClassId || undefined,
+      toleranceMinutes
     })
   });
 
@@ -1005,7 +1025,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
       "Menggantikan (JP)": s.menggantikanJP,
       "Digantikan (JP)": s.digantikanJP,
       "Tidak Hadir (JP)": s.tidakHadirJP,
-      "Terlambat (JP)": s.terlambatJP,
+      [`Telat >${toleranceMinutes} Menit (JP)`]: s.terlambatOverToleranceJP || 0,
       "Total JP": s.totalJP,
       "Persentase Kehadiran (%)": `${s.kehadiranPercentage ?? s.percentage}%`,
       "Status Neraca": s.isBalanced ? "✓ Valid (Seimbang)" : "⚠ Cek Neraca"
@@ -1027,7 +1047,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
 
     let startY = 30;
     doc.setFontSize(8.5);
-    doc.text("No | Nama Guru | JML JP | Kehadiran | Menggantikan | Digantikan | Tidak Hadir | Terlambat | Total JP | % Kehadiran", 14, startY);
+    doc.text(`No | Nama Guru | JML JP | Kehadiran | Menggantikan | Digantikan | Tidak Hadir | Telat >${toleranceMinutes}M | Total JP | % Kehadiran`, 14, startY);
     doc.line(14, startY + 2, 280, startY + 2);
     startY += 8;
 
@@ -1036,7 +1056,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
         doc.addPage();
         startY = 15;
       }
-      const line = `${idx + 1}. | ${s.teacherName.padEnd(20, ' ')} | ${s.jmlJp} JP | ${s.hadirJP} JP | ${s.menggantikanJP} JP | ${s.digantikanJP} JP | ${s.tidakHadirJP} JP | ${s.terlambatJP} JP | ${s.totalJP} JP | ${s.kehadiranPercentage ?? s.percentage}%`;
+      const line = `${idx + 1}. | ${s.teacherName.padEnd(20, ' ')} | ${s.jmlJp} JP | ${s.hadirJP} JP | ${s.menggantikanJP} JP | ${s.digantikanJP} JP | ${s.tidakHadirJP} JP | ${s.terlambatOverToleranceJP || 0} JP | ${s.totalJP} JP | ${s.kehadiranPercentage ?? s.percentage}%`;
       doc.text(line, 14, startY);
       startY += 6;
     });
@@ -1258,7 +1278,15 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
             <span className="font-semibold text-slate-500 dark:text-zinc-400">T.A:</span>
             <select
               value={selectedAyId}
-              onChange={(e) => setSelectedAyId(e.target.value)}
+              onChange={(e) => {
+                const newYearId = e.target.value;
+                setSelectedAyId(newYearId);
+                const yearSemesters = semesters.filter(s => s.academicYearId === newYearId);
+                const active = yearSemesters.find(s => s.isActive);
+                if (active) setSelectedSemesterId(active.id);
+                else if (yearSemesters.length > 0) setSelectedSemesterId(yearSemesters[0].id);
+                else setSelectedSemesterId("");
+              }}
               className="bg-transparent font-bold text-slate-800 dark:text-zinc-100 focus:outline-hidden cursor-pointer"
             >
               {academicYears.map(y => (
@@ -2556,7 +2584,7 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
               <div className="flex items-center gap-1 bg-slate-100 dark:bg-zinc-800 p-1 rounded-xl flex-wrap">
                 {[
                   { id: "harian", label: "Hari Ini" },
-                  { id: "mingguan", label: "Minggu Ini" },
+                  { id: "mingguan", label: isKepalaSekolah ? "Mingguan (Sabtu–Kamis)" : "Minggu Ini" },
                   { id: "bulanan", label: "Bulan Ini" },
                   { id: "semester", label: "Semester" },
                   { id: "custom", label: "Rentang Tanggal Bebas" }
@@ -3059,8 +3087,8 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                       <th className="py-3 px-3 text-center text-rose-700 dark:text-rose-400">
                         Tidak Hadir (JP)
                       </th>
-                      <th className="py-3 px-3 text-center text-amber-700 dark:text-amber-400">
-                        Terlambat (JP)
+                      <th className="py-3 px-3 text-center text-amber-700 dark:text-amber-400 font-bold" title={`Kejadian JP yang keterlambatannya melewati batas toleransi aktif (${toleranceMinutes} menit)`}>
+                        {`Telat >${toleranceMinutes} Menit`}
                       </th>
                       <th className="py-3 px-3 text-center bg-blue-50/60 dark:bg-blue-950/30 text-blue-800 dark:text-blue-300 font-black">
                         Total JP
@@ -3080,7 +3108,11 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                       const teacherMenggantikanRecords = rawRecords.filter(r => (r.substituteTeacherId === s.teacherId || r.exchangedWithTeacherId === s.teacherId) && r.teacherId !== s.teacherId);
                       const teacherDigantikanRecords = rawRecords.filter(r => r.teacherId === s.teacherId && (r.status === "Digantikan Guru Lain" || r.status === "Tukar Jadwal"));
                       const teacherTidakHadirRecords = rawRecords.filter(r => r.teacherId === s.teacherId && (r.status === "Tidak Hadir" || r.status === "Izin" || r.status === "Sakit" || r.status === "Tugas Dinas" || r.status === "Belum Terkonfirmasi"));
-                      const teacherTerlambatRecords = rawRecords.filter(r => r.teacherId === s.teacherId && r.status === "Terlambat");
+                      const teacherTerlambatRecords = rawRecords.filter(r => 
+                        r.teacherId === s.teacherId && 
+                        (r.status === "Terlambat" || r.status === "Hadir Mengajar") &&
+                        isRecordOverTolerance(r, toleranceMinutes)
+                      );
 
                       return (
                         <tr key={s.teacherId || idx} className="hover:bg-slate-50/80 dark:hover:bg-zinc-800/40 transition-colors">
@@ -3162,19 +3194,22 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                             )}
                           </td>
 
-                          {/* 6. Terlambat (JP) */}
+                          {/* 6. Telat >Tolerance Menit */}
                           <td className="py-3.5 px-3 text-center">
-                            {s.terlambatJP > 0 ? (
+                            {(s.terlambatOverToleranceJP || 0) > 0 ? (
                               <button
                                 type="button"
-                                onClick={() => openDetailModal(`Sesi Terlambat: ${s.teacherName}`, "terlambat_guru", teacherTerlambatRecords)}
+                                onClick={() => openDetailModal(`Sesi Telat >${toleranceMinutes} Menit: ${s.teacherName}`, "terlambat_guru", teacherTerlambatRecords)}
                                 className="px-2 py-1 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/50 dark:hover:bg-amber-900/60 text-amber-800 dark:text-amber-300 rounded-lg font-bold text-xs border border-amber-200/80 dark:border-amber-800 transition-all cursor-pointer inline-flex items-center gap-1"
-                                title="Informasi keterlambatan (sudah termasuk dalam Kehadiran)"
+                                title={`Informasi sesi terlambat melewati batas toleransi ${toleranceMinutes} menit: ${s.terlambatOverToleranceJP} JP (${s.terlambatOverToleranceCount || 0} sesi) (Klik untuk rincian sesi)`}
                               >
-                                <span>{s.terlambatJP} JP</span>
+                                <span>{s.terlambatOverToleranceJP} JP</span>
+                                {(s.terlambatOverToleranceCount || 0) > 0 && (
+                                  <span className="text-[10px] font-normal text-amber-600 dark:text-amber-400">({s.terlambatOverToleranceCount} sesi)</span>
+                                )}
                               </button>
                             ) : (
-                              <span className="text-slate-300 dark:text-zinc-600 font-semibold">-</span>
+                              <span className="text-slate-300 dark:text-zinc-600 font-semibold">0</span>
                             )}
                           </td>
 
@@ -3327,11 +3362,17 @@ export const TeacherTeachingAttendancePage: React.FC = () => {
                         <td className="py-2.5 px-3">
                           {(() => {
                             const displayInfo = getAttendanceStatusDisplay(r);
+                            const delayM = getRecordDelayMinutes(r);
                             return (
                               <div className="flex flex-col items-start gap-1">
                                 <span className={`px-2 py-0.5 rounded-md font-bold text-[10px] border ${displayInfo.badgeFullClass}`}>
                                   {displayInfo.statusLabel}
                                 </span>
+                                {delayM > 0 && (
+                                  <span className={`text-[10px] font-bold ${delayM > toleranceMinutes ? "text-amber-600 dark:text-amber-400" : "text-slate-500"}`}>
+                                    Telat: {delayM} mnt {delayM > toleranceMinutes ? `(>${toleranceMinutes}m)` : `(≤${toleranceMinutes}m)`}
+                                  </span>
+                                )}
                                 <span className="text-[10px] font-bold text-slate-500 dark:text-zinc-400">
                                   Hadir: {displayInfo.hadirJpText}
                                 </span>

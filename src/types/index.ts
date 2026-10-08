@@ -147,3 +147,7 @@ export * from "./gtkDevelopment.types";
 export * from "./supervision.types";
 export * from "./lessonPlan.types";
 export * from "./realTeachingHours.types";
+export * from "./learningDesignRpm.types";
+export * from "./midtermReport.types";
+export * from "./halaqohRecap.types";
+export * from "./halaqahAttendance.types";

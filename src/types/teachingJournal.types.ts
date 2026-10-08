@@ -43,4 +43,12 @@ export interface TeachingJournal {
   updatedAt: string;
   createdBy: string;
   updatedBy: string;
+
+  // Curriculum Linkage (Phase 1 & Phase 3A Remediation - Optional)
+  topicId?: string;
+  subtopicId?: string;
+  journalSource?: "PROSEM_TOPIC" | "OUT_OF_PROSEM";
+
+  // RPM Planning Reference (Phase RPM-3 - Optional reference only)
+  rpmReferenceId?: string;
 }

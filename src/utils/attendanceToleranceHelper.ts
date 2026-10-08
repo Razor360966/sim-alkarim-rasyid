@@ -193,3 +193,66 @@ export function getEffectiveLateTolerance(settings?: any): number {
   }
   return 15;
 }
+
+/**
+ * Extract actual delay / late duration in minutes from an attendance record.
+ * Returns 0 if check-in was on time, before start time, or not late.
+ */
+export function getRecordDelayMinutes(record: {
+  lateMinutes?: number | null;
+  checkInTime?: string | null;
+  scheduleStartTime?: string | null;
+  timeSlot?: string | null;
+  notes?: string | null;
+}): number {
+  if (typeof record.lateMinutes === "number" && !isNaN(record.lateMinutes)) {
+    return Math.max(0, record.lateMinutes);
+  }
+
+  if (record.checkInTime) {
+    const checkInM = parseTimeToMinutes(record.checkInTime);
+    let startM = 0;
+    if (record.scheduleStartTime) {
+      startM = parseTimeToMinutes(record.scheduleStartTime);
+    } else if (record.timeSlot) {
+      const match = record.timeSlot.match(/(\d{1,2}:\d{2})/);
+      if (match) {
+        startM = parseTimeToMinutes(match[1]);
+      }
+    }
+
+    if (checkInM > 0 && startM > 0 && checkInM > startM) {
+      return checkInM - startM;
+    }
+  }
+
+  if (record.notes) {
+    const match = record.notes.match(/terlambat.*?(\d+)\s*menit/i);
+    if (match) {
+      return parseInt(match[1], 10);
+    }
+  }
+
+  return 0;
+}
+
+/**
+ * Check if a record strictly exceeds the active late tolerance.
+ * Strict inequality: delayMinutes > toleranceMinutes.
+ * (e.g. if tolerance is 15: delay <= 15 is FALSE, delay >= 16 is TRUE).
+ */
+export function isRecordOverTolerance(
+  record: {
+    lateMinutes?: number | null;
+    checkInTime?: string | null;
+    scheduleStartTime?: string | null;
+    timeSlot?: string | null;
+    notes?: string | null;
+  },
+  toleranceMinutes: number
+): boolean {
+  const tol = Math.max(0, Math.floor(Number(toleranceMinutes) || 0));
+  const delay = getRecordDelayMinutes(record);
+  return delay > tol;
+}
+

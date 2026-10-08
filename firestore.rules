@@ -2,7 +2,10 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions
+    // =========================================================================
+    // HELPER FUNCTIONS & AUTHENTICATION ABSTRACTIONS
+    // =========================================================================
+
     function isAuthenticated() {
       return request.auth != null;
     }
@@ -13,17 +16,60 @@ service cloud.firestore {
       );
     }
 
+    function hasUserDoc() {
+      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
     function getUserData() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function getUserRole() {
+      return hasUserDoc() ? getUserData().role : "";
+    }
+
+    function getUserRoles() {
+      return (hasUserDoc() && ('roles' in getUserData())) ? getUserData().roles : [];
+    }
+
+    function getUserTeacherId() {
+      return (hasUserDoc() && ('teacherId' in getUserData())) ? getUserData().teacherId : "";
     }
 
     function isAdminOrOperator() {
       return isAuthenticated() && (
         isSuperAdmin() ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
-          getUserData().role in ['admin', 'operator', 'kepala sekolah', 'wakil kepala sekolah', 'tata usaha'] ||
-          getUserData().roles.hasAny(['admin', 'operator', 'kepala sekolah', 'wakil kepala sekolah', 'tata usaha'])
+        (hasUserDoc() && (
+          getUserRole() in ['admin', 'operator', 'kepala sekolah', 'wakil kepala sekolah', 'tata usaha', 'wakakur', 'wakasis', 'wakasarpras', 'kurikulum'] ||
+          getUserRoles().hasAny(['admin', 'operator', 'kepala sekolah', 'wakil kepala sekolah', 'tata usaha', 'wakakur', 'wakasis', 'wakasarpras', 'kurikulum'])
         ))
+      );
+    }
+
+    function isCurriculumStaff() {
+      return isAuthenticated() && (
+        isAdminOrOperator() ||
+        (hasUserDoc() && (
+          getUserRole() in ['wakil kepala sekolah', 'kepala sekolah', 'kurikulum', 'wakakur'] ||
+          getUserRoles().hasAny(['wakil kepala sekolah', 'kepala sekolah', 'kurikulum', 'wakakur'])
+        ))
+      );
+    }
+
+    function isLeadershipOrEvaluator() {
+      return isAuthenticated() && (
+        isAdminOrOperator() ||
+        (hasUserDoc() && (
+          getUserRole() in ['ketua yayasan', 'pimpinan', 'yayasan'] ||
+          getUserRoles().hasAny(['ketua yayasan', 'pimpinan', 'yayasan'])
+        ))
+      );
+    }
+
+    function isBoardingStaff() {
+      return isAuthenticated() && hasUserDoc() && (
+        getUserRole() in ['musrif', 'guru halaqoh'] ||
+        getUserRoles().hasAny(['musrif', 'guru halaqoh'])
       );
     }
 
@@ -35,18 +81,25 @@ service cloud.firestore {
       );
     }
 
-    // 1. Users collection: Prevent unauthorized privilege escalation
+    // =========================================================================
+    // 1. USERS & ACCESS CONTROL (IMMUTABLE PRIVILEGES)
+    // =========================================================================
     match /users/{userId} {
       allow read: if isAuthenticated();
-      // Allow user self-creation or Admin/Operator creation
+      // Allow user self-creation with default base roles only; Admin/SuperAdmin creation
       allow create: if isAuthenticated() && (
         (request.auth.uid == userId && (
           isSuperAdmin() ||
-          (request.resource.data.role != 'admin' && !request.resource.data.roles.hasAny(['admin']))
+          (
+            request.resource.data.role in ['guru', 'musrif', 'guru halaqoh'] &&
+            (!('roles' in request.resource.data) || !request.resource.data.roles.hasAny(['admin', 'operator', 'kepala sekolah', 'wakil kepala sekolah', 'ketua yayasan', 'pimpinan', 'tata usaha', 'kurikulum', 'wakakur'])) &&
+            (!('isAdmin' in request.resource.data) || request.resource.data.isAdmin == false) &&
+            (!('permissions' in request.resource.data) || request.resource.data.permissions.size() == 0)
+          )
         )) ||
         isAdminOrOperator()
       );
-      // Allow user self-update of profile fields, but prevent privilege escalation (role, roles, status, teacherId, isDeleted, permissions, isAdmin)
+      // Allow user self-update of personal profile, but strictly prevent privilege escalation
       allow update: if isAuthenticated() && (
         isAdminOrOperator() ||
         (request.auth.uid == userId &&
@@ -58,7 +111,9 @@ service cloud.firestore {
       allow delete: if isAdminOrOperator();
     }
 
-    // 2. Audit Trail: Immutable append-only
+    // =========================================================================
+    // 2. AUDIT TRAILS & HISTORICAL LOGS (IMMUTABLE APPEND-ONLY)
+    // =========================================================================
     match /activity_logs/{logId} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated();
@@ -71,8 +126,110 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    // 3. Settings & Teacher Assignments: Managed by Admin/Operator
+    match /teacher_attendance_audit_logs/{logId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    match /teacher_attendance_audit_logs_simulation/{logId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    match /student_attendance_audit_logs/{docId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    match /mutabaah_logs/{docId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    match /e_rapor_audit_logs/{docId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    match /e_rapor_historical_audit_logs/{docId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    match /riwayat_pemeriksaan/{historyId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    // =========================================================================
+    // 3. SETTINGS & OPERATIONAL CONFIGURATION
+    // =========================================================================
     match /settings/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /school_settings/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /school_settings_history/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /jp_adjustments/{adjustmentId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /e_rapor_settings/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    // =========================================================================
+    // 4. ACADEMIC MASTER DATA & ASSIGNMENTS (ADMIN/OPERATOR CONTROLLED)
+    // =========================================================================
+    match /academic_years/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /semesters/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /classes/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /subjects/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /lesson_periods/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /teachers/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /students/{docId} {
       allow read: if isAuthenticated();
       allow write: if isAdminOrOperator();
     }
@@ -82,7 +239,472 @@ service cloud.firestore {
       allow write: if isAdminOrOperator();
     }
 
-    // 4. e-Rapor Assessments & Schemes: Locked when class verified/locked
+    match /academic_calendar/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /academic_reference/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /curriculum_matrix/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    // =========================================================================
+    // 5. SCHEDULES (MASTER OPERASIONAL KBM)
+    // Teachers & monitoring have READ access. WRITE strictly restricted to Admin/Operator.
+    // =========================================================================
+    match /schedules/{scheduleId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    // =========================================================================
+    // 6. CURRICULUM PLANNING (PROTA, PROSEM & MODUL AJAR)
+    // Managed by Curriculum Staff or assigned teacher. Prevents ownership hijacking.
+    // =========================================================================
+    match /annual_programs/{docId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && (
+        isCurriculumStaff() ||
+        (hasUserDoc() && (
+          request.resource.data.teacherId == getUserTeacherId() ||
+          request.resource.data.teacherId == request.auth.uid ||
+          request.resource.data.createdBy == request.auth.uid
+        ))
+      );
+      allow update: if isAuthenticated() && (
+        isCurriculumStaff() ||
+        (hasUserDoc() && (
+          (resource.data.teacherId == getUserTeacherId() ||
+           resource.data.teacherId == request.auth.uid ||
+           resource.data.createdBy == request.auth.uid) &&
+          request.resource.data.teacherId == resource.data.teacherId
+        ))
+      );
+      allow delete: if isCurriculumStaff();
+    }
+
+    match /semester_programs/{docId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && (
+        isCurriculumStaff() ||
+        (hasUserDoc() && (
+          request.resource.data.teacherId == getUserTeacherId() ||
+          request.resource.data.teacherId == request.auth.uid ||
+          request.resource.data.createdBy == request.auth.uid
+        ))
+      );
+      allow update: if isAuthenticated() && (
+        isCurriculumStaff() ||
+        (hasUserDoc() && (
+          (resource.data.teacherId == getUserTeacherId() ||
+           resource.data.teacherId == request.auth.uid ||
+           resource.data.createdBy == request.auth.uid) &&
+          request.resource.data.teacherId == resource.data.teacherId
+        ))
+      );
+      allow delete: if isCurriculumStaff();
+    }
+
+    match /lesson_plans/{docId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && (
+        isCurriculumStaff() ||
+        (hasUserDoc() && (
+          request.resource.data.teacherId == getUserTeacherId() ||
+          request.resource.data.teacherId == request.auth.uid ||
+          request.resource.data.createdBy == request.auth.uid
+        ))
+      );
+      allow update: if isAuthenticated() && (
+        isCurriculumStaff() ||
+        (hasUserDoc() && (
+          (resource.data.teacherId == getUserTeacherId() ||
+           resource.data.teacherId == request.auth.uid ||
+           resource.data.createdBy == request.auth.uid) &&
+          request.resource.data.teacherId == resource.data.teacherId
+        ))
+      );
+      allow delete: if isCurriculumStaff() || (
+        hasUserDoc() && (
+          resource.data.teacherId == getUserTeacherId() ||
+          resource.data.teacherId == request.auth.uid ||
+          resource.data.createdBy == request.auth.uid
+        )
+      );
+    }
+
+    // =========================================================================
+    // 6.1 LEARNING DESIGNS RPM (RANCANGAN PEMBELAJARAN) - RPM-4 HARDENED RBAC
+    // =========================================================================
+    match /learning_designs_rpm/{docId} {
+      allow read: if isAuthenticated() && (
+        isCurriculumStaff() ||
+        isLeadershipOrEvaluator() ||
+        (hasUserDoc() && (
+          resource.data.teacherId == getUserTeacherId() ||
+          resource.data.teacherId == request.auth.uid ||
+          resource.data.createdBy == request.auth.uid
+        ))
+      );
+
+      allow create: if isAuthenticated() && (
+        request.resource.data.status in ['DRAFT', 'DITINJAU'] &&
+        (!('approvedBy' in request.resource.data) || request.resource.data.approvedBy == null || request.resource.data.approvedBy == '') &&
+        (!('approvedAt' in request.resource.data) || request.resource.data.approvedAt == null || request.resource.data.approvedAt == '') &&
+        (
+          isCurriculumStaff() ||
+          (hasUserDoc() && (
+            request.resource.data.teacherId == getUserTeacherId() ||
+            request.resource.data.teacherId == request.auth.uid ||
+            request.resource.data.createdBy == request.auth.uid
+          ))
+        )
+      );
+
+      allow update: if isAuthenticated() && (
+        (
+          isCurriculumStaff() &&
+          (
+            (
+              request.resource.data.status == 'DISETUJUI' &&
+              request.auth.uid != resource.data.createdBy &&
+              (resource.data.teacherId == '' || (request.auth.uid != resource.data.teacherId && getUserTeacherId() != resource.data.teacherId)) &&
+              request.resource.data.approvedBy == request.auth.uid &&
+              request.resource.data.approvedAt != null
+            ) ||
+            (
+              request.resource.data.status in ['DRAFT', 'DITINJAU'] &&
+              (!('approvedBy' in request.resource.data) || request.resource.data.approvedBy == null || request.resource.data.approvedBy == '')
+            )
+          )
+        ) ||
+        (
+          hasUserDoc() &&
+          (
+            resource.data.teacherId == getUserTeacherId() ||
+            resource.data.teacherId == request.auth.uid ||
+            resource.data.createdBy == request.auth.uid
+          ) &&
+          request.resource.data.teacherId == resource.data.teacherId &&
+          request.resource.data.status in ['DRAFT', 'DITINJAU'] &&
+          (!('approvedBy' in request.resource.data) || request.resource.data.approvedBy == null || request.resource.data.approvedBy == '') &&
+          (!('approvedAt' in request.resource.data) || request.resource.data.approvedAt == null || request.resource.data.approvedAt == '')
+        )
+      );
+
+      allow delete: if isAuthenticated() && (
+        isCurriculumStaff() ||
+        (
+          hasUserDoc() &&
+          resource.data.status == 'DRAFT' &&
+          (
+            resource.data.teacherId == getUserTeacherId() ||
+            resource.data.teacherId == request.auth.uid ||
+            resource.data.createdBy == request.auth.uid
+          )
+        )
+      );
+    }
+
+    // =========================================================================
+    // 7. TEACHING JOURNALS (OWNERSHIP & IMMUTABILITY GUARANTEE)
+    // =========================================================================
+    match /teaching_journals/{journalId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && (
+        isAdminOrOperator() ||
+        (hasUserDoc() && (
+          request.resource.data.teacherId == getUserTeacherId() ||
+          request.resource.data.teacherId == request.auth.uid ||
+          request.resource.data.createdBy == request.auth.uid
+        ))
+      );
+      allow update: if isAuthenticated() && (
+        isAdminOrOperator() ||
+        (hasUserDoc() && (
+          (resource.data.teacherId == getUserTeacherId() ||
+           resource.data.teacherId == request.auth.uid ||
+           resource.data.createdBy == request.auth.uid) &&
+          // Prevent ownership hijacking
+          request.resource.data.teacherId == resource.data.teacherId
+        ))
+      );
+      allow delete: if isAuthenticated() && (
+        isAdminOrOperator() ||
+        (hasUserDoc() && (
+          resource.data.teacherId == getUserTeacherId() ||
+          resource.data.teacherId == request.auth.uid ||
+          resource.data.createdBy == request.auth.uid
+        ))
+      );
+    }
+
+    // =========================================================================
+    // 8. TEACHER TEACHING ATTENDANCE & SCHEDULE EXCHANGES
+    // Teachers may record their check-in/sessions. Delete strictly restricted to Admin/Operator.
+    // =========================================================================
+    match /teacher_teaching_attendances/{attendanceId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && (
+        isAdminOrOperator() ||
+        (request.resource.data.recordedByUserId == request.auth.uid && (
+          request.resource.data.teacherId == getUserTeacherId() ||
+          request.resource.data.teacherId == request.auth.uid ||
+          isAdminOrOperator()
+        ))
+      );
+      allow delete: if isAdminOrOperator();
+    }
+
+    match /teacher_teaching_attendances_simulation/{attendanceId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && (
+        isAdminOrOperator() ||
+        (request.resource.data.recordedByUserId == request.auth.uid && (
+          request.resource.data.teacherId == getUserTeacherId() ||
+          request.resource.data.teacherId == request.auth.uid ||
+          isAdminOrOperator()
+        ))
+      );
+      allow delete: if isAdminOrOperator();
+    }
+
+    match /schedule_exchanges/{exchangeId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && (
+        isAdminOrOperator() ||
+        request.resource.data.recordedByUserId == request.auth.uid ||
+        request.resource.data.teacherId == getUserTeacherId() ||
+        request.resource.data.requesterTeacherId == getUserTeacherId() ||
+        request.resource.data.createdBy == request.auth.uid
+      );
+      allow delete: if isAdminOrOperator();
+    }
+
+    // =========================================================================
+    // 9. HALAQAH & ASRAMA MANAGEMENT
+    // =========================================================================
+    match /halaqah_groups/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator() || isBoardingStaff() || (hasUserDoc() && (
+        getUserRole() in ['guru halaqoh'] || getUserRoles().hasAny(['guru halaqoh'])
+      ));
+    }
+
+    match /halaqah_group_members/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator() || isBoardingStaff() || (hasUserDoc() && (
+        getUserRole() in ['guru halaqoh'] || getUserRoles().hasAny(['guru halaqoh'])
+      ));
+    }
+
+    match /halaqah_schedules/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator() || isBoardingStaff() || (hasUserDoc() && (
+        getUserRole() in ['guru halaqoh'] || getUserRoles().hasAny(['guru halaqoh'])
+      ));
+    }
+
+    match /teacher_halaqah_attendances/{attendanceId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && (
+        isAdminOrOperator() ||
+        request.resource.data.recordedByUserId == request.auth.uid ||
+        request.resource.data.teacherId == getUserTeacherId() ||
+        request.resource.data.teacherId == request.auth.uid
+      );
+      allow delete: if isAdminOrOperator();
+    }
+
+    match /asrama_groups/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator() || isBoardingStaff();
+    }
+
+    match /asrama_group_members/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator() || isBoardingStaff();
+    }
+
+    match /musrif_journals/{docId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && (
+        isAdminOrOperator() ||
+        isBoardingStaff() ||
+        request.resource.data.musrifId == getUserTeacherId() ||
+        request.resource.data.createdBy == request.auth.uid
+      );
+      allow delete: if isAdminOrOperator();
+    }
+
+    match /musrif_journal_details/{docId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && (
+        isAdminOrOperator() ||
+        isBoardingStaff() ||
+        request.resource.data.musrifId == getUserTeacherId() ||
+        request.resource.data.createdBy == request.auth.uid
+      );
+      allow delete: if isAdminOrOperator();
+    }
+
+    // =========================================================================
+    // 10. STUDENT ATTENDANCE & DAILY MUTABAAH GTK
+    // =========================================================================
+    match /student_attendances/{docId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && (
+        isAdminOrOperator() ||
+        (hasUserDoc() && (
+          request.resource.data.teacherId == getUserTeacherId() ||
+          request.resource.data.teacherId == request.auth.uid ||
+          request.resource.data.createdBy == request.auth.uid ||
+          request.resource.data.createdBy == getUserData().name ||
+          request.resource.data.updatedBy == getUserData().name
+        ))
+      );
+      allow delete: if isAdminOrOperator();
+    }
+
+    match /mutabaah_templates/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /mutabaah_indicators/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /mutabaah_periods/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /mutabaah_entries/{docId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && (
+        isAdminOrOperator() ||
+        request.resource.data.userId == request.auth.uid
+      );
+      allow update: if isAuthenticated() && (
+        isAdminOrOperator() ||
+        (resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid)
+      );
+      allow delete: if isAdminOrOperator();
+    }
+
+    // =========================================================================
+    // 11. SUPERVISION, DISCIPLINE & AGENDAS
+    // =========================================================================
+    match /supervision_academic/{supervisionId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /supervision_managerial/{supervisionId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /supervision_schedules/{scheduleId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /supervision_instruments/{instrumentId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /supervision_results/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /teacher_discipline_histories/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /school_agendas/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    // =========================================================================
+    // 12. GTK DEVELOPMENT ACTIVITIES
+    // =========================================================================
+    match /gtk_development_activities/{docId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && (
+        isAdminOrOperator() ||
+        request.resource.data.gtkId == getUserTeacherId() ||
+        request.resource.data.gtkId == request.auth.uid
+      );
+      allow update: if isAuthenticated() && (
+        isAdminOrOperator() ||
+        (
+          (resource.data.gtkId == getUserTeacherId() || resource.data.gtkId == request.auth.uid) &&
+          request.resource.data.gtkId == resource.data.gtkId
+        )
+      );
+      allow delete: if isAdminOrOperator() || (
+        isAuthenticated() && (
+          resource.data.gtkId == getUserTeacherId() || resource.data.gtkId == request.auth.uid
+        )
+      );
+    }
+
+    // =========================================================================
+    // 13. SDM PERFORMANCE EVALUATIONS
+    // =========================================================================
+    match /master_jabatans/{jabatanId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /sdm_performance_evaluations/{evalId} {
+      allow read: if isAuthenticated();
+      allow write: if isLeadershipOrEvaluator();
+    }
+
+    // =========================================================================
+    // 14. INVENTARIS SANTRI & GOODS
+    // =========================================================================
+    match /inventaris_goods/{goodId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /inventaris_categories/{catId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /inventaris_examiners/{examinerId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /inventaris_santri/{studentId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && (
+        isAdminOrOperator() ||
+        exists(/databases/$(database)/documents/inventaris_examiners/$(request.auth.uid))
+      );
+      allow delete: if isAdminOrOperator();
+    }
+
+    // =========================================================================
+    // 15. E-RAPOR ASSESSMENTS, SCHEMES & VERIFICATIONS
+    // =========================================================================
     match /e_rapor_assessments/{docId} {
       allow read: if isAuthenticated();
       allow create, update: if isAuthenticated() && (
@@ -119,61 +741,44 @@ service cloud.firestore {
       allow delete: if isAdminOrOperator();
     }
 
-    // 5. Verification & Grade Change Requests
+    match /e_rapor_tps/{docId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && (
+        isAdminOrOperator() ||
+        !isClassVerificationLocked(request.resource.data.academicYearId, request.resource.data.semesterId, request.resource.data.classId)
+      );
+      allow delete: if isAdminOrOperator();
+    }
+
+    match /e_rapor_extracurriculars/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /e_rapor_historical_assessments/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
     match /e_rapor_class_verifications/{docId} {
       allow read: if isAuthenticated();
       allow write: if isAuthenticated() && (
         isAdminOrOperator() ||
         request.auth.uid == request.resource.data.homeroomTeacherId ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         getUserData().teacherId == request.resource.data.homeroomTeacherId)
+        (hasUserDoc() && getUserTeacherId() == request.resource.data.homeroomTeacherId)
       );
     }
 
     match /e_rapor_grade_change_requests/{docId} {
       allow read: if isAuthenticated();
-      allow create, update: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAdminOrOperator();
       allow delete: if isAdminOrOperator();
     }
 
-    // 6. Master & Operational Modules
-    match /master_jabatans/{jabatanId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /sdm_performance_evaluations/{evalId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /supervision_academic/{supervisionId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /supervision_managerial/{supervisionId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /supervision_schedules/{scheduleId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /supervision_instruments/{instrumentId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /inventaris_goods/{goodId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /inventaris_categories/{catId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /inventaris_examiners/{examinerId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /inventaris_santri/{studentId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /riwayat_pemeriksaan/{historyId} {
-      allow read, write: if isAuthenticated();
-    }
-
-    // Default permissive catch-all for remaining school operational tables
-    match /{document=**} {
-      allow read, write: if isAuthenticated();
-    }
+    // =========================================================================
+    // DEFAULT: CATCH-ALL PERMISSIVE FALLBACK REMOVED
+    // Any document path not explicitly matched above is DENIED by default.
+    // =========================================================================
   }
 }

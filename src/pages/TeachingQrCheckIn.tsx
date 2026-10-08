@@ -37,6 +37,7 @@ import { HalaqahGroup } from "../types/musrifJournal.types";
 import { TeacherHalaqahAttendance } from "../types/halaqahAttendance.types";
 import { ClassQrCardsModal } from "../components/ClassQrCardsModal";
 import { HalaqahGroupQrCardsModal } from "../components/HalaqahGroupQrCardsModal";
+import { isGuruHalaqohOrMusrif } from "../utils/halaqahRoleHelper";
 
 // Synthesize pleasant chime sound on success scan or warning chime on late pending
 const playAudioFeedback = (type: "success_checkin" | "success_checkout" | "warning_late" | "error") => {
@@ -210,7 +211,7 @@ export const TeachingQrCheckInPage: React.FC = () => {
     ))
   );
 
-  const isGuruHalaqoh = userRole === "guru halaqoh" || userRole === "guru_halaqoh" || userRoles.includes("guru halaqoh") || userRoles.includes("guru_halaqoh");
+  const isGuruHalaqoh = isGuruHalaqohOrMusrif(userRole, userRoles);
   const isRegularTeacher = userRole === "guru" || userRoles.includes("guru") || isWakakurOrAdmin;
   const isOnlyGuruHalaqoh = isGuruHalaqoh && !isRegularTeacher;
 
@@ -284,8 +285,8 @@ export const TeachingQrCheckInPage: React.FC = () => {
       }
     }
 
-    // 2. Fetch Halaqah Sessions if user has Halaqah role, musrif role, or admin
-    if (isGuruHalaqoh || isWakakurOrAdmin || userRole === "musrif" || userRoles.includes("musrif")) {
+    // 2. Fetch Halaqah Sessions if user has Halaqah/Musrif role, or admin
+    if (isGuruHalaqoh || isWakakurOrAdmin) {
       try {
         const now = new Date();
         const currentDay = now.toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta", weekday: "long" });

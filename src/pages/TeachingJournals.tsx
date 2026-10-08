@@ -37,6 +37,9 @@ import {
   teachingJournalService 
 } from "../services/teachingJournalService";
 import { 
+  learningDesignRpmService 
+} from "../services/learningDesignRpm.service";
+import { 
   lessonPeriodService 
 } from "../services/lessonPeriod.service";
 import { StudentAttendanceModal } from "../components/StudentAttendanceModal";
@@ -49,7 +52,10 @@ import {
   Student, 
   Class, 
   Subject, 
-  Teacher 
+  Teacher,
+  SemesterProgram,
+  LearningDesignRpm,
+  RpmMeetingPlan
 } from "../types";
 import { consolidateSchedulesToMeetings, ScheduleMeeting } from "../utils/meetingConsolidator";
 import { 
@@ -74,7 +80,8 @@ import {
   CheckCircle2,
   Calendar,
   Grid,
-  AlertTriangle
+  AlertTriangle,
+  Sparkles
 } from "lucide-react";
 
 export const TeachingJournals: React.FC = () => {
@@ -171,7 +178,23 @@ export const TeachingJournals: React.FC = () => {
 
   // Prota Topic Autopopulation Helpers
   const [protaTopics, setProtaTopics] = useState<any[]>([]);
+  const [currentProsem, setCurrentProsem] = useState<SemesterProgram | null>(null);
+  const [selectedJournalSource, setSelectedJournalSource] = useState<"PROSEM_TOPIC" | "OUT_OF_PROSEM" | "">("");
   const [selectedProtaTopicId, setSelectedProtaTopicId] = useState<string>("");
+  const [selectedProtaSubTopicId, setSelectedProtaSubTopicId] = useState<string>("");
+
+  // RPM Context Reference State (RPM-3 Integration - Read Only Reference)
+  const [contextRpmsMap, setContextRpmsMap] = useState<Map<string, LearningDesignRpm>>(new Map());
+  const [isRpmViewModalOpen, setIsRpmViewModalOpen] = useState<boolean>(false);
+  const [selectedRpmReferenceId, setSelectedRpmReferenceId] = useState<string>("");
+
+  // Matched RPM for currently active Prosem topic
+  const matchedRpm = useMemo(() => {
+    if (selectedJournalSource === "PROSEM_TOPIC" && selectedProtaTopicId && selectedProtaTopicId !== "OUT_OF_PROSEM") {
+      return contextRpmsMap.get(selectedProtaTopicId) || null;
+    }
+    return null;
+  }, [contextRpmsMap, selectedJournalSource, selectedProtaTopicId]);
 
   const [formFields, setFormFields] = useState({
     material: "",
@@ -271,6 +294,7 @@ export const TeachingJournals: React.FC = () => {
         });
       }
       setProtaTopics(filteredTopics);
+      setCurrentProsem(prosem || null);
 
       if (isMapelKepesantrenan) {
         // Mapel Kepesantrenan / Diniyah: Prota/Promes/TP is flexible & NOT mandatory
@@ -293,6 +317,24 @@ export const TeachingJournals: React.FC = () => {
         setHasProsem(prosemValid);
         setHasTP(tpValid);
       }
+
+      // Batch load RPMs for this curriculum context (Anti-N+1: single query)
+      if (activeYear?.id && activeSemester?.id && classId && subjectId) {
+        try {
+          const rpms = await learningDesignRpmService.getRpmsMapByContext({
+            academicYearId: activeYear.id,
+            semesterId: activeSemester.id,
+            classId,
+            subjectId
+          });
+          setContextRpmsMap(rpms);
+        } catch (rpmErr) {
+          console.warn("Could not load RPMs map for context:", rpmErr);
+          setContextRpmsMap(new Map());
+        }
+      } else {
+        setContextRpmsMap(new Map());
+      }
     } catch (err) {
       console.error("Prota/Prosem check error:", err);
       if (isMapelKepesantrenan) {
@@ -305,6 +347,7 @@ export const TeachingJournals: React.FC = () => {
         setHasTP(false);
       }
       setProtaTopics([]);
+      setContextRpmsMap(new Map());
     } finally {
       setIsCheckingCurriculum(false);
     }
@@ -471,7 +514,12 @@ export const TeachingJournals: React.FC = () => {
     } else {
       setSelectedSchedule(null);
       setProtaTopics([]);
+      setCurrentProsem(null);
+      setSelectedJournalSource("");
       setSelectedProtaTopicId("");
+      setSelectedProtaSubTopicId("");
+      setContextRpmsMap(new Map());
+      setSelectedRpmReferenceId("");
       setHasProta(true);
       setHasProsem(true);
       setHasTP(true);
@@ -480,7 +528,25 @@ export const TeachingJournals: React.FC = () => {
 
   // Handle topic auto-fill helper selection
   const handleProtaTopicChange = (topicId: string) => {
+    if (topicId === "OUT_OF_PROSEM") {
+      setSelectedJournalSource("OUT_OF_PROSEM");
+      setSelectedProtaTopicId("OUT_OF_PROSEM");
+      setSelectedProtaSubTopicId("");
+      toast("Mode materi di luar Prosem / input manual aktif", "info");
+      return;
+    }
+
+    if (!topicId) {
+      setSelectedJournalSource("");
+      setSelectedProtaTopicId("");
+      setSelectedProtaSubTopicId("");
+      return;
+    }
+
+    setSelectedJournalSource("PROSEM_TOPIC");
     setSelectedProtaTopicId(topicId);
+    setSelectedProtaSubTopicId("");
+
     const topic = protaTopics.find(t => t.id === topicId);
     if (topic) {
       setFormFields(prev => ({
@@ -488,8 +554,71 @@ export const TeachingJournals: React.FC = () => {
         material: topic.title,
         learningObjectives: topic.description || ""
       }));
-      toast("Data materi dan tujuan pembelajaran berhasil disinkronisasi dari Prota/Promes!", "success");
+      toast("Materi dan TP berhasil disinkronisasi dari target Prosem!", "success");
     }
+  };
+
+  // Handle subtopic auto-fill helper selection
+  const handleProtaSubTopicChange = (subtopicId: string) => {
+    const topic = protaTopics.find(t => t.id === selectedProtaTopicId);
+    if (!topic) {
+      setSelectedProtaSubTopicId("");
+      return;
+    }
+
+    if (subtopicId) {
+      const subtopic = topic.subtopics?.find((st: any) => st.id === subtopicId);
+      if (subtopic) {
+        setSelectedProtaSubTopicId(subtopicId);
+        setFormFields(prev => ({
+          ...prev,
+          material: `${topic.title} - ${subtopic.title}`,
+          learningObjectives: subtopic.description || topic.description || ""
+        }));
+        toast("Subtopik berhasil disinkronisasi!", "success");
+      } else {
+        setSelectedProtaSubTopicId("");
+      }
+    } else {
+      setSelectedProtaSubTopicId("");
+      // Revert to main topic text
+      setFormFields(prev => ({
+        ...prev,
+        material: topic.title,
+        learningObjectives: topic.description || ""
+      }));
+    }
+  };
+
+  // Handle copying RPM meeting plan as a draft starting point for Journal (RPM-3 Integration)
+  const handleApplyRpmPlanAsReference = (plan: RpmMeetingPlan) => {
+    if (!matchedRpm) return;
+
+    // Gracefully construct learning activities overview from RPM session
+    const introStr = plan.activitiesOverview?.intro ? `[Kegiatan Awal]:\n${plan.activitiesOverview.intro}` : "";
+    const coreStr = plan.activitiesOverview?.core ? `[Kegiatan Inti]:\n${plan.activitiesOverview.core}` : "";
+    const closingStr = plan.activitiesOverview?.closing ? `[Kegiatan Penutup]:\n${plan.activitiesOverview.closing}` : "";
+    const diffStr = plan.differentiationNotes ? `[Catatan Diferensiasi]:\n${plan.differentiationNotes}` : "";
+
+    const combinedActivities = [introStr, coreStr, closingStr, diffStr].filter(Boolean).join("\n\n");
+
+    setFormFields(prev => ({
+      ...prev,
+      material: plan.subtopicTitle ? `${matchedRpm.topicTitle} - ${plan.subtopicTitle}` : matchedRpm.topicTitle,
+      learningObjectives: plan.learningObjective || prev.learningObjectives,
+      learningMethod: plan.modelOrMethod || prev.learningMethod,
+      learningActivities: combinedActivities || prev.learningActivities,
+      learningMedia: plan.mediaAndResources || prev.learningMedia,
+      assessment: plan.assessmentPlan || prev.assessment
+    }));
+
+    if (plan.subtopicId) {
+      setSelectedProtaSubTopicId(plan.subtopicId);
+    }
+
+    setSelectedRpmReferenceId(matchedRpm.id);
+    setIsRpmViewModalOpen(false);
+    toast(`Rancangan Pertemuan Ke-${plan.meetingNo} berhasil disalin ke draf jurnal! Anda dapat menyesuaikan seluruh isian sebelum menyimpan.`, "success");
   };
 
   // Update attendance values safely
@@ -624,7 +753,7 @@ export const TeachingJournals: React.FC = () => {
     const resolvedTeacherId = targetSched?.teacherId || assignedTeacher?.id || user?.teacherId || "GURU_ALM_01";
     const resolvedTeacherName = targetSched?.teacherName || assignedTeacher?.name || user?.teacherName || user?.displayName || user?.name || "Guru Pengampu";
 
-    const payload = {
+    const payload: any = {
       teacherId: resolvedTeacherId,
       teacherName: resolvedTeacherName,
       academicYearId: activeYear?.id || "",
@@ -649,6 +778,44 @@ export const TeachingJournals: React.FC = () => {
       updatedBy: user?.userId || "system"
     };
 
+    // Attach curriculum linkage if selected (Phase 1, 2, & Phase 3A Remediation)
+    if (selectedJournalSource === "PROSEM_TOPIC" && selectedProtaTopicId && selectedProtaTopicId !== "OUT_OF_PROSEM") {
+      const activeTopic = protaTopics.find(t => t.id === selectedProtaTopicId);
+      if (activeTopic) {
+        payload.topicId = selectedProtaTopicId;
+        payload.journalSource = "PROSEM_TOPIC";
+        if (selectedProtaSubTopicId && selectedProtaSubTopicId.trim() !== "") {
+          const validSubtopic = activeTopic.subtopics?.find((st: any) => st.id === selectedProtaSubTopicId);
+          if (validSubtopic) {
+            payload.subtopicId = selectedProtaSubTopicId;
+          }
+        }
+      }
+    } else if (selectedJournalSource === "OUT_OF_PROSEM") {
+      payload.journalSource = "OUT_OF_PROSEM";
+      // topicId and subtopicId are intentionally omitted
+    } else if (selectedJournal) {
+      // Editing existing journal without explicitly changing topic
+      if (selectedJournal.journalSource) {
+        payload.journalSource = selectedJournal.journalSource;
+      }
+      if (selectedJournal.topicId) {
+        payload.topicId = selectedJournal.topicId;
+      }
+      if (selectedJournal.subtopicId) {
+        payload.subtopicId = selectedJournal.subtopicId;
+      }
+      // If legacy unlinked (!selectedJournal.journalSource && !selectedJournal.topicId),
+      // neither journalSource nor topicId is attached. It stays purely legacy/unlinked!
+    }
+
+    // Attach optional RPM reference ID if used
+    if (selectedRpmReferenceId) {
+      payload.rpmReferenceId = selectedRpmReferenceId;
+    } else if (selectedJournal?.rpmReferenceId) {
+      payload.rpmReferenceId = selectedJournal.rpmReferenceId;
+    }
+
     if (selectedJournal) {
       updateMutation.mutate({
         id: selectedJournal.id,
@@ -670,6 +837,26 @@ export const TeachingJournals: React.FC = () => {
     setSelectedDate(journal.date);
     setSelectedScheduleId("");
     setSelectedSchedule(null);
+    if (journal.journalSource === "OUT_OF_PROSEM") {
+      setSelectedJournalSource("OUT_OF_PROSEM");
+      setSelectedProtaTopicId("OUT_OF_PROSEM");
+      setSelectedProtaSubTopicId("");
+    } else if (journal.journalSource === "PROSEM_TOPIC") {
+      setSelectedJournalSource("PROSEM_TOPIC");
+      setSelectedProtaTopicId(journal.topicId || "");
+      setSelectedProtaSubTopicId(journal.subtopicId || "");
+    } else if (journal.topicId) {
+      // Legacy journal with topicId
+      setSelectedJournalSource("PROSEM_TOPIC");
+      setSelectedProtaTopicId(journal.topicId);
+      setSelectedProtaSubTopicId(journal.subtopicId || "");
+    } else {
+      // Pure legacy / unlinked journal - do NOT auto-select OUT_OF_PROSEM!
+      setSelectedJournalSource("");
+      setSelectedProtaTopicId("");
+      setSelectedProtaSubTopicId("");
+    }
+    setSelectedRpmReferenceId(journal.rpmReferenceId || "");
     setFormFields({
       material: journal.material,
       learningObjectives: journal.learningObjectives,
@@ -1211,19 +1398,184 @@ export const TeachingJournals: React.FC = () => {
             )}
           </div>
 
-          {/* Autopopulation Helper Dropdown */}
-          {protaTopics.length > 0 && !selectedJournal && (
-            <div className="p-4 bg-amber-50 dark:bg-amber-950/20 border border-amber-150 dark:border-amber-900/40 rounded-xl space-y-2">
-              <label className="text-xs font-bold text-amber-800 dark:text-amber-400 uppercase tracking-wider block">Asisten Prota/Promes Terdeteksi</label>
-              <FormSelect
-                label="Pilih topik dari rencana Prota/Promes untuk otomatis mengisi form"
-                value={selectedProtaTopicId}
-                onChange={(e) => handleProtaTopicChange(e.target.value)}
-                options={[
-                  { value: "", label: "-- Pilih Topik Pembelajaran --" },
-                  ...protaTopics.map(t => ({ value: t.id, label: t.title }))
-                ]}
-              />
+          {/* Target Materi Prosem & Linkage Kurikulum (Phase 2 UX) */}
+          {protaTopics.length > 0 && (
+            <div className="p-4 bg-amber-50 dark:bg-amber-950/20 border border-amber-150 dark:border-amber-900/40 rounded-xl space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-amber-800 dark:text-amber-400 uppercase tracking-wider block">
+                  Target Materi Prosem
+                </label>
+                {selectedJournalSource === "PROSEM_TOPIC" && selectedProtaTopicId && selectedProtaTopicId !== "OUT_OF_PROSEM" ? (
+                  <span className="text-[11px] font-semibold px-2.5 py-0.5 bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 rounded-md border border-emerald-200 dark:border-emerald-800 flex items-center gap-1">
+                    ✓ Tertaut ke Target Prosem
+                  </span>
+                ) : selectedJournalSource === "OUT_OF_PROSEM" ? (
+                  <span className="text-[11px] font-medium px-2 py-0.5 bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 rounded-md border border-purple-200 dark:border-purple-800">
+                    Materi Bebas / Di Luar Prosem
+                  </span>
+                ) : selectedJournal && !selectedJournal.journalSource && !selectedJournal.topicId ? (
+                  <span className="text-[11px] font-medium px-2 py-0.5 bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 rounded-md border border-amber-200 dark:border-amber-800">
+                    Jurnal Lama / Belum Tertaut
+                  </span>
+                ) : (
+                  <span className="text-[11px] font-medium px-2 py-0.5 bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded-md border border-slate-200 dark:border-zinc-700">
+                    Belum Dipilih
+                  </span>
+                )}
+              </div>
+
+              {/* Priority Topic Dropdown */}
+              {(() => {
+                // Check if currentProsem has a planned KBM meeting on selectedDate with topicId
+                const matchingMeeting = currentProsem?.meetings?.find(
+                  m => m.date === selectedDate && m.status === "KBM" && m.topicId
+                );
+                const priorityTopicId = matchingMeeting?.topicId;
+
+                const defaultPlaceholder = selectedJournal && !selectedJournal.journalSource && !selectedJournal.topicId
+                  ? "-- Jurnal Lama / Belum Tertaut (Pilih jika ingin menautkan) --"
+                  : "-- Pilih Target Materi Prosem (Atau Di Luar Prosem) --";
+
+                const options: { value: string; label: string }[] = [
+                  { value: "", label: defaultPlaceholder }
+                ];
+
+                // Prioritize topic planned for selectedDate if present in protaTopics
+                if (priorityTopicId) {
+                  const prioTopic = protaTopics.find(t => t.id === priorityTopicId);
+                  if (prioTopic) {
+                    options.push({
+                      value: prioTopic.id,
+                      label: `⭐ [Target Pertemuan Ini] ${prioTopic.title} (${prioTopic.jp} JP)`
+                    });
+                  }
+                }
+
+                // Add remaining Prosem topics
+                protaTopics.forEach(t => {
+                  if (t.id !== priorityTopicId) {
+                    options.push({
+                      value: t.id,
+                      label: `${t.title} (${t.jp} JP)`
+                    });
+                  }
+                });
+
+                // Explicit option for manual or out-of-prosem entry
+                options.push({
+                  value: "OUT_OF_PROSEM",
+                  label: "📌 Lainnya / Di Luar Prosem (Materi Tambahan / Remedial / Input Bebas)"
+                });
+
+                let dropdownValue = "";
+                if (selectedJournalSource === "OUT_OF_PROSEM" || selectedProtaTopicId === "OUT_OF_PROSEM") {
+                  dropdownValue = "OUT_OF_PROSEM";
+                } else if (selectedProtaTopicId) {
+                  dropdownValue = selectedProtaTopicId;
+                }
+
+                return (
+                  <FormSelect
+                    label="Pilih Materi Rencana Pembelajaran"
+                    value={dropdownValue}
+                    onChange={(e) => handleProtaTopicChange(e.target.value)}
+                    options={options}
+                  />
+                );
+              })()}
+
+              {/* Subtopic Selector if selected topic has subtopics */}
+              {(() => {
+                const currentTopic = protaTopics.find(t => t.id === selectedProtaTopicId);
+                if (currentTopic?.subtopics && currentTopic.subtopics.length > 0) {
+                  return (
+                    <div className="pt-1">
+                      <FormSelect
+                        label="Pilih Subtopik / Rincian Materi (Opsional)"
+                        value={selectedProtaSubTopicId}
+                        onChange={(e) => handleProtaSubTopicChange(e.target.value)}
+                        options={[
+                          { value: "", label: "-- Seluruh Topik Utama (Tanpa Subtopik) --" },
+                          ...currentTopic.subtopics.map((st: any) => ({
+                            value: st.id,
+                            label: `${st.title} (${st.jp} JP)`
+                          }))
+                        ]}
+                      />
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
+              {/* RPM Planning Reference Indicator & Actions (RPM-3 Integration) */}
+              {selectedJournalSource === "PROSEM_TOPIC" && selectedProtaTopicId && selectedProtaTopicId !== "OUT_OF_PROSEM" && (
+                <div className="pt-2 border-t border-amber-200/60 dark:border-amber-900/40">
+                  {matchedRpm ? (
+                    <div className="p-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                          <span className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
+                            ✓ RPM tersedia untuk topik ini
+                          </span>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            matchedRpm.status === "DISETUJUI" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200" :
+                            matchedRpm.status === "DITINJAU" ? "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200" : "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
+                          }`}>
+                            {matchedRpm.status}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-emerald-700 dark:text-emerald-300">
+                          {matchedRpm.meetingPlans.length} Sesi Pertemuan terencana ({matchedRpm.meetingPlans.reduce((s, p) => s + (p.allocatedJP || 0), 0)} JP Rencana)
+                          {selectedRpmReferenceId === matchedRpm.id && (
+                            <span className="ml-2 font-bold text-emerald-800 dark:text-emerald-200">
+                              • Draf terisi dari RPM
+                            </span>
+                          )}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2 self-end sm:self-center">
+                        <button
+                          type="button"
+                          onClick={() => setIsRpmViewModalOpen(true)}
+                          className="px-3 py-1.5 text-xs font-semibold bg-white dark:bg-zinc-800 text-slate-700 dark:text-zinc-200 border border-slate-300 dark:border-zinc-700 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
+                        >
+                          <Eye className="w-3.5 h-3.5 text-slate-500" />
+                          Lihat RPM
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (matchedRpm.meetingPlans.length === 1) {
+                              handleApplyRpmPlanAsReference(matchedRpm.meetingPlans[0]);
+                            } else {
+                              setIsRpmViewModalOpen(true);
+                            }
+                          }}
+                          className="px-3 py-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors cursor-pointer shadow-xs flex items-center gap-1.5"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          Gunakan sebagai Referensi
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-3 bg-slate-100/80 dark:bg-zinc-800/50 border border-slate-200 dark:border-zinc-700 rounded-xl flex items-center justify-between text-xs text-slate-600 dark:text-zinc-400">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-slate-400" />
+                        <span className="font-semibold text-slate-700 dark:text-zinc-300">
+                          ○ RPM belum tersedia
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-slate-500">
+                        Jurnal tetap dapat diisi dan disimpan secara manual
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -1487,6 +1839,26 @@ export const TeachingJournals: React.FC = () => {
                 </div>
               </div>
 
+              {/* RPM Planning Reference in Journal Detail */}
+              {selectedJournal.rpmReferenceId && (
+                <div className="p-3 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-xl flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    <div>
+                      <span className="font-bold text-emerald-900 dark:text-emerald-200">
+                        Referensi RPM Terhubung
+                      </span>
+                      <p className="text-[11px] text-emerald-700 dark:text-emerald-300">
+                        Jurnal ini disusun dengan merujuk pada Rancangan Pembelajaran (RPM) terencana.
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-mono font-medium px-2 py-0.5 bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-200 rounded-md">
+                    Ref ID: {selectedJournal.rpmReferenceId}
+                  </span>
+                </div>
+              )}
+
               {/* Attendance and link summary */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="p-4 bg-slate-50 dark:bg-zinc-800/30 border border-slate-200 dark:border-zinc-800 rounded-xl flex items-center justify-between">
@@ -1703,6 +2075,209 @@ export const TeachingJournals: React.FC = () => {
           }}
         />
       )}
+
+      {/* RPM View & Reference Picker Dialog (RPM-3 Integration) */}
+      <Dialog
+        isOpen={isRpmViewModalOpen}
+        onClose={() => setIsRpmViewModalOpen(false)}
+        title="Rancangan Pembelajaran (RPM) — Referensi Pembelajaran"
+        size="2xl"
+      >
+        <div className="space-y-6">
+          {matchedRpm ? (
+            <>
+              {/* Context Summary Header */}
+              <div className="p-4 bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-xl space-y-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider block">
+                      Topik Prosem
+                    </span>
+                    <h4 className="text-base font-bold text-slate-800 dark:text-zinc-100 mt-0.5">
+                      {matchedRpm.topicTitle}
+                    </h4>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${
+                      matchedRpm.status === "DISETUJUI" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200" :
+                      matchedRpm.status === "DITINJAU" ? "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200" :
+                      "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
+                    }`}>
+                      Status: {matchedRpm.status}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs pt-2 border-t border-emerald-200/60 dark:border-emerald-800/40">
+                  <div>
+                    <span className="text-slate-500 uppercase font-semibold text-[10px] block">Guru Perancang</span>
+                    <span className="font-bold text-slate-700 dark:text-zinc-300">{matchedRpm.teacherName}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 uppercase font-semibold text-[10px] block">Jumlah Pertemuan</span>
+                    <span className="font-bold text-slate-700 dark:text-zinc-300">{matchedRpm.meetingPlans.length} Sesi</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 uppercase font-semibold text-[10px] block">Alokasi RPM</span>
+                    <span className="font-bold text-slate-700 dark:text-zinc-300">
+                      {matchedRpm.meetingPlans.reduce((sum, p) => sum + (p.allocatedJP || 0), 0)} JP
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 uppercase font-semibold text-[10px] block">Target Prosem</span>
+                    <span className="font-bold text-slate-700 dark:text-zinc-300">{matchedRpm.totalTargetJP} JP</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Informative Guidance Banner */}
+              <div className="p-3 bg-blue-50/70 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900/40 rounded-xl text-xs text-blue-800 dark:text-blue-300 flex items-start gap-2.5">
+                <Sparkles className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+                <p className="leading-relaxed">
+                  Pilih salah satu sesi pertemuan di bawah untuk disalin ke formulir jurnal hari ini. 
+                  Penyalinan bersifat <strong>satu arah (draf awal)</strong> — alokasi JP jurnal tetap mengikuti jadwal resmi KBM dan Anda tetap bebas menyunting atau melengkapi seluruh rincian kegiatan sesuai kenyataan di kelas.
+                </p>
+              </div>
+
+              {/* Meeting Plans List */}
+              <div className="space-y-4">
+                <h5 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                  Daftar Sesi Pertemuan Terencana ({matchedRpm.meetingPlans.length})
+                </h5>
+
+                {matchedRpm.meetingPlans.length === 0 ? (
+                  <div className="p-6 text-center text-slate-500 text-xs border border-dashed border-slate-300 dark:border-zinc-700 rounded-xl">
+                    Belum ada sesi pertemuan dalam RPM ini.
+                  </div>
+                ) : (
+                  matchedRpm.meetingPlans.map((plan) => (
+                    <div 
+                      key={plan.meetingNo}
+                      className="p-4 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl space-y-3 shadow-2xs hover:border-emerald-300 dark:hover:border-emerald-800 transition-colors"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-100 dark:border-zinc-800">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2.5 py-1 bg-emerald-600 text-white font-bold text-xs rounded-lg shadow-2xs">
+                            Pertemuan Ke-{plan.meetingNo}
+                          </span>
+                          <span className="text-xs font-bold text-slate-600 dark:text-zinc-400">
+                            ({plan.allocatedJP} JP)
+                          </span>
+                          {plan.subtopicTitle && (
+                            <span className="text-xs px-2 py-0.5 bg-slate-100 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 rounded-md font-semibold">
+                              Subtopik: {plan.subtopicTitle}
+                            </span>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleApplyRpmPlanAsReference(plan)}
+                          className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg transition-colors cursor-pointer shadow-xs flex items-center gap-1.5 self-start sm:self-auto"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          Gunakan Sesi Ini
+                        </button>
+                      </div>
+
+                      {/* Learning Objective */}
+                      <div>
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                          Tujuan Pembelajaran
+                        </span>
+                        <p className="text-xs font-semibold text-slate-700 dark:text-zinc-300 mt-0.5">
+                          {plan.learningObjective || "-"}
+                        </p>
+                      </div>
+
+                      {/* Model & Activities */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                        <div className="p-2.5 bg-slate-50 dark:bg-zinc-800/40 rounded-lg border border-slate-150 dark:border-zinc-800">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                            Model / Metode
+                          </span>
+                          <span className="font-semibold text-slate-700 dark:text-zinc-300 block mt-0.5">
+                            {plan.modelOrMethod || "-"}
+                          </span>
+                        </div>
+                        <div className="p-2.5 bg-slate-50 dark:bg-zinc-800/40 rounded-lg border border-slate-150 dark:border-zinc-800">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                            Media & Sumber
+                          </span>
+                          <span className="font-semibold text-slate-700 dark:text-zinc-300 block mt-0.5">
+                            {plan.mediaAndResources || "-"}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Activities Overview */}
+                      <div className="p-3 bg-slate-50/70 dark:bg-zinc-800/30 rounded-lg border border-slate-150 dark:border-zinc-800 space-y-2 text-xs">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                          Gambaran Aktivitas
+                        </span>
+                        {plan.activitiesOverview?.intro && (
+                          <div>
+                            <span className="font-semibold text-slate-500 text-[11px]">Awal: </span>
+                            <span className="text-slate-700 dark:text-zinc-300">{plan.activitiesOverview.intro}</span>
+                          </div>
+                        )}
+                        {plan.activitiesOverview?.core && (
+                          <div>
+                            <span className="font-semibold text-slate-500 text-[11px]">Inti: </span>
+                            <span className="text-slate-700 dark:text-zinc-300">{plan.activitiesOverview.core}</span>
+                          </div>
+                        )}
+                        {plan.activitiesOverview?.closing && (
+                          <div>
+                            <span className="font-semibold text-slate-500 text-[11px]">Penutup: </span>
+                            <span className="text-slate-700 dark:text-zinc-300">{plan.activitiesOverview.closing}</span>
+                          </div>
+                        )}
+                        {plan.differentiationNotes && (
+                          <div className="pt-1 border-t border-slate-200 dark:border-zinc-700 text-amber-700 dark:text-amber-300">
+                            <span className="font-semibold text-[11px]">Diferensiasi: </span>
+                            <span>{plan.differentiationNotes}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Assessment */}
+                      {plan.assessmentPlan && (
+                        <div>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                            Rencana Asesmen
+                          </span>
+                          <p className="text-xs text-slate-600 dark:text-zinc-400 mt-0.5">
+                            {plan.assessmentPlan}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="p-8 text-center text-slate-500 text-sm">
+              <AlertCircle className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+              <p className="font-semibold">RPM belum tersedia untuk topik ini.</p>
+              <p className="text-xs text-slate-400 mt-1">
+                Anda tetap dapat mengisi dan menyimpan jurnal secara mandiri.
+              </p>
+            </div>
+          )}
+
+          <div className="flex justify-end pt-4 border-t border-slate-200 dark:border-zinc-800">
+            <button
+              type="button"
+              onClick={() => setIsRpmViewModalOpen(false)}
+              className="px-5 py-2 bg-slate-600 hover:bg-slate-500 text-white font-semibold text-xs rounded-xl cursor-pointer transition-colors"
+            >
+              Tutup
+            </button>
+          </div>
+        </div>
+      </Dialog>
     </div>
   );
 };

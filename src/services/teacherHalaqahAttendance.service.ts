@@ -19,6 +19,7 @@ import { halaqahGroupService } from "./halaqahGroupService";
 import { schoolAgendaService } from "./schoolAgenda.service";
 import { schoolSettingsService } from "./schoolSettings.service";
 import { getEffectiveLateTolerance } from "../utils/attendanceToleranceHelper";
+import { isGuruHalaqohOrMusrif, HALAQOH_AUTH_DENIED_MESSAGE } from "../utils/halaqahRoleHelper";
 
 const HALAQAH_ATTENDANCE_COLLECTION = "teacher_halaqah_attendances";
 const HALAQAH_SCHEDULES_COLLECTION = "halaqah_schedules";
@@ -314,42 +315,28 @@ export const teacherHalaqahAttendanceService = {
       const groupMusrifId = matchedGroup.musrifId || "";
       const groupMusrifName = (matchedGroup.musrifName || "").toLowerCase().trim();
 
-      const userRole = (params.currentUser.role || "").toLowerCase();
-      const userRoles = (params.currentUser.roles || []).map(r => (r || "").toLowerCase());
+      // Step 5A. Strict RBAC Guard (HALAQOH-RECAP-2.2)
+      // Guru Halaqoh adalah akun yang memiliki minimal salah satu role: Musrif ATAU Guru Halaqoh.
+      // Jika akun tidak lagi memiliki kedua role tersebut (e.g. roles = ['guru'] atau roles = []):
+      // Check-in & Check-out DITOLAK (DENY) dan tidak boleh ada mutasi presensi ke Firestore.
+      const hasHalaqohRole = isGuruHalaqohOrMusrif(params.currentUser.role, params.currentUser.roles);
+      if (!hasHalaqohRole) {
+        return {
+          success: false,
+          message: HALAQOH_AUTH_DENIED_MESSAGE
+        };
+      }
 
-      const isAuthorizedRole = 
-        userRole === "guru halaqoh" ||
-        userRole === "guru_halaqoh" ||
-        userRole === "musrif" ||
-        userRole === "guru" ||
-        userRole === "admin" ||
-        userRole === "wakil kepala sekolah" ||
-        userRole === "kepala sekolah" ||
-        userRole === "pimpinan" ||
-        userRoles.includes("guru halaqoh") ||
-        userRoles.includes("guru_halaqoh") ||
-        userRoles.includes("musrif") ||
-        userRoles.includes("guru") ||
-        userRoles.includes("admin") ||
-        userRoles.includes("wakil kepala sekolah") ||
-        userRoles.includes("kepala sekolah") ||
-        userRoles.includes("pimpinan");
-
-      const isAdminOrPimpinan = 
-        userRole === "admin" ||
-        userRole === "wakil kepala sekolah" ||
-        userRole === "kepala sekolah" ||
-        userRole === "pimpinan" ||
-        userRoles.includes("admin") ||
-        userRoles.includes("wakil kepala sekolah") ||
-        userRoles.includes("wakakur");
-
+      // Step 5B. Validate Teacher Assignment to the specific Halaqah Group
       const isTeacherAssigned = 
-        (groupMusrifId && (groupMusrifId === userTeacherId || groupMusrifId === params.currentUser.id || groupMusrifId === params.currentUser.uid)) ||
-        (groupMusrifName && groupMusrifName === userNameNorm) ||
-        isAdminOrPimpinan;
+        Boolean(groupMusrifId && (
+          groupMusrifId === userTeacherId ||
+          groupMusrifId === params.currentUser.id ||
+          groupMusrifId === params.currentUser.uid
+        )) ||
+        Boolean(groupMusrifName && groupMusrifName === userNameNorm);
 
-      if (!isAuthorizedRole || !isTeacherAssigned) {
+      if (!isTeacherAssigned) {
         return {
           success: false,
           message: "Anda tidak ditugaskan sebagai pembimbing pada kelompok Halaqah ini."

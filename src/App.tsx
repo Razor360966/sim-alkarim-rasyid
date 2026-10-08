@@ -50,6 +50,7 @@ const EffectiveJp = lazyRetry(() => import("./pages/EffectiveJp"), "EffectiveJp"
 const AcademicReferences = lazyRetry(() => import("./pages/AcademicReferences"), "AcademicReferences");
 const AnnualProgram = lazyRetry(() => import("./pages/AnnualProgram"), "AnnualProgram");
 const SemesterProgram = lazyRetry(() => import("./pages/SemesterProgram"), "SemesterProgram");
+const LearningDesignRpm = lazyRetry(() => import("./pages/LearningDesignRpm"), "LearningDesignRpm");
 const LessonPlans = lazyRetry(() => import("./pages/LessonPlans"), "LessonPlans");
 const TeachingJournals = lazyRetry(() => import("./pages/TeachingJournals"), "TeachingJournals");
 const MySchedule = lazyRetry(() => import("./pages/MySchedule"), "MySchedule");
@@ -69,12 +70,15 @@ const StudentAttendancePage = lazyRetry(() => import("./pages/StudentAttendance"
 const TeacherDisciplinePage = lazyRetry(() => import("./pages/TeacherDiscipline"), "TeacherDiscipline");
 const ExecutiveMutabaahGuruPage = lazyRetry(() => import("./pages/ExecutiveMutabaahGuruPage"), "ExecutiveMutabaahGuruPage");
 const AssistedCheckInPage = lazyRetry(() => import("./pages/AssistedCheckIn"), "AssistedCheckIn");
+const LearningProgressMonitoringPage = lazyRetry(() => import("./pages/LearningProgressMonitoring"), "LearningProgressMonitoring");
 const ERaporTeacherInput = lazyRetry(() => import("./pages/ERaporTeacherInput"), "ERaporTeacherInput");
 const ERaporHomeroomView = lazyRetry(() => import("./pages/ERaporHomeroomView"), "ERaporHomeroomView");
 const ERaporStudentBiodataPage = lazyRetry(() => import("./pages/ERaporStudentBiodataPage"), "ERaporStudentBiodataPage");
 const ERaporLegerPage = lazyRetry(() => import("./pages/ERaporLegerPage"), "ERaporLegerPage");
 const ERaporExecutiveDashboard = lazyRetry(() => import("./pages/ERaporExecutiveDashboard"), "ERaporExecutiveDashboard");
 const ERaporSettingsPage = lazyRetry(() => import("./pages/ERaporSettingsPage"), "ERaporSettingsPage");
+const MidtermReportPage = lazyRetry(() => import("./pages/MidtermReport"), "MidtermReport");
+const HalaqohAttendanceRecapPage = lazyRetry(() => import("./pages/HalaqohAttendanceRecap"), "HalaqohAttendanceRecap");
 const AboutApp = lazyRetry(() => import("./pages/AboutApp"), "AboutApp");
 const OfflinePage = lazyRetry(() => import("./pages/OfflinePage"), "OfflinePage");
 const NotFound = lazyRetry(() => import("./pages/NotFound"), "NotFound");
@@ -163,6 +167,8 @@ export default function App() {
                         {/* Perencanaan Pembelajaran */}
                         <Route path="annual-programs" element={<AnnualProgram />} />
                         <Route path="semester-programs" element={<SemesterProgram />} />
+                        <Route path="rpm" element={<LearningDesignRpm />} />
+                        <Route path="RPM" element={<Navigate to="/rpm" replace />} />
                         <Route path="lesson-plans" element={<LessonPlans />} />
                         <Route path="teaching-journals" element={<TeachingJournals />} />
                         <Route path="my-schedule" element={<MySchedule />} />
@@ -181,6 +187,9 @@ export default function App() {
 
                         {/* Monitoring Pembelajaran - Absensi Mengajar Guru & Siswa */}
                         <Route path="teacher-teaching-attendance" element={<TeacherTeachingAttendancePage />} />
+                        <Route path="halaqoh-attendance-recap" element={<HalaqohAttendanceRecapPage />} />
+                        <Route path="rekap-absensi-halaqoh" element={<Navigate to="/halaqoh-attendance-recap" replace />} />
+                        <Route path="learning-progress-monitoring" element={<LearningProgressMonitoringPage />} />
                         <Route path="teaching-qr-checkin" element={<TeachingQrCheckInPage />} />
                         <Route path="assisted-check-in" element={<AssistedCheckInPage />} />
                         <Route path="teaching-qr-simulation" element={<TeachingQrSimulationPage />} />
@@ -193,6 +202,8 @@ export default function App() {
                         <Route path="e-rapor/student-biodata" element={<ERaporStudentBiodataPage />} />
                         <Route path="e-rapor/wali-kelas" element={<ERaporHomeroomView />} />
                         <Route path="e-rapor/leger" element={<ERaporLegerPage />} />
+                        <Route path="rapor-tengah-semester" element={<MidtermReportPage />} />
+                        <Route path="e-rapor/midterm" element={<Navigate to="/rapor-tengah-semester" replace />} />
                         <Route path="e-rapor/dashboard" element={<ERaporExecutiveDashboard />} />
                         <Route path="e-rapor/settings" element={<ERaporSettingsPage />} />
                       </Route>

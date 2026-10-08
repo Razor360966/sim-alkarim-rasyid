@@ -3,6 +3,8 @@ import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { TeacherTeachingAttendance } from "../types/teacherTeachingAttendance.types";
 import { getAttendanceStatusDisplay } from "../utils/teacherAttendanceDisplayHelper";
+import { useSchoolSettings } from "../hooks/schoolSettings.hook";
+import { getEffectiveLateTolerance, isRecordOverTolerance } from "../utils/attendanceToleranceHelper";
 import { 
   Calendar, 
   CheckCircle2, 
@@ -51,6 +53,9 @@ export const TeacherMonthlyAttendanceSummary: React.FC<Props> = ({
   academicYearId,
   semesterId
 }) => {
+  const { settings: schoolSettings } = useSchoolSettings();
+  const toleranceMinutes = getEffectiveLateTolerance(schoolSettings);
+
   const [loading, setLoading] = useState(true);
   const [attendances, setAttendances] = useState<TeacherTeachingAttendance[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<MonthlyStats | null>(null);
@@ -135,8 +140,8 @@ export const TeacherMonthlyAttendanceSummary: React.FC<Props> = ({
             tidakHadir += 1;
           } else if (it.status === "Hadir Mengajar" || it.status === "Terlambat" || it.checkInTime) {
             kehadiran += 1;
-            if (it.status === "Terlambat") {
-              terlambat += 1; // Terlambat hanya informasi keterlambatan, tidak mengurangi Kehadiran
+            if (isRecordOverTolerance(it, toleranceMinutes)) {
+              terlambat += 1; // Hanya kejadian keterlambatan yang benar-benar melewati batas toleransi aktif
             }
           } else if (it.status === "Izin" || it.status === "Sakit" || it.status === "Tugas Dinas") {
             // Sesi berhalangan yang tidak digantikan
@@ -251,7 +256,7 @@ export const TeacherMonthlyAttendanceSummary: React.FC<Props> = ({
                 <th className="px-3 py-3 text-center" title="Jadwal Asli Guru (Kehadiran + Digantikan + Tidak Hadir)">JML JP</th>
                 <th className="px-3 py-3 text-center text-emerald-700 dark:text-emerald-400">Kehadiran</th>
                 <th className="px-3 py-3 text-center text-blue-700 dark:text-blue-400">Menggantikan</th>
-                <th className="px-3 py-3 text-center text-amber-700 dark:text-amber-400" title="Informasi Keterlambatan">Terlambat (JP)</th>
+                <th className="px-3 py-3 text-center text-amber-700 dark:text-amber-400 font-bold" title={`Informasi Keterlambatan melewati batas toleransi ${toleranceMinutes} menit`}>{`Telat >${toleranceMinutes} Menit`}</th>
                 <th className="px-3 py-3 text-center text-purple-700 dark:text-purple-400">Digantikan</th>
                 <th className="px-3 py-3 text-center text-rose-700 dark:text-rose-400">Tidak Hadir</th>
                 <th className="px-3 py-3 text-center text-indigo-700 dark:text-indigo-400 font-bold" title="Kehadiran + Menggantikan">Total JP</th>

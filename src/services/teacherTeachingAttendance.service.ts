@@ -27,12 +27,14 @@ import { academicPlanningService } from "./academicPlanning.service";
 import { lessonPeriodService } from "./lessonPeriod.service";
 import { classService } from "./classService";
 import { schoolSettingsService, DEFAULT_TEACHING_ATTENDANCE_SETTINGS } from "./schoolSettings.service";
-import { SchoolSettings, Schedule } from "../types";
+import { SchoolSettings, Schedule, Subject, LessonPeriod, Class, TeacherAssignment } from "../types";
 import { academicYearService } from "./academicYearService";
 import { semesterService } from "./semester.service";
 import { teacherHalaqahAttendanceService } from "./teacherHalaqahAttendance.service";
-import { evaluateLateness, getEffectiveLateTolerance, isLate } from "../utils/attendanceToleranceHelper";
-import { getCanonicalSlotKey, getCanonicalClassId } from "../utils/gradeLevelHelper";
+import { evaluateLateness, getEffectiveLateTolerance, isLate, isRecordOverTolerance, getRecordDelayMinutes } from "../utils/attendanceToleranceHelper";
+import { getCanonicalSlotKey, getCanonicalClassId, isClassMatch, normalizeGradeLevel } from "../utils/gradeLevelHelper";
+import { subjectService } from "./subjectService";
+import { teacherAssignmentService } from "./teacherAssignment.service";
 import { initializeApp, getApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { userService } from "./user.service";
@@ -96,11 +98,20 @@ export function resolveUserId(providedUserId?: string | null, currentUserObj?: a
 
 export function getIndonesianDayName(dateStr: string): string {
   if (!dateStr) return "Senin";
-  // Add T00:00:00 to prevent local timezone shift
-  const date = new Date(dateStr + "T00:00:00");
-  const dayIndex = date.getDay();
+  const clean = dateStr.split("T")[0].trim();
+  const parts = clean.split("-");
+  if (parts.length === 3) {
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const d = parseInt(parts[2], 10);
+    // Use noon UTC: in UTC+7 (Asia/Jakarta), noon UTC is 19:00 on the same date, avoiding any date boundary shifts
+    const utcDate = new Date(Date.UTC(y, m, d, 12, 0, 0));
+    const dayNames = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+    return dayNames[utcDate.getUTCDay()] || "Senin";
+  }
+  const date = new Date(dateStr);
   const days = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
-  return days[dayIndex] || "Senin";
+  return days[date.getDay()] || "Senin";
 }
 
 // Helper to normalize teacher names for fuzzy matching (stripping titles like Drs, Ir, M.Pd, etc.)
@@ -167,46 +178,6 @@ export function isClassMatching(itemClassName?: string, targetClassName?: string
         return true;
       }
     }
-  }
-
-  return false;
-}
-
-/**
- * PATCH 1: Evaluasi apakah sebuah record attendance memiliki bukti aktivitas kehadiran riil/final
- * (Scan QR aktual, Assisted Check-in, Check-out, Validasi pimpinan/wakakur, Penggantian guru, Pertukaran jadwal,
- * atau status kehadiran definitif seperti Hadir Mengajar, Terlambat, Izin, Sakit, Tugas Dinas, Tidak Hadir).
- * 
- * BUKAN status placeholder/default/unconfirmed seperti "Belum Diverifikasi", "Belum Dimulai", "Belum Terkonfirmasi", atau "KBM Ditiadakan".
- */
-export function hasRealAttendanceActivity(record?: TeacherTeachingAttendance | null): boolean {
-  if (!record) return false;
-
-  // 1. Bukti aktivitas scan QR, assisted check-in, atau check-out aktual
-  if (Boolean(record.checkInTime || record.checkOutTime)) return true;
-  if (Array.isArray(record.checkInLogs) && record.checkInLogs.length > 0) return true;
-
-  // 2. Bukti penggantian guru (substitusi) atau pertukaran jadwal resmi
-  if (Boolean(record.isSubstitution || record.isReplaced || record.replacementId)) return true;
-  if (Boolean(record.exchangedWithTeacherId || record.exchangedScheduleId)) return true;
-
-  // 3. Bukti validasi / approval kehadiran riil oleh pimpinan atau wakakur
-  if (Boolean(record.validatedByUserId || record.validatedAt)) return true;
-
-  // 4. Status kehadiran definitif yang sudah dicatat pengguna secara nyata
-  const definitiveStatuses: AttendanceTeachingStatus[] = [
-    "Hadir Mengajar",
-    "Terlambat",
-    "Izin",
-    "Sakit",
-    "Tugas Dinas",
-    "Digantikan Guru Lain",
-    "Tukar Jadwal",
-    "Tidak Hadir"
-  ];
-
-  if (record.status && definitiveStatuses.includes(record.status)) {
-    return true;
   }
 
   return false;
@@ -441,6 +412,8 @@ function createEmptySummary(teacherId: string, teacherName: string): TeacherAtte
     digantikanJP: 0,
     tidakHadirJP: 0,
     terlambatJP: 0,
+    terlambatOverToleranceJP: 0,
+    terlambatOverToleranceCount: 0,
     totalJP: 0,
     kehadiranPercentage: 0,
     isBalanced: true,
@@ -643,11 +616,11 @@ export const teacherTeachingAttendanceService = {
     }
   },
 
-  // Get attendance entries for a specific date derived from schedules
+  // Get attendance entries for a specific date derived directly from Auto Scheduler operational schedules
   async getAttendanceForDate(
     dateStr: string,
-    academicYearId: string,
-    semesterId: string,
+    academicYearId?: string,
+    semesterId?: string,
     isSimulation?: boolean
   ): Promise<{
     date: string;
@@ -658,235 +631,136 @@ export const teacherTeachingAttendanceService = {
   }> {
     const dayName = getIndonesianDayName(dateStr);
 
-    // 1. Check Kaldik status
-    const kaldikInfo = await this.checkKaldikStatus(dateStr, academicYearId, semesterId);
+    // 1. Resolve AY & Semester if not provided or empty
+    let ayId = (academicYearId || "").trim();
+    let semId = (semesterId || "").trim();
+    if (!ayId || !semId) {
+      try {
+        const [ays, sems] = await Promise.all([
+          academicYearService.getAcademicYears(),
+          semesterService.getSemesters()
+        ]);
+        const activeAy = ays.find(a => a.isActive) || ays[0];
+        const activeSem = sems.find(s => s.academicYearId === (ayId || activeAy?.id) && s.isActive) || sems.find(s => s.isActive) || sems[0];
+        if (!ayId && activeAy) ayId = activeAy.id;
+        if (!semId && activeSem) semId = activeSem.id;
+      } catch (e) {
+        console.warn("[getAttendanceForDate] Error resolving active AY/Semester:", e);
+      }
+    }
 
-    // 2. Load schedules for active AY, Semester, and Day
-    const allSchedules = await scheduleService.getSchedules(academicYearId, semesterId);
+    // 2. Check Kaldik status
+    const kaldikInfo = await this.checkKaldikStatus(dateStr, ayId, semId);
 
-    const normalizeDay = (d?: string) => {
-      const clean = (d || "").trim().toLowerCase();
-      if (clean === "ahad") return "minggu";
-      return clean;
-    };
+    // 3. Load operational schedules from Auto Scheduler (SSOT - Single Source of Truth)
+    const allSchedules = await scheduleService.getSchedules(ayId, semId);
+    const daySchedules = allSchedules.filter(s => 
+      (s.day || "").trim().toLowerCase() === dayName.toLowerCase()
+    );
 
-    const activeSchedules = allSchedules.filter(s => {
-      const matchesAy = !academicYearId || s.academicYearId === academicYearId;
-      const matchesSem = !semesterId || s.semesterId === semesterId;
-      const matchesDay = normalizeDay(s.day) === normalizeDay(dayName);
-      const resolved = resolveTeacherForScheduleDate(s, dateStr);
-      const hasTeacher = !!resolved.teacherId && resolved.teacherId !== "none" && resolved.teacherId !== "";
-      return matchesAy && matchesSem && matchesDay && hasTeacher;
-    });
-
-    // Load lesson periods & classes for supplementary fields like time & roomCode
-    const [lessonPeriods, classes] = await Promise.all([
-      lessonPeriodService.getLessonPeriods(),
-      classService.getClasses()
+    // 4. Load master data in parallel for complete, faithful representation
+    const [lessonPeriods, classes, masterSubjects, teacherAssignments] = await Promise.all([
+      lessonPeriodService.getLessonPeriods().catch(() => [] as LessonPeriod[]),
+      classService.getClasses().catch(() => [] as Class[]),
+      subjectService.getSubjects().catch(() => [] as Subject[]),
+      teacherAssignmentService.getTeacherAssignmentsByPeriod(ayId, semId).catch(() => [] as TeacherAssignment[])
     ]);
 
-    const periodMap = new Map(lessonPeriods.map(p => [p.id, p]));
-    const classMap = new Map(classes.map(c => [c.id || c.classId, c]));
+    const subjectMap = new Map(masterSubjects.map(s => [s.id, s]));
 
-    // 3. Load saved attendances for this date from Firestore
+    // 5. Load saved attendances for this date from Firestore
     const targetCollectionName = isSimulation ? "teacher_teaching_attendances_simulation" : COLLECTION_NAME;
     const colRef = collection(db, targetCollectionName);
     const q = query(colRef, where("date", "==", dateStr));
     const snap = await getDocs(q);
     const existingRecords = new Map<string, TeacherTeachingAttendance>();
-    const existingBySlotKey = new Map<string, TeacherTeachingAttendance>();
-
     snap.forEach(d => {
       const data = d.data() as TeacherTeachingAttendance;
       const recordId = d.id;
-      const rec: TeacherTeachingAttendance = { ...data, id: recordId };
       if (data.scheduleId) {
-        existingRecords.set(data.scheduleId, rec);
+        existingRecords.set(data.scheduleId, { ...data, id: recordId });
       }
-      existingRecords.set(recordId, rec);
-
-      // Index by canonical slot key
-      const slotKey = getCanonicalSlotKey(
-        {
-          academicYearId: data.academicYearId || academicYearId,
-          semesterId: data.semesterId || semesterId,
-          classId: data.classId,
-          day: dayName,
-          sequence: data.sequence
-        },
-        classes
-      );
-      if (!existingBySlotKey.has(slotKey)) {
-        existingBySlotKey.set(slotKey, rec);
-      }
+      existingRecords.set(recordId, { ...data, id: recordId });
     });
 
-    // 4. Canonical deduplication: ensure exactly 1 schedule item per real class slot
-    // SSOT: Canonical rules must prioritize the operational schedule (locked, assigned, newer updatedAt/createdAt).
-    // Invariant: Attendance records NEVER determine which schedule is canonical!
-    const canonicalScheduleMap = new Map<string, Schedule>();
-    activeSchedules.forEach(sch => {
-      const slotKey = getCanonicalSlotKey(
-        {
-          academicYearId: sch.academicYearId || academicYearId,
-          semesterId: sch.semesterId || semesterId,
-          classId: sch.classId,
-          day: dayName,
-          sequence: sch.sequence
-        },
-        classes
+    // 6. Map Auto Scheduler schedule records directly to Absensi Mengajar items (1:1 with scheduleId)
+    const items: TeacherTeachingAttendance[] = daySchedules.map(sch => {
+      const existing = existingRecords.get(sch.id!);
+
+      // Resolve teacher using SSOT assignments (matching Auto Scheduler Schedules.tsx)
+      const resolvedTeacher = resolveTeacherForScheduleDate(sch, dateStr, teacherAssignments);
+      const activeTeacherId = resolvedTeacher.teacherId || sch.teacherId || "";
+      const activeTeacherName = (resolvedTeacher.teacherName && resolvedTeacher.teacherName !== "Belum Ditentukan")
+        ? resolvedTeacher.teacherName
+        : (sch.teacherName || "Belum Ditentukan");
+
+      // Match canonical class entity (matching Schedules.tsx isClassMatch)
+      const cls = classes.find(c => isClassMatch(sch.classId, c, classes));
+      const className = cls?.name || sch.className || "";
+      const gradeLevel = cls?.gradeLevel || normalizeGradeLevel(cls?.gradeLevel) || normalizeGradeLevel(sch.className) || "";
+
+      // Match subject display name (matching Schedules.tsx getSubjectDisplayName)
+      const masterSubj = sch.subjectId ? subjectMap.get(sch.subjectId) : null;
+      const subjectName = masterSubj?.name || sch.subjectName || "";
+
+      // Sequence and JP directly from Auto Scheduler schedule
+      const seq = sch.sequence || 1;
+      const period = lessonPeriods.find(p => 
+        p.id === sch.lessonPeriodId || 
+        ((p.day || "").trim().toLowerCase() === dayName.toLowerCase() && p.sequence === seq)
       );
 
-      if (!canonicalScheduleMap.has(slotKey)) {
-        canonicalScheduleMap.set(slotKey, sch);
-      } else {
-        const current = canonicalScheduleMap.get(slotKey)!;
-        let preferNew = false;
-        if (!current.isLocked && sch.isLocked) {
-          preferNew = true;
-        } else if (current.isLocked === sch.isLocked) {
-          const curComplete = Boolean(current.subjectId && current.teacherId);
-          const schComplete = Boolean(sch.subjectId && sch.teacherId);
-          if (!curComplete && schComplete) {
-            preferNew = true;
-          } else if (curComplete === schComplete) {
-            const curTime = current.updatedAt || current.createdAt || "";
-            const schTime = sch.updatedAt || sch.createdAt || "";
-            if (schTime > curTime) {
-              preferNew = true;
-            }
-          }
-        }
-        if (preferNew) {
-          console.warn(`[Canonical Schedule Deduplication] Overriding slot ${slotKey} with newer schedule ${sch.id} over ${current.id}`);
-          canonicalScheduleMap.set(slotKey, sch);
-        }
-      }
-    });
-
-    const deduplicatedActiveSchedules = Array.from(canonicalScheduleMap.values());
-
-    // 5. Merge schedule items with existing attendance records
-    const items: TeacherTeachingAttendance[] = deduplicatedActiveSchedules.map(sch => {
-      const slotKey = getCanonicalSlotKey(
-        {
-          academicYearId: sch.academicYearId || academicYearId,
-          semesterId: sch.semesterId || semesterId,
-          classId: sch.classId,
-          day: dayName,
-          sequence: sch.sequence
-        },
-        classes
-      );
-      const existing = existingRecords.get(sch.id!) || existingBySlotKey.get(slotKey);
-      const resolvedTeacher = resolveTeacherForScheduleDate(sch, dateStr);
-
-      // Find period for dayName
-      const dayPeriods = lessonPeriods.filter(p => normalizeDay(p.day) === normalizeDay(dayName));
-      
-      let period = dayPeriods.find(p => p.id === sch.lessonPeriodId);
-      if (!period && sch.sequence) {
-        period = dayPeriods.find(p => p.sequence === sch.sequence);
-      }
-      if (!period && sch.jp) {
-        const cleanJp = sch.jp.replace(/^jp\s*/i, "").trim();
-        period = dayPeriods.find(p => p.title.toLowerCase() === sch.jp.trim().toLowerCase() || String(p.sequence) === cleanJp);
-      }
-      if (!period) {
-        period = periodMap.get(sch.lessonPeriodId);
-      }
-
-      const cls = classMap.get(sch.classId);
-
-      const seq = period?.sequence || sch.sequence || 1;
-      const timeSlot = period ? `${period.startTime} - ${period.endTime}` : "";
-      const roomName = cls?.roomCode || cls?.name || "";
-
-      // Ensure JP naming conforms to Lesson Period structure (e.g. "JP 1", "JP 2")
-      let formattedJp = period?.title;
+      let formattedJp = sch.jp;
       if (!formattedJp) {
-        if (sch.jp && sch.jp !== "JP" && sch.jp.trim()) {
-          formattedJp = sch.jp.trim();
-        } else {
-          formattedJp = `JP ${seq}`;
-        }
+        formattedJp = period?.title || `JP ${seq}`;
       }
-
       if (/^\d+$/.test(formattedJp)) {
         formattedJp = `JP ${formattedJp}`;
       } else if (/^jp\s*\d+/i.test(formattedJp)) {
         formattedJp = formattedJp.replace(/^jp\s*/i, "JP ");
       }
 
-      if (existing) {
-        const hasRealActivity = hasRealAttendanceActivity(existing);
+      const timeSlot = period ? `${period.startTime} - ${period.endTime}` : ((sch as any).timeSlot || "");
+      const roomName = cls?.roomCode || cls?.name || sch.className || "";
 
-        if (hasRealActivity) {
-          // IMMUTABILITY: Jika kehadiran riil sudah tercatat (Hadir, Scan QR, Terlambat, Izin, Sakit, Pengganti, dll.),
-          // pertahankan snapshot historis attendance tersebut agar riwayat KBM tidak rusak!
-          return {
-            ...existing,
-            scheduleId: sch.id!,
-            teacherId: existing.teacherId || resolvedTeacher.teacherId || sch.teacherId,
-            teacherName: existing.teacherName || resolvedTeacher.teacherName || sch.teacherName,
-            subjectId: existing.subjectId || sch.subjectId,
-            subjectName: existing.subjectName || sch.subjectName,
-            classId: sch.classId,
-            className: sch.className,
-            gradeLevel: cls?.gradeLevel || existing.gradeLevel || "",
-            lessonPeriodId: sch.lessonPeriodId,
-            sequence: seq,
-            jp: formattedJp,
-            roomName: existing.roomName || roomName,
-            timeSlot: timeSlot || existing.timeSlot,
-            academicYearId: sch.academicYearId || academicYearId,
-            semesterId: sch.semesterId || semesterId,
-            day: dayName,
-            date: dateStr
-          };
-        } else {
-          // SSOT JADWAL OPERASIONAL: Belum ada aktivitas kehadiran riil/final.
-          // Identitas sesi (subjectId, subjectName, teacherId, teacherName, class, lesson period)
-          // WAJIB mengikuti jadwal operasional pondok yang terbaru dan dipublikasikan!
-          return {
-            ...existing,
-            scheduleId: sch.id!,
-            teacherId: resolvedTeacher.teacherId || sch.teacherId,
-            teacherName: resolvedTeacher.teacherName || sch.teacherName,
-            subjectId: sch.subjectId,
-            subjectName: sch.subjectName,
-            classId: sch.classId,
-            className: sch.className,
-            gradeLevel: cls?.gradeLevel || "",
-            lessonPeriodId: sch.lessonPeriodId,
-            sequence: seq,
-            jp: formattedJp,
-            roomName,
-            timeSlot,
-            academicYearId: sch.academicYearId || academicYearId,
-            semesterId: sch.semesterId || semesterId,
-            day: dayName,
-            date: dateStr,
-            status: kaldikInfo.isKbmDisabled ? "KBM Ditiadakan" : (existing.status && existing.status !== "KBM Ditiadakan" ? existing.status : "Belum Diverifikasi")
-          };
-        }
+      if (existing) {
+        return {
+          ...existing,
+          scheduleId: sch.id!,
+          teacherId: existing.teacherId || activeTeacherId,
+          teacherName: existing.teacherName || activeTeacherName,
+          subjectId: sch.subjectId || existing.subjectId,
+          subjectName: subjectName || existing.subjectName,
+          classId: sch.classId,
+          className: className || existing.className,
+          gradeLevel: gradeLevel || existing.gradeLevel,
+          lessonPeriodId: sch.lessonPeriodId || period?.id || existing.lessonPeriodId,
+          sequence: seq,
+          jp: formattedJp,
+          roomName: existing.roomName || roomName,
+          timeSlot: timeSlot || existing.timeSlot,
+          academicYearId: sch.academicYearId || ayId,
+          semesterId: sch.semesterId || semId,
+          day: dayName,
+          date: dateStr
+        };
       }
 
       // Default item if not saved yet
       return {
         date: dateStr,
         day: dayName,
-        academicYearId: sch.academicYearId || academicYearId,
-        semesterId: sch.semesterId || semesterId,
+        academicYearId: sch.academicYearId || ayId,
+        semesterId: sch.semesterId || semId,
         scheduleId: sch.id!,
-        teacherId: resolvedTeacher.teacherId,
-        teacherName: resolvedTeacher.teacherName,
-        subjectId: sch.subjectId,
-        subjectName: sch.subjectName,
+        teacherId: activeTeacherId,
+        teacherName: activeTeacherName,
+        subjectId: sch.subjectId || "",
+        subjectName: subjectName || "",
         classId: sch.classId,
-        className: sch.className,
-        gradeLevel: cls?.gradeLevel || "",
-        lessonPeriodId: sch.lessonPeriodId,
+        className,
+        gradeLevel,
+        lessonPeriodId: sch.lessonPeriodId || period?.id || "",
         sequence: seq,
         jp: formattedJp,
         roomName,
@@ -896,13 +770,13 @@ export const teacherTeachingAttendanceService = {
       };
     });
 
-    // Sort by Grade Level VII -> VIII -> IX, then Class Name, then Sequence
+    // 7. Sort by Grade Level VII -> VIII -> IX, then Class Name, then Sequence
     const gradeOrder: Record<string, number> = { "VII": 7, "VIII": 8, "IX": 9 };
-    const getGradeWeight = (className: string, gradeLevel?: string) => {
-      if (gradeLevel && gradeOrder[gradeLevel]) return gradeOrder[gradeLevel];
-      if (className.startsWith("VII") || className.startsWith("7")) return 7;
-      if (className.startsWith("VIII") || className.startsWith("8")) return 8;
-      if (className.startsWith("IX") || className.startsWith("9")) return 9;
+    const getGradeWeight = (clsName: string, grLevel?: string) => {
+      const norm = normalizeGradeLevel(grLevel) || normalizeGradeLevel(clsName);
+      if (norm === "VII") return 7;
+      if (norm === "VIII") return 8;
+      if (norm === "IX") return 9;
       return 99;
     };
 
@@ -912,7 +786,7 @@ export const teacherTeachingAttendanceService = {
       if (gA !== gB) return gA - gB;
       const clsComp = a.className.localeCompare(b.className, "id", { numeric: true });
       if (clsComp !== 0) return clsComp;
-      return a.sequence - b.sequence;
+      return (a.sequence || 0) - (b.sequence || 0);
     });
 
     // Spanning JP Resolution: If a teacher checked in & out in a class spanning multiple JPs of the same subject
@@ -1913,11 +1787,16 @@ export const teacherTeachingAttendanceService = {
     subjectId?: string;
     classId?: string;
     gradeLevel?: string;
+    toleranceMinutes?: number;
   }): Promise<{
     summaries: TeacherAttendanceSummary[];
     rawRecords: TeacherTeachingAttendance[];
   }> {
     try {
+      const checkInTolerance = typeof filters.toleranceMinutes === "number" && filters.toleranceMinutes >= 0
+        ? Math.floor(filters.toleranceMinutes)
+        : 15;
+
       const colRef = collection(db, COLLECTION_NAME);
       let q = query(colRef);
 
@@ -1959,6 +1838,17 @@ export const teacherTeachingAttendanceService = {
 
         const sum = map.get(tId)!;
         sum.totalEncounters++;
+
+        // Hitung kejadian keterlambatan yang BENAR-BENAR melewati batas toleransi aktif:
+        // Strictly delayMinutes > checkInTolerance (BUKAN status Terlambat biasa, BUKAN >=)
+        // Hanya dihitung untuk sesi mengajar aktual guru tersebut (Hadir Mengajar / Terlambat)
+        const isTeachingRecord = rec.status === "Hadir Mengajar" || rec.status === "Terlambat";
+        const isLateOverTolerance = isTeachingRecord && isRecordOverTolerance(rec, checkInTolerance);
+
+        if (isLateOverTolerance) {
+          sum.terlambatOverToleranceJP += recJP;
+          sum.terlambatOverToleranceCount++;
+        }
 
         switch (rec.status) {
           case "Hadir Mengajar":
@@ -2101,7 +1991,8 @@ export const teacherTeachingAttendanceService = {
           percentage: kehadiranPercentage,
           isBalanced,
           isTotalConsistent,
-          isLateValid
+          isLateValid,
+          toleranceMinutes: checkInTolerance
         };
       });
 
