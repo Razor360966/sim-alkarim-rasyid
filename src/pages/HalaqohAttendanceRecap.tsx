@@ -168,12 +168,19 @@ export default function HalaqohAttendanceRecap() {
   // Request race protection
   const requestIdRef = useRef<number>(0);
 
-  // Load filter options on mount
+  // Load filter options on mount (SSOT from halaqohRecapService)
   useEffect(() => {
     halaqohRecapService
       .getFilterOptions()
       .then((opts) => {
-        setTeacherOptions(opts.teachers);
+        // Enforce canonical uniqueness strictly by ID (anti-duplication safeguard)
+        const seenIds = new Set<string>();
+        const uniqueTeachers = (opts.teachers || []).filter((t) => {
+          if (!t.id || seenIds.has(t.id)) return false;
+          seenIds.add(t.id);
+          return true;
+        });
+        setTeacherOptions(uniqueTeachers);
         setGroupOptions(opts.groups);
       })
       .catch((err) => {
@@ -225,6 +232,49 @@ export default function HalaqohAttendanceRecap() {
       // Avoid race conditions
       if (currentReqId === requestIdRef.current) {
         setRecapData(result);
+
+        // Safe temporary diagnostic for HALAQOH-RECAP-2.4 audit
+        try {
+          const matchedSummaries = (result.teacherSummaries || []).filter(
+            (t) => t.teacherName.toLowerCase().includes("ridho") || t.teacherName.toLowerCase().includes("akbar")
+          ).map(t => {
+            const teacherMeetings = (result.meetings || []).filter(m => m.teacherId === t.teacherId);
+            const groupIds = Array.from(new Set(teacherMeetings.map(m => m.halaqohGroupId)));
+            const groupNames = Array.from(new Set(teacherMeetings.map(m => m.halaqohGroupName)));
+            return {
+              displayName: t.teacherName,
+              canonicalTeacherId: t.teacherId,
+              groupIds,
+              groupNames,
+              totalScheduledMeetings: t.totalScheduledMeetings,
+              totalPresentComplete: t.totalPresentComplete,
+              totalCheckInOnly: t.totalCheckInOnly,
+              totalAbsent: t.totalAbsent,
+              attendancePercentage: t.attendancePercentage,
+              meetingBreakdown: teacherMeetings.map(m => ({
+                meetingId: m.meetingId,
+                date: m.date,
+                groupId: m.halaqohGroupId,
+                groupName: m.halaqohGroupName,
+                status: m.status
+              }))
+            };
+          });
+
+          fetch("/api/recap-diagnostic", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              timestamp: new Date().toISOString(),
+              period: result.period,
+              ridhoSummaries: matchedSummaries,
+              allTeacherSummariesCount: result.teacherSummaries.length,
+              allMeetingsCount: result.meetings.length
+            })
+          }).catch(() => {});
+        } catch {
+          // Ignore diagnostic error
+        }
       }
     } catch (err: any) {
       console.error("Error fetching halaqoh recap:", err);
@@ -282,6 +332,27 @@ export default function HalaqohAttendanceRecap() {
   const filteredTeacherSummaries = useMemo(() => {
     if (!recapData?.teacherSummaries) return [];
     let list = recapData.teacherSummaries;
+
+    // Enforce canonical uniqueness by teacherId (1 teacher = 1 summary row)
+    const summaryMap = new Map<string, HalaqohRecapTeacherSummary>();
+    for (const t of list) {
+      const existing = summaryMap.get(t.teacherId);
+      if (!existing) {
+        summaryMap.set(t.teacherId, { ...t });
+      } else {
+        const totalScheduled = existing.totalScheduledMeetings + t.totalScheduledMeetings;
+        const totalPresent = existing.totalPresentComplete + t.totalPresentComplete;
+        const totalCheckIn = existing.totalCheckInOnly + t.totalCheckInOnly;
+        const totalAbsent = existing.totalAbsent + t.totalAbsent;
+        existing.totalScheduledMeetings = totalScheduled;
+        existing.totalPresentComplete = totalPresent;
+        existing.totalCheckInOnly = totalCheckIn;
+        existing.totalAbsent = totalAbsent;
+        existing.attendancePercentage =
+          totalScheduled > 0 ? Number(((totalPresent / totalScheduled) * 100).toFixed(2)) : null;
+      }
+    }
+    list = Array.from(summaryMap.values());
 
     // Search query
     if (searchQuery.trim()) {

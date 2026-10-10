@@ -14,8 +14,10 @@ import {
   ERaporGradeChangeRequest
 } from "../types/eRapor.types";
 import { ERaporPrintable } from "../components/ERaporPrintable";
+import { homeroomService } from "../services/homeroom.service";
 import {
   ShieldCheck,
+  ShieldAlert,
   CheckCircle2,
   AlertTriangle,
   Lock,
@@ -80,15 +82,34 @@ export default function ERaporHomeroomView() {
         if (activeYr) setSelectedAcademicYearId(activeYr.id!);
         if (activeSem) setSelectedSemesterId(activeSem.id!);
 
-        // If Homeroom Teacher, auto select their assigned class
-        if (user?.role === "guru" && user?.uid) {
-          const hrClass = allClasses.find((c) => c.homeroomTeacherId === user.uid);
-          setClasses(hrClass ? [hrClass] : allClasses);
-          if (hrClass) setSelectedClassId(hrClass.id!);
-          else if (allClasses.length > 0) setSelectedClassId(allClasses[0].id!);
-        } else {
+        // Canonical Homeroom Teacher Verification & Scoping (SIMAK — E-RAPOR MENU RBAC-2)
+        const isPrivileged = [
+          "admin",
+          "operator",
+          "kepala sekolah",
+          "wakil kepala sekolah",
+          "pimpinan",
+          "ketua yayasan"
+        ].some((r) =>
+          (user?.role || "").toLowerCase().includes(r) ||
+          (user?.roles || []).some((x) => x.toLowerCase().includes(r))
+        );
+
+        if (isPrivileged) {
           setClasses(allClasses);
           if (allClasses.length > 0) setSelectedClassId(allClasses[0].id!);
+        } else {
+          const assignedClasses = homeroomService.filterAssignedClassesSync(
+            user,
+            allClasses,
+            activeYr
+          );
+          setClasses(assignedClasses);
+          if (assignedClasses.length > 0) {
+            setSelectedClassId(assignedClasses[0].id!);
+          } else {
+            setSelectedClassId("");
+          }
         }
       } catch (e) {
         console.error("Error loading homeroom filters:", e);
@@ -295,6 +316,35 @@ export default function ERaporHomeroomView() {
     st.name?.toLowerCase().includes(searchStudent.toLowerCase()) ||
     st.nis?.includes(searchStudent)
   );
+  const isPrivilegedUser = [
+    "admin",
+    "operator",
+    "kepala sekolah",
+    "wakil kepala sekolah",
+    "pimpinan",
+    "ketua yayasan"
+  ].some((r) =>
+    (user?.role || "").toLowerCase().includes(r) ||
+    (user?.roles || []).some((x) => x.toLowerCase().includes(r))
+  );
+
+  if (!isPrivilegedUser && classes.length === 0 && !isLoading) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center p-4">
+        <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl max-w-lg w-full p-8 text-center shadow-lg space-y-4">
+          <div className="w-16 h-16 bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 rounded-2xl flex items-center justify-center mx-auto border border-rose-200 dark:border-rose-900">
+            <ShieldAlert className="w-8 h-8" />
+          </div>
+          <h2 className="text-xl font-bold text-slate-800 dark:text-zinc-100">
+            Akses Terbatas
+          </h2>
+          <p className="text-sm text-slate-600 dark:text-zinc-400 leading-relaxed">
+            Halaman <strong>Wali Kelas & Verifikasi</strong> hanya dapat diakses oleh Guru yang aktif ditugaskan sebagai Wali Kelas pada tahun pelajaran yang berlaku.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto pb-24">

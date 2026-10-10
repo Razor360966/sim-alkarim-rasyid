@@ -11,6 +11,7 @@ import { db } from "../firebase/config";
 import { APP_CONFIG } from "../config/appVersion";
 import OfflineBanner from "../components/OfflineBanner";
 import PwaUpdateBanner from "../components/PwaUpdateBanner";
+import { useHomeroomAssignment } from "../hooks/useHomeroomAssignment";
 import { 
   LayoutDashboard, 
   CalendarDays, 
@@ -52,6 +53,7 @@ export const MainLayout: React.FC = () => {
   const { theme, toggleTheme } = useTheme();
   const { toast } = useToast();
   const { identity } = useSchoolIdentity();
+  const { isHomeroomTeacher } = useHomeroomAssignment();
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarImgError, setSidebarImgError] = useState(false);
@@ -263,6 +265,26 @@ export const MainLayout: React.FC = () => {
       const isAdminUser = activeMappedRoles.includes("admin") || activeMappedRoles.includes("operator");
       return isAdminUser || isAssignedPetugas;
     }
+
+    // SIMAK — E-RAPOR MENU RBAC-2: Modul e-Rapor menu visibility based on active homeroom teacher assignment
+    const isHomeroomExclusiveItem =
+      item.path === "/e-rapor/student-biodata" ||
+      item.path === "/e-rapor/wali-kelas" ||
+      item.path === "/rapor-tengah-semester";
+
+    if (isHomeroomExclusiveItem) {
+      const hasPrivilegedAccess = activeMappedRoles.some(r =>
+        ["admin", "operator", "kepala sekolah", "wakil kepala sekolah", "pimpinan", "ketua yayasan"].includes(r)
+      );
+      // If user does not have administrative/leadership privilege and is operating as guru
+      if (!hasPrivilegedAccess && activeMappedRoles.includes("guru")) {
+        // Hide from teachers who are not actively assigned as Wali Kelas
+        if (!isHomeroomTeacher) {
+          return false;
+        }
+      }
+    }
+
     return item.roles.some(r => activeMappedRoles.includes(r));
   });
 

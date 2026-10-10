@@ -7,6 +7,7 @@ import { classService } from "../services/classService";
 import { studentService } from "../services/studentService";
 import { eRaporService } from "../services/eRapor.service";
 import { schoolIdentityService } from "../services/schoolIdentity.service";
+import { homeroomService } from "../services/homeroom.service";
 import { Student, Class, AcademicYear, Semester } from "../types";
 import { isStudentActive } from "../utils/studentHelper";
 import { ERaporSettingsConfig } from "../types/eRapor.types";
@@ -94,18 +95,13 @@ export default function ERaporStudentBiodataPage() {
     );
   }, [user]);
 
-  // Homeroom class identification
+  // Homeroom class identification via canonical identity matching (SIMAK — E-RAPOR MENU RBAC-2)
   const assignedHomeroomClass = useMemo(() => {
-    if (!user?.uid) return null;
-    return classes.find(
-      (c) =>
-        c.homeroomTeacherId === user.uid ||
-        c.waliKelasId === user.uid ||
-        (c.homeroomTeacherName && user.teacherName && c.homeroomTeacherName === user.teacherName)
-    );
-  }, [classes, user]);
+    if (!user || classes.length === 0) return null;
+    return !isAdminOrKurikulum ? classes[0] : null;
+  }, [classes, user, isAdminOrKurikulum]);
 
-  const isHomeroomTeacher = !!assignedHomeroomClass;
+  const isHomeroomTeacher = !isAdminOrKurikulum && classes.length > 0;
   const canAccess = isAdminOrKurikulum || isHomeroomTeacher;
 
   // 1. Initial Data Loading
@@ -133,17 +129,19 @@ export default function ERaporStudentBiodataPage() {
         setPrintConfig(eSettings);
         setSchoolIdentity(sIdent);
 
-        // Class Selection Logic
-        if (!isAdminOrKurikulum && user?.uid) {
-          const hrClass = allClasses.find(
-            (c) =>
-              c.homeroomTeacherId === user.uid ||
-              c.waliKelasId === user.uid ||
-              (c.homeroomTeacherName && user.teacherName && c.homeroomTeacherName === user.teacherName)
+        // Class Selection Logic with Canonical Homeroom Verification (SIMAK — E-RAPOR MENU RBAC-2)
+        if (!isAdminOrKurikulum) {
+          const assignedClasses = homeroomService.filterAssignedClassesSync(
+            user,
+            allClasses,
+            activeYr
           );
-          setClasses(hrClass ? [hrClass] : allClasses);
-          if (hrClass) setSelectedClassId(hrClass.id!);
-          else if (allClasses.length > 0) setSelectedClassId(allClasses[0].id!);
+          setClasses(assignedClasses);
+          if (assignedClasses.length > 0) {
+            setSelectedClassId(assignedClasses[0].id!);
+          } else {
+            setSelectedClassId("");
+          }
         } else {
           setClasses(allClasses);
           if (allClasses.length > 0) setSelectedClassId(allClasses[0].id!);

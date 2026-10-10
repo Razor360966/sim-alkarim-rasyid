@@ -20,6 +20,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { FirebaseConfigWarning } from "./components/FirebaseConfigWarning";
 import { PageLoading } from "./components/PageLoading";
 import { SplashScreen } from "./components/SplashScreen";
+import { HomeroomRouteGuard } from "./components/HomeroomRouteGuard";
 
 // Layout
 import MainLayout from "./layout/MainLayout";
@@ -199,11 +200,39 @@ export default function App() {
 
                         {/* Modul e-Rapor Kurikulum Merdeka */}
                         <Route path="e-rapor/input" element={<ERaporTeacherInput />} />
-                        <Route path="e-rapor/student-biodata" element={<ERaporStudentBiodataPage />} />
-                        <Route path="e-rapor/wali-kelas" element={<ERaporHomeroomView />} />
+                        <Route
+                          path="e-rapor/student-biodata"
+                          element={
+                            <HomeroomRouteGuard>
+                              <ERaporStudentBiodataPage />
+                            </HomeroomRouteGuard>
+                          }
+                        />
+                        <Route
+                          path="e-rapor/wali-kelas"
+                          element={
+                            <HomeroomRouteGuard>
+                              <ERaporHomeroomView />
+                            </HomeroomRouteGuard>
+                          }
+                        />
                         <Route path="e-rapor/leger" element={<ERaporLegerPage />} />
-                        <Route path="rapor-tengah-semester" element={<MidtermReportPage />} />
-                        <Route path="e-rapor/midterm" element={<Navigate to="/rapor-tengah-semester" replace />} />
+                        <Route
+                          path="rapor-tengah-semester"
+                          element={
+                            <HomeroomRouteGuard>
+                              <MidtermReportPage />
+                            </HomeroomRouteGuard>
+                          }
+                        />
+                        <Route
+                          path="e-rapor/midterm"
+                          element={
+                            <HomeroomRouteGuard>
+                              <Navigate to="/rapor-tengah-semester" replace />
+                            </HomeroomRouteGuard>
+                          }
+                        />
                         <Route path="e-rapor/dashboard" element={<ERaporExecutiveDashboard />} />
                         <Route path="e-rapor/settings" element={<ERaporSettingsPage />} />
                       </Route>

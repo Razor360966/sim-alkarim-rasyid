@@ -5,6 +5,7 @@ import { eRaporService } from "../services/eRapor.service";
 import { classService } from "../services/classService";
 import { subjectService } from "../services/subjectService";
 import { scheduleService } from "../services/schedule.service";
+import { useHomeroomAssignment } from "../hooks/useHomeroomAssignment";
 import {
   ERaporLegerEntry,
   ERaporLegerSemesterColumn,
@@ -50,9 +51,10 @@ export default function ERaporLegerPage() {
   const [selectedSeqFilter, setSelectedSeqFilter] = useState<number | "ALL">("ALL");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
-  // Role permissions
+  // Role permissions & canonical homeroom status
+  const { isHomeroomTeacher, assignedClass } = useHomeroomAssignment();
   const [teacherAllowedSubjectIds, setTeacherAllowedSubjectIds] = useState<string[] | null>(null);
-  const isWaliKelas = user?.role === "guru" && !!user?.assignedClassId;
+  const isWaliKelas = user?.role === "guru" && isHomeroomTeacher;
   const isAdminOrPimpinan = ["admin", "kepala sekolah", "wakil kepala sekolah", "operator", "ketua yayasan"].includes(user?.role || "");
   const isPureGuru = user?.role === "guru" && !isWaliKelas;
 
@@ -113,9 +115,9 @@ export default function ERaporLegerPage() {
 
         // Determine initial selected class
         let initialClassId = activeClasses[0]?.classId || "";
-        if (user?.assignedClassId) {
-          const found = activeClasses.find(c => c.classId === user.assignedClassId || c.name === user.assignedClassId);
-          if (found) initialClassId = found.classId;
+        if (assignedClass) {
+          const found = activeClasses.find(c => c.id === assignedClass.id || c.classId === assignedClass.id);
+          if (found) initialClassId = found.classId || found.id;
         }
         setSelectedClassId(initialClassId);
 

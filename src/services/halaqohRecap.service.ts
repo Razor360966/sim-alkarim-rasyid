@@ -31,11 +31,14 @@ import {
   HalaqahSchedule,
   TeacherHalaqahAttendance
 } from "../types/halaqahAttendance.types";
-import { HalaqahGroup } from "../types";
+import { HalaqahGroup, Teacher } from "../types";
+import { UserSystem } from "../types/user.types";
 import { halaqahGroupService } from "./halaqahGroupService";
 import { teacherHalaqahAttendanceService } from "./teacherHalaqahAttendance.service";
 import { userService } from "./user.service";
+import { teacherService } from "./teacherService";
 import { isGuruHalaqohOrMusrif } from "../utils/halaqahRoleHelper";
+import { buildTeacherIdentityResolver } from "../utils/halaqahTeacherHelper";
 
 // ============================================================================
 // DATE & TIME HELPERS (TIMEZONE-SAFE: ASIA/JAKARTA)
@@ -209,6 +212,8 @@ export interface AggregateHalaqohRecapParams {
   activeDays: string[];
   attendanceRecords: TeacherHalaqahAttendance[];
   schedules?: HalaqahSchedule[];
+  users?: UserSystem[];
+  teachers?: Partial<Teacher>[];
   options?: {
     teacherId?: string;
     halaqohGroupId?: string;
@@ -220,10 +225,15 @@ export interface AggregateHalaqohRecapParams {
  * into teacher summaries and individual meeting details.
  */
 export function aggregateHalaqohRecap(params: AggregateHalaqohRecapParams): HalaqohRecapResult {
-  const { period, dates, groups, activeDays, attendanceRecords, schedules = [], options } = params;
+  const { period, dates, groups, activeDays, attendanceRecords, schedules = [], users = [], teachers = [], options } = params;
+
+  // Build canonical identity resolver (HALAQOH-RECAP-2.3 & HALAQOH-RECAP-2.4)
+  const resolver = buildTeacherIdentityResolver(users, teachers, groups);
+  const resolveCanonicalId = (rawId: string) => (rawId ? resolver.resolveCanonicalId(rawId) : "");
 
   const targetGroupId = options?.halaqohGroupId?.trim();
   const targetTeacherId = options?.teacherId?.trim();
+  const canonicalTargetTeacherId = targetTeacherId ? resolveCanonicalId(targetTeacherId) : undefined;
 
   // 1. Filter groups if group filter is specified
   const effectiveGroups = targetGroupId
@@ -285,20 +295,23 @@ export function aggregateHalaqohRecap(params: AggregateHalaqohRecapParams): Hala
 
       // Rule 10: Historical Immutability
       // If attendance record exists, teacher is strictly taken from the record's snapshot.
-      let meetingTeacherId = "";
+      let rawTeacherId = "";
       let meetingTeacherName = "";
 
       if (recordsForMeeting.length > 0) {
         const primaryRec = recordsForMeeting[0];
-        meetingTeacherId = primaryRec.teacherId || group.musrifId || "GURU_HALAQAH";
+        rawTeacherId = primaryRec.teacherId || group.musrifId || "GURU_HALAQAH";
         meetingTeacherName = primaryRec.teacherName || group.musrifName || "Ustadz Pembimbing";
       } else {
-        meetingTeacherId = sched?.teacherId || group.musrifId || "GURU_HALAQAH";
+        rawTeacherId = sched?.teacherId || group.musrifId || "GURU_HALAQAH";
         meetingTeacherName = sched?.teacherName || group.musrifName || "Ustadz Pembimbing";
       }
 
-      // If teacher filter is set, check whether this meeting matches the teacher
-      if (targetTeacherId && meetingTeacherId !== targetTeacherId) {
+      const meetingTeacherId = resolveCanonicalId(rawTeacherId) || rawTeacherId;
+      const canonicalTeacherName = resolver.getDisplayName(meetingTeacherId) || meetingTeacherName;
+
+      // If teacher filter is set, check whether this meeting matches the teacher (canonical match)
+      if (canonicalTargetTeacherId && meetingTeacherId !== canonicalTargetTeacherId) {
         continue;
       }
 
@@ -336,7 +349,7 @@ export function aggregateHalaqohRecap(params: AggregateHalaqohRecapParams): Hala
         date: dateStr,
         dayName,
         teacherId: meetingTeacherId,
-        teacherName: meetingTeacherName,
+        teacherName: canonicalTeacherName,
         halaqohGroupId: group.id,
         halaqohGroupName: group.groupName || `Kelompok ${group.id}`,
         scheduledStartTime: sched?.startTime || recordsForMeeting[0]?.scheduledStartTime,
@@ -355,7 +368,9 @@ export function aggregateHalaqohRecap(params: AggregateHalaqohRecapParams): Hala
   for (const rec of attendanceRecords) {
     if (rec.date < period.startDate || rec.date > period.endDate) continue;
     if (targetGroupId && rec.groupId !== targetGroupId) continue;
-    if (targetTeacherId && rec.teacherId !== targetTeacherId) continue;
+
+    const meetingTeacherId = resolveCanonicalId(rec.teacherId) || rec.teacherId || "GURU_HALAQAH";
+    if (canonicalTargetTeacherId && meetingTeacherId !== canonicalTargetTeacherId) continue;
 
     const meetingId = `${rec.date}_${rec.groupId}`;
     if (!meetingsMap.has(meetingId)) {
@@ -372,13 +387,14 @@ export function aggregateHalaqohRecap(params: AggregateHalaqohRecapParams): Hala
 
       const validCheckInRec = recordsForMeeting.find((r) => isValidCheckIn(r));
       const validCheckOutRec = recordsForMeeting.find((r) => isValidCheckOut(r));
+      const canonicalTeacherName = resolver.getDisplayName(meetingTeacherId) || rec.teacherName || "Ustadz Pembimbing";
 
       meetingsMap.set(meetingId, {
         meetingId,
         date: rec.date,
         dayName: rec.dayName || getIndonesianDayName(rec.date),
-        teacherId: rec.teacherId || "GURU_HALAQAH",
-        teacherName: rec.teacherName || "Ustadz Pembimbing",
+        teacherId: meetingTeacherId,
+        teacherName: canonicalTeacherName,
         halaqohGroupId: rec.groupId,
         halaqohGroupName: rec.groupName || `Kelompok ${rec.groupId}`,
         scheduledStartTime: rec.scheduledStartTime,
@@ -407,11 +423,11 @@ export function aggregateHalaqohRecap(params: AggregateHalaqohRecapParams): Hala
   >();
 
   // Pre-seed teacher if specific teacher requested
-  if (targetTeacherId) {
-    const matchedGroup = groups.find((g) => g.musrifId === targetTeacherId);
-    const fallbackName = matchedGroup?.musrifName || "Guru Halaqoh";
-    teacherMap.set(targetTeacherId, {
-      teacherId: targetTeacherId,
+  if (canonicalTargetTeacherId) {
+    const matchedGroup = groups.find((g) => resolveCanonicalId(g.musrifId || "") === canonicalTargetTeacherId);
+    const fallbackName = resolver.getDisplayName(canonicalTargetTeacherId) || matchedGroup?.musrifName || "Guru Halaqoh";
+    teacherMap.set(canonicalTargetTeacherId, {
+      teacherId: canonicalTargetTeacherId,
       teacherName: fallbackName,
       totalScheduledMeetings: 0,
       totalPresentComplete: 0,
@@ -422,10 +438,11 @@ export function aggregateHalaqohRecap(params: AggregateHalaqohRecapParams): Hala
     // Pre-seed all musrifs from active groups so teachers with zero meetings still appear
     for (const g of effectiveGroups) {
       if (g.musrifId) {
-        if (!teacherMap.has(g.musrifId)) {
-          teacherMap.set(g.musrifId, {
-            teacherId: g.musrifId,
-            teacherName: g.musrifName || "Ustadz Pembimbing",
+        const canonicalMusrifId = resolveCanonicalId(g.musrifId) || g.musrifId;
+        if (!teacherMap.has(canonicalMusrifId)) {
+          teacherMap.set(canonicalMusrifId, {
+            teacherId: canonicalMusrifId,
+            teacherName: resolver.getDisplayName(canonicalMusrifId) || g.musrifName || "Ustadz Pembimbing",
             totalScheduledMeetings: 0,
             totalPresentComplete: 0,
             totalCheckInOnly: 0,
@@ -437,17 +454,18 @@ export function aggregateHalaqohRecap(params: AggregateHalaqohRecapParams): Hala
   }
 
   for (const m of allMeetings) {
-    let entry = teacherMap.get(m.teacherId);
+    const canonicalMeetingTeacherId = resolveCanonicalId(m.teacherId) || m.teacherId;
+    let entry = teacherMap.get(canonicalMeetingTeacherId);
     if (!entry) {
       entry = {
-        teacherId: m.teacherId,
-        teacherName: m.teacherName,
+        teacherId: canonicalMeetingTeacherId,
+        teacherName: resolver.getDisplayName(canonicalMeetingTeacherId) || m.teacherName,
         totalScheduledMeetings: 0,
         totalPresentComplete: 0,
         totalCheckInOnly: 0,
         totalAbsent: 0
       };
-      teacherMap.set(m.teacherId, entry);
+      teacherMap.set(canonicalMeetingTeacherId, entry);
     }
 
     entry.totalScheduledMeetings++;
@@ -474,6 +492,23 @@ export function aggregateHalaqohRecap(params: AggregateHalaqohRecapParams): Hala
       };
     }
   );
+
+  // Safe Differentiator for distinct teachers with the exact same display name (HALAQOH-RECAP-2.4 Section 4)
+  const nameCounts = new Map<string, number>();
+  for (const t of teacherSummaries) {
+    nameCounts.set(t.teacherName, (nameCounts.get(t.teacherName) || 0) + 1);
+  }
+
+  for (const t of teacherSummaries) {
+    if ((nameCounts.get(t.teacherName) || 0) > 1) {
+      // Find the group name(s) associated with this teacher
+      const teacherMeetings = allMeetings.filter((m) => m.teacherId === t.teacherId);
+      const groupNames = Array.from(new Set(teacherMeetings.map((m) => m.halaqohGroupName)));
+      if (groupNames.length > 0) {
+        t.teacherName = `${t.teacherName} (${groupNames[0]})`;
+      }
+    }
+  }
 
   // 8. Overall Summary across all meetings
   let totalScheduled = 0;
@@ -549,8 +584,8 @@ export const halaqohRecapService = {
     const dates = generateDateRange(startDate, endDate);
 
     // Parallel batch fetch from SSOT Firestore collections (Zero N+1)
-    const [groups, activeDays, attendanceRecords, schedules] = await Promise.all([
-      halaqahGroupService.getGroups(params.teacherId),
+    const [groups, activeDays, attendanceRecords, schedules, users, teachers] = await Promise.all([
+      halaqahGroupService.getGroups(),
       teacherHalaqahAttendanceService.getActiveSchoolDays(),
       teacherHalaqahAttendanceService.getAttendanceForDateRange(
         startDate,
@@ -561,7 +596,9 @@ export const halaqohRecapService = {
       teacherHalaqahAttendanceService.getSchedules({
         academicYearId: params.academicYearId,
         semesterId: params.semesterId
-      })
+      }),
+      userService.getUsers().catch(() => []),
+      teacherService.getTeachers().catch(() => [])
     ]);
 
     return aggregateHalaqohRecap({
@@ -571,6 +608,8 @@ export const halaqohRecapService = {
       activeDays,
       attendanceRecords,
       schedules,
+      users,
+      teachers,
       options: {
         teacherId: params.teacherId,
         halaqohGroupId: params.halaqohGroupId
@@ -580,60 +619,49 @@ export const halaqohRecapService = {
 
   /**
    * Retrieves list of active halaqoh groups and authorized teachers for UI filter selectors.
-   * Business Rules (HALAQOH-RECAP-2.2):
+   * Business Rules (HALAQOH-RECAP-2.2 & HALAQOH-RECAP-2.3):
    * 1. Guru Halaqoh AKTIF harus memiliki minimal salah satu role: Musrif ATAU Guru Halaqoh.
    * 2. Akun yang role-nya dicabut atau hanya memiliki role lain (e.g. Guru umum) TIDAK muncul.
    * 3. Guru dengan multiple role (Musrif + Guru Halaqoh) dideduplikasi (muncul tepat 1 kali).
-   * 4. Relasi canonical: teacherId || userId || id.
+   * 4. Identitas canonical strictly ID-based: teacherId > userId > id akun.
+   * 5. 1 akun/orang hanya muncul tepat satu kali (unifikasi alias & linked records).
+   * 6. Dua orang berbeda dengan nama sama TETAP muncul terpisah (anti name-set).
    */
   async getFilterOptions(): Promise<{
     teachers: { id: string; name: string }[];
     groups: { id: string; name: string }[];
   }> {
-    const [groups, allUsers] = await Promise.all([
+    const [groups, allUsers, allTeachers] = await Promise.all([
       halaqahGroupService.getGroups(),
-      userService.getUsers().catch(() => [])
+      userService.getUsers().catch(() => []),
+      teacherService.getTeachers().catch(() => [])
     ]);
 
-    const teacherMap = new Map<string, string>();
     const groupsList: { id: string; name: string }[] = [];
-
-    // Filter active accounts possessing canonical Musrif or Guru Halaqoh role
-    const activeHalaqohUsers = allUsers.filter((u) => {
-      if (u.isDeleted) return false;
-      if (u.status && u.status !== "Aktif") return false;
-      return isGuruHalaqohOrMusrif(u.role, u.roles);
-    });
-
-    for (const u of activeHalaqohUsers) {
-      const canonicalId = u.teacherId || u.userId || u.id;
-      const displayName = u.name || u.teacherName || "Guru Halaqoh";
-      if (canonicalId && !teacherMap.has(canonicalId)) {
-        teacherMap.set(canonicalId, displayName);
-      }
-    }
-
-    // Fallback: If no users were returned (e.g. offline/mock environment),
-    // extract assigned musrifs from active groups
-    if (teacherMap.size === 0) {
-      for (const g of groups) {
-        if (g.musrifId && g.musrifName && !teacherMap.has(g.musrifId)) {
-          teacherMap.set(g.musrifId, g.musrifName);
-        }
-      }
-    }
-
     for (const g of groups) {
       if (g.id && g.groupName) {
         groupsList.push({ id: g.id, name: g.groupName });
       }
     }
-
-    const teachers = Array.from(teacherMap.entries())
-      .map(([id, name]) => ({ id, name }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-
     groupsList.sort((a, b) => a.name.localeCompare(b.name));
+
+    // Resolve canonical teachers using SSOT identity resolver (HALAQOH-RECAP-2.3 & 2.4)
+    const resolver = buildTeacherIdentityResolver(allUsers, allTeachers, groups);
+    let teachers = resolver.canonicalTeachers;
+
+    // Fallback: If no users were returned (e.g. offline/mock environment without users collection),
+    // extract assigned musrifs from active groups
+    if (teachers.length === 0) {
+      const fallbackMap = new Map<string, string>();
+      for (const g of groups) {
+        if (g.musrifId && g.musrifName && !fallbackMap.has(g.musrifId)) {
+          fallbackMap.set(g.musrifId, g.musrifName);
+        }
+      }
+      teachers = Array.from(fallbackMap.entries())
+        .map(([id, name]) => ({ id, name }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    }
 
     return { teachers, groups: groupsList };
   }

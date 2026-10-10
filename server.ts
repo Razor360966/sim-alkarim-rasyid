@@ -131,6 +131,21 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
+app.post("/api/recap-diagnostic", (req, res) => {
+  try {
+    fs.writeFileSync(
+      path.join(process.cwd(), "diagnostic_halaqoh.json"),
+      JSON.stringify(req.body, null, 2),
+      "utf-8"
+    );
+    console.log("[HALAQOH-DIAGNOSTIC] Received and saved diagnostic data.");
+    return res.status(200).json({ success: true });
+  } catch (err: any) {
+    console.error("[HALAQOH-DIAGNOSTIC] Error saving diagnostic data:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 /**
  * POST /api/users/reset-password
  * Restores the target user's Firebase Authentication password to DEFAULT_SYSTEM_PASSWORD

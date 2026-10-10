@@ -217,7 +217,12 @@ export default function ERaporTeacherInput() {
             .filter((s) => s.teacherId === currentTeacherId || s.teacherId === user.uid)
             .forEach((s) => classIds.add(s.classId));
 
-          const filtered = allClasses.filter((c) => classIds.has(c.id!) || c.homeroomTeacherId === user.uid);
+          const isHomeroomClass = (c: any) =>
+            c.homeroomTeacherId === user.uid ||
+            c.waliKelasId === user.uid ||
+            (currentTeacherId && (c.homeroomTeacherId === currentTeacherId || c.waliKelasId === currentTeacherId));
+
+          const filtered = allClasses.filter((c) => classIds.has(c.id!) || isHomeroomClass(c));
           setClasses(filtered.length > 0 ? filtered : allClasses);
           if (filtered.length > 0) setSelectedClassId(filtered[0].id!);
         } else {
