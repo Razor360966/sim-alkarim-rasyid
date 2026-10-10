@@ -24,6 +24,7 @@ import {
   AsramaGroupMember,
   MusrifJournal, 
   MusrifJournalDetail, 
+  StudentJournalInputItem,
   Student, 
   Class 
 } from "../types";
@@ -307,17 +308,7 @@ export const MusrifJournals: React.FC = () => {
   });
 
   // Student progress details in journal form
-  const [studentJournalInputs, setStudentJournalInputs] = useState<Record<string, {
-    attendance: "Hadir" | "Sakit" | "Izin" | "Alpha";
-    memorizationTarget: string;
-    memorizationAchievement: string;
-    tajwid: "Sangat Baik" | "Baik" | "Cukup" | "Perlu Bimbingan";
-    makhraj: "Sangat Baik" | "Baik" | "Cukup" | "Perlu Bimbingan";
-    fluency: "Sangat Baik" | "Baik" | "Cukup" | "Perlu Bimbingan";
-    behavior: "Sangat Baik" | "Baik" | "Cukup" | "Perlu Bimbingan";
-    notes: string;
-    followUp: string;
-  }>>({});
+  const [studentJournalInputs, setStudentJournalInputs] = useState<Record<string, StudentJournalInputItem>>({});
 
   // Query journals list
   const { data: musrifJournals = [], isLoading: isLoadingJournals } = useQuery({
@@ -762,7 +753,7 @@ export const MusrifJournals: React.FC = () => {
       updatedBy: primaryCreatedBy
     };
 
-    const detailsPayload = Object.entries(studentJournalInputs).map(([studentId, inputs]) => {
+    const detailsPayload = Object.entries(studentJournalInputs).map(([studentId, inputs]: [string, StudentJournalInputItem]) => {
       const student = studentsList.find((s) => s.id === studentId);
       return {
         studentId,

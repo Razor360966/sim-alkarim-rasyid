@@ -151,3 +151,4 @@ export * from "./learningDesignRpm.types";
 export * from "./midtermReport.types";
 export * from "./halaqohRecap.types";
 export * from "./halaqahAttendance.types";
+export * from "./eRapor.types";

@@ -96,6 +96,8 @@ export interface MusrifJournalDetail {
   updatedBy?: string;
 
   // NEW FIELDS FOR DETAILED MONITORING (BAGIAN 7)
+  tahsinSurah?: string;
+  tahsinAyat?: string;
   tahsinMakhraj?: string;
   tahsinTajwid?: string;
   tahsinFluency?: string;
@@ -104,6 +106,7 @@ export interface MusrifJournalDetail {
   tahfizhSurah?: string;
   tahfizhAyat?: string;
   tahfizhHalaman?: string;
+  tahfizhTotalPages?: string;
   tahfizhNewMemorization?: string;
   tahfizhMurajaah?: string;
   tahfizhFluency?: string;
@@ -115,8 +118,59 @@ export interface MusrifJournalDetail {
   adabHonesty?: string;
   adabResponsibility?: string;
   adabCooperation?: string;
+  adabCleanliness?: string;
   adabNotes?: string;
 
+  asramaCleanliness?: string;
+  asramaWorship?: string;
+  asramaAttendance?: string;
+  asramaDiscipline?: string;
+  asramaSocialInteraction?: string;
+  asramaNotes?: string;
+
+  specialIssues?: string;
+}
+
+export interface StudentJournalInputItem {
+  attendance: "Hadir" | "Sakit" | "Izin" | "Alpha";
+  memorizationTarget?: string;
+  memorizationAchievement?: string;
+  tajwid?: "Sangat Baik" | "Baik" | "Cukup" | "Perlu Bimbingan";
+  makhraj?: "Sangat Baik" | "Baik" | "Cukup" | "Perlu Bimbingan";
+  fluency?: "Sangat Baik" | "Baik" | "Cukup" | "Perlu Bimbingan";
+  behavior?: "Sangat Baik" | "Baik" | "Cukup" | "Perlu Bimbingan";
+  notes?: string;
+  followUp?: string;
+
+  // Tahsin
+  tahsinSurah?: string;
+  tahsinAyat?: string;
+  tahsinMakhraj?: string;
+  tahsinTajwid?: string;
+  tahsinFluency?: string;
+  tahsinNotes?: string;
+
+  // Tahfizh
+  tahfizhSurah?: string;
+  tahfizhAyat?: string;
+  tahfizhHalaman?: string;
+  tahfizhTotalPages?: string;
+  tahfizhNewMemorization?: string;
+  tahfizhMurajaah?: string;
+  tahfizhFluency?: string;
+  tahfizhNotes?: string;
+
+  // Adab & Karakter
+  adabDiscipline?: string;
+  adabNeatness?: string;
+  adabPoliteness?: string;
+  adabHonesty?: string;
+  adabResponsibility?: string;
+  adabCooperation?: string;
+  adabCleanliness?: string;
+  adabNotes?: string;
+
+  // Asrama
   asramaCleanliness?: string;
   asramaWorship?: string;
   asramaAttendance?: string;
