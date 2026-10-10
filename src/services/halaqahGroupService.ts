@@ -17,13 +17,23 @@ const GROUPS_COLLECTION = "halaqah_groups";
 const MEMBERS_COLLECTION = "halaqah_group_members";
 
 export const halaqahGroupService = {
-  // Get groups
-  async getGroups(musrifId?: string): Promise<HalaqahGroup[]> {
+  // Get groups (supports single ID or array of candidate IDs)
+  async getGroups(musrifId?: string | string[]): Promise<HalaqahGroup[]> {
     const colRef = collection(db, GROUPS_COLLECTION);
     let q = query(colRef);
     
     if (musrifId) {
-      q = query(colRef, where("musrifId", "==", musrifId));
+      const ids = (Array.isArray(musrifId) ? musrifId : [musrifId]).filter(
+        (id): id is string => typeof id === "string" && id.trim() !== ""
+      );
+      if (ids.length === 0) {
+        return [];
+      }
+      if (ids.length === 1) {
+        q = query(colRef, where("musrifId", "==", ids[0]));
+      } else {
+        q = query(colRef, where("musrifId", "in", ids.slice(0, 10)));
+      }
     }
 
     try {

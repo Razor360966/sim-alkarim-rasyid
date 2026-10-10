@@ -16,6 +16,7 @@ import { asramaGroupService } from "../services/asramaGroupService";
 import { musrifJournalService } from "../services/musrifJournalService";
 import { userService } from "../services/user.service";
 import { teacherService } from "../services/teacherService";
+import { auth } from "../firebase/config";
 import { 
   HalaqahGroup, 
   HalaqahGroupMember, 
@@ -167,25 +168,39 @@ export const MusrifJournals: React.FC = () => {
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
   const [showAllStudentsForTransfer, setShowAllStudentsForTransfer] = useState(false);
 
+  // Canonical candidate IDs for user (supports userId, teacherId, uid)
+  const candidateMusrifIds = useMemo(() => {
+    const ids: string[] = [];
+    if (user?.userId) ids.push(user.userId);
+    if (user?.teacherId && !ids.includes(user.teacherId)) ids.push(user.teacherId);
+    if (user?.uid && !ids.includes(user.uid)) ids.push(user.uid);
+    return ids;
+  }, [user?.userId, user?.teacherId, user?.uid]);
+
+  const isGroupOwner = (musrifId?: string) => {
+    if (!musrifId) return false;
+    return candidateMusrifIds.includes(musrifId);
+  };
+
   // 1. Query Halaqah groups
   const { data: halaqahGroupsData = [], isLoading: isLoadingHalaqahGroups } = useQuery({
-    queryKey: ["halaqahGroups", user?.userId, isAdmin, isKepalaSekolah, isWakilKepalaSekolah, isKetuaYayasan],
+    queryKey: ["halaqahGroups", candidateMusrifIds, isAdmin, isKepalaSekolah, isWakilKepalaSekolah, isKetuaYayasan],
     queryFn: () => {
       if (isAdmin || isKepalaSekolah || isWakilKepalaSekolah || isKetuaYayasan) {
         return halaqahGroupService.getGroups();
       }
-      return halaqahGroupService.getGroups(user?.userId || "");
+      return halaqahGroupService.getGroups(candidateMusrifIds);
     }
   });
 
   // 2. Query Asrama groups
   const { data: asramaGroupsData = [], isLoading: isLoadingAsramaGroups } = useQuery({
-    queryKey: ["asramaGroups", user?.userId, isAdmin, isKepalaSekolah, isWakilKepalaSekolah, isKetuaYayasan],
+    queryKey: ["asramaGroups", candidateMusrifIds, isAdmin, isKepalaSekolah, isWakilKepalaSekolah, isKetuaYayasan],
     queryFn: () => {
       if (isAdmin || isKepalaSekolah || isWakilKepalaSekolah || isKetuaYayasan) {
         return asramaGroupService.getGroups();
       }
-      return asramaGroupService.getGroups(user?.userId || "");
+      return asramaGroupService.getGroups(candidateMusrifIds);
     }
   });
 
@@ -306,10 +321,10 @@ export const MusrifJournals: React.FC = () => {
 
   // Query journals list
   const { data: musrifJournals = [], isLoading: isLoadingJournals } = useQuery({
-    queryKey: ["musrifJournals", activeYear?.id, activeSemester?.id, user?.userId],
+    queryKey: ["musrifJournals", activeYear?.id, activeSemester?.id, candidateMusrifIds],
     queryFn: () => {
       if (isMusrif && !isAdmin) {
-        return musrifJournalService.getByMusrif(user?.userId || "", activeYear?.id, activeSemester?.id);
+        return musrifJournalService.getByMusrif(candidateMusrifIds, activeYear?.id, activeSemester?.id);
       }
       return musrifJournalService.getAll(activeYear?.id, activeSemester?.id);
     },
@@ -699,6 +714,12 @@ export const MusrifJournals: React.FC = () => {
       return;
     }
 
+    // Strict authorization: non-admin can only submit journals for their assigned group
+    if (!isAdmin && !isKepalaSekolah && !isWakilKepalaSekolah && !isKetuaYayasan && !isGroupOwner(group.musrifId)) {
+      toast("Anda tidak memiliki wewenang untuk mengisi jurnal pada kelompok ini!", "error");
+      return;
+    }
+
     // Validation: Musrif tidak boleh membuat dua jurnal pada Tanggal, Jam, Kelompok yang sama
     const duplicate = musrifJournals.find((j) => 
       j.id !== selectedJournal?.id &&
@@ -716,8 +737,11 @@ export const MusrifJournals: React.FC = () => {
     const daysIndonesian = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
     const dayName = daysIndonesian[new Date(journalDate).getDay()];
 
-    const journalHeader = {
-      musrifId: user?.userId || "musrif-system",
+    const primaryMusrifId = group.musrifId || user?.teacherId || user?.userId || user?.uid || auth?.currentUser?.uid || "musrif-system";
+    const primaryCreatedBy = auth?.currentUser?.uid || user?.uid || user?.userId || "system";
+
+    const journalHeader: Record<string, any> = {
+      musrifId: primaryMusrifId,
       musrifName: user?.displayName || user?.name || "Musrif",
       academicYearId: activeYear?.id || "",
       academicYearName: activeYear?.year || "",
@@ -729,13 +753,13 @@ export const MusrifJournals: React.FC = () => {
       dayName,
       startTime: journalStartTime,
       endTime: journalEndTime,
-      activityType: isActiveMusrif ? "Pendampingan" : journalActivityType,
-      entryType: isActiveMusrif ? journalEntryType : undefined,
-      generalNotes: journalGeneralNotes,
-      supportingLink: journalSupportingLink,
-      status: journalStatus,
-      createdBy: user?.userId || "system",
-      updatedBy: user?.userId || "system"
+      activityType: isActiveMusrif ? "Pendampingan" : (journalActivityType || "Halaqah Rutin"),
+      entryType: isActiveMusrif ? (journalEntryType || "Harian") : "Halaqah",
+      generalNotes: journalGeneralNotes || "",
+      supportingLink: journalSupportingLink || "",
+      status: journalStatus || "Terlaksana",
+      createdBy: primaryCreatedBy,
+      updatedBy: primaryCreatedBy
     };
 
     const detailsPayload = Object.entries(studentJournalInputs).map(([studentId, inputs]) => {
@@ -743,7 +767,22 @@ export const MusrifJournals: React.FC = () => {
       return {
         studentId,
         studentName: student?.name || "Santri",
-        ...(inputs as any)
+        tahsinSurah: inputs?.tahsinSurah || "",
+        tahsinAyat: inputs?.tahsinAyat || "",
+        tahsinMakhraj: inputs?.tahsinMakhraj || "",
+        tahsinTajwid: inputs?.tahsinTajwid || "",
+        tahsinFluency: inputs?.tahsinFluency || "",
+        tahsinNotes: inputs?.tahsinNotes || "",
+        tahfizhSurah: inputs?.tahfizhSurah || "",
+        tahfizhAyat: inputs?.tahfizhAyat || "",
+        tahfizhTotalPages: inputs?.tahfizhTotalPages || "",
+        tahfizhFluency: inputs?.tahfizhFluency || "",
+        tahfizhNotes: inputs?.tahfizhNotes || "",
+        adabDiscipline: inputs?.adabDiscipline || "",
+        adabCleanliness: inputs?.adabCleanliness || "",
+        adabNotes: inputs?.adabNotes || "",
+        attendance: inputs?.attendance || "Hadir",
+        notes: inputs?.notes || ""
       };
     });
 
@@ -752,7 +791,9 @@ export const MusrifJournals: React.FC = () => {
         id: selectedJournal.id,
         journal: {
           ...journalHeader,
-          updatedBy: user?.userId || "system"
+          musrifId: selectedJournal.musrifId || primaryMusrifId,
+          createdBy: selectedJournal.createdBy || primaryCreatedBy,
+          updatedBy: primaryCreatedBy
         } as any,
         details: detailsPayload as any
       });

@@ -91,6 +91,9 @@ export interface MusrifJournalDetail {
   followUp: string;
   createdAt: string;
   updatedAt: string;
+  musrifId?: string;
+  createdBy?: string;
+  updatedBy?: string;
 
   // NEW FIELDS FOR DETAILED MONITORING (BAGIAN 7)
   tahsinMakhraj?: string;

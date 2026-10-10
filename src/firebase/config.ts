@@ -39,7 +39,8 @@ if (isFirebaseConfigured) {
     db = initializeFirestore(app, {
       localCache: persistentLocalCache({
         tabManager: persistentMultipleTabManager()
-      })
+      }),
+      ignoreUndefinedProperties: true
     });
   } catch (err) {
     // If already initialized, fallback to getFirestore

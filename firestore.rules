@@ -40,8 +40,8 @@ service cloud.firestore {
       return isAuthenticated() && (
         isSuperAdmin() ||
         (hasUserDoc() && (
-          getUserRole() in ['admin', 'operator', 'kepala sekolah', 'wakil kepala sekolah', 'tata usaha', 'wakakur', 'wakasis', 'wakasarpras', 'kurikulum'] ||
-          getUserRoles().hasAny(['admin', 'operator', 'kepala sekolah', 'wakil kepala sekolah', 'tata usaha', 'wakakur', 'wakasis', 'wakasarpras', 'kurikulum'])
+          getUserRole() in ['admin', 'operator', 'kepala sekolah', 'kepala_sekolah', 'wakil kepala sekolah', 'wakil_kepala_sekolah', 'tata usaha', 'tata_usaha', 'wakakur', 'wakakurikulum', 'wakasis', 'wakasarpras', 'kurikulum', 'ketua yayasan', 'ketua_yayasan', 'pimpinan', 'yayasan'] ||
+          getUserRoles().hasAny(['admin', 'operator', 'kepala sekolah', 'kepala_sekolah', 'wakil kepala sekolah', 'wakil_kepala_sekolah', 'tata usaha', 'tata_usaha', 'wakakur', 'wakakurikulum', 'wakasis', 'wakasarpras', 'kurikulum', 'ketua yayasan', 'ketua_yayasan', 'pimpinan', 'yayasan'])
         ))
       );
     }
@@ -68,8 +68,8 @@ service cloud.firestore {
 
     function isBoardingStaff() {
       return isAuthenticated() && hasUserDoc() && (
-        getUserRole() in ['musrif', 'guru halaqoh'] ||
-        getUserRoles().hasAny(['musrif', 'guru halaqoh'])
+        getUserRole() in ['musrif', 'guru halaqoh', 'Guru Halaqoh', 'Musrif', 'guru_halaqoh'] ||
+        getUserRoles().hasAny(['musrif', 'guru halaqoh', 'Guru Halaqoh', 'Musrif', 'guru_halaqoh'])
       );
     }
 
@@ -745,9 +745,14 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create, update: if isAuthenticated() && (
         isAdminOrOperator() ||
-        !isClassVerificationLocked(request.resource.data.academicYearId, request.resource.data.semesterId, request.resource.data.classId)
+        isCurriculumStaff() ||
+        ((getUserRole() in ['guru', 'Guru'] || getUserRoles().hasAny(['guru', 'Guru'])) && (
+          !('classId' in request.resource.data) || 
+          request.resource.data.classId == "" || 
+          !isClassVerificationLocked(request.resource.data.academicYearId, request.resource.data.semesterId, request.resource.data.classId)
+        ))
       );
-      allow delete: if isAdminOrOperator();
+      allow delete: if isAdminOrOperator() || isCurriculumStaff();
     }
 
     match /e_rapor_extracurriculars/{docId} {
@@ -774,6 +779,47 @@ service cloud.firestore {
       allow create: if isAuthenticated();
       allow update: if isAdminOrOperator();
       allow delete: if isAdminOrOperator();
+    }
+
+    // =========================================================================
+    // 16. STUDENT VIOLATIONS & REWARDS (KESANTRIAN & EXECUTIVE)
+    // =========================================================================
+    match /student_violations/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /student_rewards/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    // =========================================================================
+    // 17. SARANA & PRASARANA (INVENTORY & MAINTENANCE)
+    // =========================================================================
+    match /sarpras_inventory/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOperator();
+    }
+
+    match /sarpras_maintenance/{docId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if isAdminOrOperator();
+    }
+
+    match /inventaris_status/{studentId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (
+        isAdminOrOperator() ||
+        exists(/databases/$(database)/documents/inventaris_examiners/$(request.auth.uid))
+      );
+    }
+
+    match /inventaris_status_logs/{logId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
     }
 
     // =========================================================================

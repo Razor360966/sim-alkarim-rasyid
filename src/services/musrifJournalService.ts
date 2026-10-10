@@ -8,13 +8,29 @@ import {
   deleteDoc,
   query,
   where,
-  orderBy
+  orderBy,
+  writeBatch
 } from "firebase/firestore";
 import { db, handleFirestoreError, OperationType } from "../firebase/config";
 import { MusrifJournal, MusrifJournalDetail } from "../types";
 
 const JOURNALS_COLLECTION = "musrif_journals";
 const DETAILS_COLLECTION = "musrif_journal_details";
+
+// Helper to sanitize objects for Firestore (removes any undefined properties recursively)
+export function cleanUndefinedFields<T extends Record<string, any>>(obj: T): T {
+  const result: any = {};
+  for (const [key, val] of Object.entries(obj)) {
+    if (val !== undefined) {
+      if (val && typeof val === "object" && !Array.isArray(val) && !(val instanceof Date)) {
+        result[key] = cleanUndefinedFields(val);
+      } else {
+        result[key] = val;
+      }
+    }
+  }
+  return result;
+}
 
 export const musrifJournalService = {
   // Get all journals
@@ -56,31 +72,56 @@ export const musrifJournalService = {
     }
   },
 
-  // Get journals by musrif
+  // Get journals by musrif (supports single ID or array of candidate IDs)
   async getByMusrif(
-    musrifId: string,
+    musrifId: string | string[],
     academicYearId?: string,
     semesterId?: string
   ): Promise<MusrifJournal[]> {
     const colRef = collection(db, JOURNALS_COLLECTION);
-    let q = query(
-      colRef,
-      where("musrifId", "==", musrifId)
+    const ids = (Array.isArray(musrifId) ? musrifId : [musrifId]).filter(
+      (id): id is string => typeof id === "string" && id.trim() !== ""
     );
 
-    if (academicYearId && semesterId) {
-      q = query(
-        colRef,
-        where("musrifId", "==", musrifId),
-        where("academicYearId", "==", academicYearId),
-        where("semesterId", "==", semesterId)
-      );
-    } else if (academicYearId) {
-      q = query(
-        colRef,
-        where("musrifId", "==", musrifId),
-        where("academicYearId", "==", academicYearId)
-      );
+    if (ids.length === 0) {
+      return [];
+    }
+
+    let q = query(colRef);
+    if (ids.length === 1) {
+      if (academicYearId && semesterId) {
+        q = query(
+          colRef,
+          where("musrifId", "==", ids[0]),
+          where("academicYearId", "==", academicYearId),
+          where("semesterId", "==", semesterId)
+        );
+      } else if (academicYearId) {
+        q = query(
+          colRef,
+          where("musrifId", "==", ids[0]),
+          where("academicYearId", "==", academicYearId)
+        );
+      } else {
+        q = query(colRef, where("musrifId", "==", ids[0]));
+      }
+    } else {
+      if (academicYearId && semesterId) {
+        q = query(
+          colRef,
+          where("musrifId", "in", ids.slice(0, 10)),
+          where("academicYearId", "==", academicYearId),
+          where("semesterId", "==", semesterId)
+        );
+      } else if (academicYearId) {
+        q = query(
+          colRef,
+          where("musrifId", "in", ids.slice(0, 10)),
+          where("academicYearId", "==", academicYearId)
+        );
+      } else {
+        q = query(colRef, where("musrifId", "in", ids.slice(0, 10)));
+      }
     }
 
     try {
@@ -126,7 +167,7 @@ export const musrifJournalService = {
     }
   },
 
-  // Create journal & its details
+  // Create journal & its details atomically with writeBatch
   async create(
     journalData: Omit<MusrifJournal, "id" | "createdAt" | "updatedAt">,
     details: Omit<MusrifJournalDetail, "id" | "journalId" | "createdAt" | "updatedAt">[]
@@ -143,31 +184,36 @@ export const musrifJournalService = {
     };
 
     try {
-      // 1. Save journal header
-      await setDoc(newDocRef, newJournal);
+      const batch = writeBatch(db);
 
-      // 2. Save journal details per student
+      // 1. Stage sanitized journal header
+      batch.set(newDocRef, cleanUndefinedFields(newJournal));
+
+      // 2. Stage sanitized journal details per student with explicit ownership metadata
       const detailsColRef = collection(db, DETAILS_COLLECTION);
-      const detailPromises = details.map(async (detail) => {
+      details.forEach((detail) => {
         const detailDocRef = doc(detailsColRef);
         const newDetail: MusrifJournalDetail = {
           id: detailDocRef.id,
           journalId: newDocRef.id,
           ...detail,
+          musrifId: journalData.musrifId,
+          createdBy: journalData.createdBy,
           createdAt: now,
           updatedAt: now
         };
-        return setDoc(detailDocRef, newDetail);
+        batch.set(detailDocRef, cleanUndefinedFields(newDetail));
       });
 
-      await Promise.all(detailPromises);
+      // Atomic commit: header + all details succeed together or fail together
+      await batch.commit();
       return newJournal;
     } catch (error) {
       return handleFirestoreError(error, OperationType.WRITE, `${JOURNALS_COLLECTION}/${newDocRef.id}`);
     }
   },
 
-  // Update journal & its details
+  // Update journal & its details atomically with writeBatch
   async update(
     id: string,
     journalData: Partial<MusrifJournal>,
@@ -177,11 +223,13 @@ export const musrifJournalService = {
     const now = new Date().toISOString();
 
     try {
-      // 1. Update journal header
-      await updateDoc(docRef, {
+      const batch = writeBatch(db);
+
+      // 1. Update sanitized journal header
+      batch.update(docRef, cleanUndefinedFields({
         ...journalData,
         updatedAt: now
-      });
+      }));
 
       // 2. Update journal details if supplied
       if (details && details.length > 0) {
@@ -200,15 +248,17 @@ export const musrifJournalService = {
           }
         });
 
-        const detailPromises = details.map(async (detail) => {
+        details.forEach((detail) => {
           const existingId = existingDetailsMap[detail.studentId];
           if (existingId) {
             // Update existing detail
             const itemRef = doc(db, DETAILS_COLLECTION, existingId);
-            return updateDoc(itemRef, {
+            batch.update(itemRef, cleanUndefinedFields({
               ...detail,
+              ...(journalData.musrifId ? { musrifId: journalData.musrifId } : {}),
+              ...(journalData.updatedBy ? { updatedBy: journalData.updatedBy } : {}),
               updatedAt: now
-            });
+            }));
           } else {
             // Create new detail (e.g. if student added late)
             const itemRef = doc(detailsColRef);
@@ -216,15 +266,17 @@ export const musrifJournalService = {
               id: itemRef.id,
               journalId: id,
               ...detail,
+              ...(journalData.musrifId ? { musrifId: journalData.musrifId } : {}),
+              ...(journalData.updatedBy ? { createdBy: journalData.updatedBy, updatedBy: journalData.updatedBy } : {}),
               createdAt: now,
               updatedAt: now
             };
-            return setDoc(itemRef, newDetail);
+            batch.set(itemRef, cleanUndefinedFields(newDetail));
           }
         });
-
-        await Promise.all(detailPromises);
       }
+
+      await batch.commit();
     } catch (error) {
       return handleFirestoreError(error, OperationType.WRITE, `${JOURNALS_COLLECTION}/${id}`);
     }

@@ -437,7 +437,8 @@ export const eRaporService = {
     gradeLevel: string,
     subjectId: string,
     subjectName: string,
-    createdBy: string
+    createdBy: string,
+    classId?: string
   ): Promise<ERaporTp[]> {
     const existing = await this.getTps(academicYearId, semesterId, gradeLevel, subjectId);
     if (existing.length > 0) {
@@ -495,25 +496,35 @@ export const eRaporService = {
         order: i + 1,
         createdAt: new Date().toISOString(),
         createdBy,
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
+        ...(classId ? { classId } : {})
       };
-      const docRef = await addDoc(collection(db, COLLECTION_TPS), tpData);
-      created.push({ id: docRef.id, ...tpData });
+      try {
+        const docRef = await addDoc(collection(db, COLLECTION_TPS), tpData);
+        created.push({ id: docRef.id, ...tpData });
+      } catch (err) {
+        console.warn(`Could not persist TP ${i + 1} to Firestore, using safe in-memory fallback:`, err);
+        created.push({
+          id: `ephemeral_tp_${gradeLevel}_${subjectId}_${i + 1}`,
+          ...tpData
+        });
+      }
     }
 
     return created;
   },
 
   async saveTp(tp: Partial<ERaporTp>, createdBy: string): Promise<void> {
-    if (tp.id) {
+    if (tp.id && !tp.id.startsWith("ephemeral_")) {
       const docRef = doc(db, COLLECTION_TPS, tp.id);
       await updateDoc(docRef, {
         ...tp,
         updatedAt: new Date().toISOString()
       });
     } else {
+      const { id, ...dataToSave } = tp;
       await addDoc(collection(db, COLLECTION_TPS), {
-        ...tp,
+        ...dataToSave,
         createdAt: new Date().toISOString(),
         createdBy,
         updatedAt: new Date().toISOString()

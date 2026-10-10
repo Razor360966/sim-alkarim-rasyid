@@ -7,6 +7,7 @@ export interface ERaporTp {
   academicYearId: string;
   semesterId: string;
   gradeLevel: string; // e.g. "VII", "VIII", "IX"
+  classId?: string; // Optional classId association
   subjectId: string;
   subjectName?: string;
   code: string; // e.g. "TP 1", "TP 2"
@@ -48,6 +49,33 @@ export interface ERaporAssessment {
   updatedBy?: string;
 }
 
+export interface ERaporPondokScheme {
+  id: string; // `${academicYearId}_${semesterId}_${classId}_${subjectId}`
+  academicYearId: string;
+  semesterId: string;
+  classId: string;
+  subjectId: string;
+  teacherId: string;
+
+  hasDaily: boolean;
+  dailyCount: number; // 0 if hasDaily=false, 1-10 if hasDaily=true
+  dailyLabels?: string[];
+
+  hasUts: boolean;
+  hasSemester: boolean;
+
+  weights: {
+    daily: number;
+    uts: number;
+    semester: number;
+  };
+
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+  updatedBy?: string;
+}
+
 export interface ERaporPondokAssessment {
   id?: string; // `${academicYearId}_${semesterId}_${classId}_${subjectId}_${studentId}`
   academicYearId: string;
@@ -59,11 +87,32 @@ export interface ERaporPondokAssessment {
   studentName: string;
   studentNis?: string;
   teacherId: string;
+
+  // Nilai Komponen Fleksibel Mapel Pondok (Tahap 5A)
+  dailyScores?: (number | null)[];
+  dailyAverage?: number | null;
+  utsScore?: number | null;
+  semesterScore?: number | null;
+
   score: number | null; // 0 - 100
   finalScore?: number | null; // Alias for score compatibility
   ketercapaian: string; // Deskripsi ketercapaian santri
   notes?: string;
   status: ERaporAssessmentStatus;
+
+  // Snapshot skema saat penilaian disimpan (menjaga data historis semester lampau)
+  schemeSnapshot?: {
+    hasDaily: boolean;
+    dailyCount: number;
+    hasUts: boolean;
+    hasSemester: boolean;
+    weights: {
+      daily: number;
+      uts: number;
+      semester: number;
+    };
+  };
+
   createdAt?: string;
   updatedAt?: string;
   updatedBy?: string;

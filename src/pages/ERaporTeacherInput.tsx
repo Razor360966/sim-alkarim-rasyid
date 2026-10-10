@@ -52,6 +52,14 @@ import {
   isSubjectReportVisible
 } from "../utils/subjectHelper";
 
+const resolveGradeLevel = (cls?: Class): "VII" | "VIII" | "IX" => {
+  if (!cls) return "VII";
+  const raw = cls.gradeLevel || cls.grade;
+  if (raw === "VIII" || raw === "8" || (cls.name && (cls.name.includes("8") || cls.name.includes("VIII")))) return "VIII";
+  if (raw === "IX" || raw === "9" || (cls.name && (cls.name.includes("9") || cls.name.includes("IX")))) return "IX";
+  return "VII";
+};
+
 export default function ERaporTeacherInput() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -391,25 +399,61 @@ export default function ERaporTeacherInput() {
           } else {
             // Load Standard Rapor Umum Assessments
             const targetSubject = subjects.find((s) => s.id === selectedSubjectId);
-            const gradeLevel = targetClass?.gradeLevel || "VII";
+            const gradeLevel = resolveGradeLevel(targetClass);
             const subjectName = targetSubject?.name || "Mata Pelajaran";
 
-            const [loadedTps, loadedAssessments] = await Promise.all([
-              eRaporService.syncTpsFromProtaPromes(
-                selectedAcademicYearId,
-                selectedSemesterId,
-                gradeLevel,
-                selectedSubjectId,
-                subjectName,
-                user?.name || "Guru"
-              ),
-              eRaporService.getAssessmentsForClassSubject(
-                selectedAcademicYearId,
-                selectedSemesterId,
-                selectedClassId,
-                selectedSubjectId
-              )
-            ]);
+            let loadedTps: ERaporTp[] = [];
+            let loadedAssessments: ERaporAssessment[] = [];
+
+            try {
+              [loadedTps, loadedAssessments] = await Promise.all([
+                eRaporService.syncTpsFromProtaPromes(
+                  selectedAcademicYearId,
+                  selectedSemesterId,
+                  gradeLevel,
+                  selectedSubjectId,
+                  subjectName,
+                  user?.name || "Guru",
+                  selectedClassId
+                ),
+                eRaporService.getAssessmentsForClassSubject(
+                  selectedAcademicYearId,
+                  selectedSemesterId,
+                  selectedClassId,
+                  selectedSubjectId
+                )
+              ]);
+            } catch (err) {
+              console.warn("Parallel fetch error in assessment grid, falling back to safe individual fetch:", err);
+              try {
+                loadedAssessments = await eRaporService.getAssessmentsForClassSubject(
+                  selectedAcademicYearId,
+                  selectedSemesterId,
+                  selectedClassId,
+                  selectedSubjectId
+                );
+              } catch (assessErr) {
+                console.error("Failed to load assessments:", assessErr);
+              }
+              try {
+                loadedTps = await eRaporService.getTps(
+                  selectedAcademicYearId,
+                  selectedSemesterId,
+                  gradeLevel,
+                  selectedSubjectId
+                );
+              } catch (tpErr) {
+                console.error("Failed to load TPs:", tpErr);
+              }
+              if (loadedTps.length === 0) {
+                loadedTps = [
+                  { id: `ephemeral_tp_${gradeLevel}_1`, academicYearId: selectedAcademicYearId, semesterId: selectedSemesterId, gradeLevel, classId: selectedClassId, subjectId: selectedSubjectId, code: "TP 1", title: `Memahami konsep dasar materi ${subjectName}`, order: 1 },
+                  { id: `ephemeral_tp_${gradeLevel}_2`, academicYearId: selectedAcademicYearId, semesterId: selectedSemesterId, gradeLevel, classId: selectedClassId, subjectId: selectedSubjectId, code: "TP 2", title: `Menerapkan latihan materi ${subjectName}`, order: 2 },
+                  { id: `ephemeral_tp_${gradeLevel}_3`, academicYearId: selectedAcademicYearId, semesterId: selectedSemesterId, gradeLevel, classId: selectedClassId, subjectId: selectedSubjectId, code: "TP 3", title: `Evaluasi pemahaman materi ${subjectName}`, order: 3 },
+                  { id: `ephemeral_tp_${gradeLevel}_4`, academicYearId: selectedAcademicYearId, semesterId: selectedSemesterId, gradeLevel, classId: selectedClassId, subjectId: selectedSubjectId, code: "TP 4", title: `Praktik dan penugasan materi ${subjectName}`, order: 4 }
+                ];
+              }
+            }
 
             setTps(loadedTps);
 
@@ -939,12 +983,14 @@ export default function ERaporTeacherInput() {
     try {
       const targetClass = classes.find((c) => c.id === selectedClassId);
       const targetSubject = subjects.find((s) => s.id === selectedSubjectId);
+      const gradeLevel = resolveGradeLevel(targetClass);
 
       await eRaporService.saveTp(
         {
           academicYearId: selectedAcademicYearId,
           semesterId: selectedSemesterId,
-          gradeLevel: targetClass?.gradeLevel || "VII",
+          gradeLevel,
+          classId: selectedClassId,
           subjectId: selectedSubjectId,
           subjectName: targetSubject?.name || "",
           code: `TP ${tps.length + 1}`,
@@ -961,7 +1007,7 @@ export default function ERaporTeacherInput() {
       const updatedTps = await eRaporService.getTps(
         selectedAcademicYearId,
         selectedSemesterId,
-        targetClass?.gradeLevel || "VII",
+        gradeLevel,
         selectedSubjectId
       );
       setTps(updatedTps);
