@@ -697,11 +697,14 @@ export default function MidtermReport() {
                   {reportContext.subjects.map((subj) => (
                     <th
                       key={subj.subjectId}
-                      className="p-3 min-w-[120px] text-center font-bold border-r border-slate-200/80 dark:border-zinc-800"
+                      className="p-3 min-w-[140px] text-center font-bold border-r border-slate-200/80 dark:border-zinc-800"
                     >
                       <div className="flex flex-col items-center gap-0.5">
-                        <span className="font-bold text-slate-800 dark:text-zinc-100 truncate max-w-[140px]" title={subj.subjectName}>
-                          {subj.subjectCode || subj.subjectName}
+                        <span
+                          className="font-bold text-slate-800 dark:text-zinc-100 line-clamp-2 max-w-[160px] text-center leading-tight"
+                          title={subj.subjectCode ? `${subj.subjectName} (${subj.subjectCode})` : (subj.subjectName || "-")}
+                        >
+                          {subj.subjectName || subj.subjectCode || "-"}
                         </span>
                         <div className="flex items-center gap-1 text-[10px] text-slate-400 font-normal">
                           {subj.group && <span>Kel. {subj.group}</span>}
