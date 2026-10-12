@@ -988,12 +988,14 @@ export const scheduleService = {
 
     // Filter classes to schedule
     const classesToSchedule = targetClassId 
-      ? classes.filter(c => isClassMatch(targetClassId, c))
+      ? classes.filter(c => isClassMatch(targetClassId, c, classes))
       : classes;
 
     // For each class, find curriculum matrix requirements
     classesToSchedule.forEach((cls) => {
-      const normGrade = normalizeGradeLevel(cls.gradeLevel);
+      const normGrade = normalizeGradeLevel(cls.gradeLevel) !== "INVALID_GRADE_LEVEL"
+        ? normalizeGradeLevel(cls.gradeLevel)
+        : normalizeGradeLevel(cls.name);
       if (normGrade === "INVALID_GRADE_LEVEL") {
         console.warn(`[AutoScheduler] Class ${cls.name} has invalid gradeLevel "${cls.gradeLevel}". Skipping task creation.`);
         return;
@@ -1458,7 +1460,7 @@ export const scheduleService = {
         const slotKey = `${sched.classId}_${sched.day.toLowerCase()}_${sched.sequence}`;
         classOccupation.set(slotKey, sched.subjectId);
 
-        const matchedClassEntity = classes.find(c => isClassMatch(sched.classId, c));
+        const matchedClassEntity = classes.find(c => isClassMatch(sched.classId, c, classes));
         if (matchedClassEntity) {
           const canonKey = `${getCanonicalClassId(matchedClassEntity)}_${sched.day.toLowerCase()}_${sched.sequence}`;
           classOccupation.set(canonKey, sched.subjectId);

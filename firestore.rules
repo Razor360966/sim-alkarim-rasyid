@@ -823,6 +823,65 @@ service cloud.firestore {
     }
 
     // =========================================================================
+    // 18. JADWAL BAYANGAN (SIMULASI PERENCANAAN KURIKULUM & JADWAL)
+    // Isolated scenario sandbox: completely segregated from operational tables
+    // =========================================================================
+    match /schedule_scenarios/{scenarioId} {
+      allow read: if isAuthenticated();
+      // Only Curriculum staff, Admin/Operator, and Leadership can create/edit/delete scenarios
+      allow create: if isAuthenticated() && (
+        isCurriculumStaff() || isAdminOrOperator()
+      ) && request.resource.data.createdBy == request.auth.uid;
+      
+      allow update: if isAuthenticated() && (
+        isCurriculumStaff() || isAdminOrOperator() || isLeadershipOrEvaluator()
+      );
+      
+      allow delete: if isAuthenticated() && (
+        isAdminOrOperator() || 
+        (isCurriculumStaff() && resource.data.createdBy == request.auth.uid)
+      );
+    }
+
+    match /scenario_curriculum_matrix/{docId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && (
+        isCurriculumStaff() || isAdminOrOperator()
+      );
+      allow delete: if isAuthenticated() && (
+        isCurriculumStaff() || isAdminOrOperator()
+      );
+    }
+
+    match /scenario_subjects/{docId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && (
+        isCurriculumStaff() || isAdminOrOperator()
+      );
+      allow delete: if isAuthenticated() && (
+        isCurriculumStaff() || isAdminOrOperator()
+      );
+    }
+
+    match /scenario_schedules/{docId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && (
+        isCurriculumStaff() || isAdminOrOperator()
+      );
+      allow delete: if isAuthenticated() && (
+        isCurriculumStaff() || isAdminOrOperator()
+      );
+    }
+
+    match /scenario_change_logs/{logId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && (
+        isCurriculumStaff() || isAdminOrOperator() || isLeadershipOrEvaluator()
+      );
+      allow update, delete: if false; // Append-only audit trail
+    }
+
+    // =========================================================================
     // DEFAULT: CATCH-ALL PERMISSIVE FALLBACK REMOVED
     // Any document path not explicitly matched above is DENIED by default.
     // =========================================================================

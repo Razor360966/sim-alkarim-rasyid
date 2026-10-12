@@ -44,7 +44,8 @@ import {
   Layers,
   Info,
   TrendingUp,
-  ClipboardCheck
+  ClipboardCheck,
+  GitBranch
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -168,6 +169,7 @@ export const MainLayout: React.FC = () => {
     { name: "Manajemen Akun", path: "/users", icon: UserIcon, roles: ["admin", "operator"] },
     { name: "Lesson Period", path: "/lesson-periods", icon: Clock, roles: ["admin", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"] },
     { name: "Auto Scheduler", path: "/schedules", icon: CalendarDays, roles: ["admin", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Jadwal Pelajaran" },
+    { name: "Jadwal Bayangan", path: "/schedule-scenarios", icon: GitBranch, roles: ["admin", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "operator", "ketua yayasan"], group: "Jadwal Pelajaran" },
     
     // Academic Planning Engine Foundation Menus
     { name: "Kalender Akademik", path: "/academic-calendar", icon: CalendarDays, roles: ["admin", "pimpinan", "kepala sekolah", "wakil kepala sekolah", "tata usaha", "operator", "ketua yayasan"], group: "Perencanaan Akademik" },

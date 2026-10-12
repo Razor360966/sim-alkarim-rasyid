@@ -449,20 +449,22 @@ export default function Schedules() {
     const matrixItem = curriculumMatrix.find(m => m.subjectId === subjectId);
     if (!matrixItem) return;
 
-    let updatedSchedules = previewSchedules !== null ? [...previewSchedules] : [...dbSchedules];
-
-    // Remove old matching slot if any
-    updatedSchedules = updatedSchedules.filter(s => 
-      !(isClassMatch(s.classId, selectedSlot.classId, classes) && 
-        s.day.toLowerCase() === selectedSlot.day.toLowerCase() && 
-        s.sequence === selectedSlot.sequence)
-    );
-
     const assignedTeacher = teachers.find(t => t.id === teacherId);
     const resolvedTeacherName = assignedTeacher?.name || matrixItem.teacherName || "Guru Pengampu";
 
-    const targetClassEntity = classes.find(c => isClassMatch(selectedSlot.classId, c, classes));
-    const canonicalClassId = targetClassEntity ? getCanonicalClassId(targetClassEntity) : selectedSlot.classId;
+    const targetClassEntity = classes.find(c => c.id === selectedSlot.classId || c.classId === selectedSlot.classId) ||
+      classes.find(c => isClassMatch(selectedSlot.classId, c, classes));
+    const canonicalClassId = targetClassEntity ? getCanonicalClassId(targetClassEntity, classes) : getCanonicalClassId(selectedSlot.classId, classes);
+
+    let updatedSchedules = previewSchedules !== null ? [...previewSchedules] : [...dbSchedules];
+
+    // Remove old matching slot if any (strictly isolating this exact class!)
+    updatedSchedules = updatedSchedules.filter(s => {
+      const sCanonClassId = getCanonicalClassId(s.classId, classes);
+      const isSameClass = sCanonClassId === canonicalClassId || (targetClassEntity ? isClassMatch(s.classId, targetClassEntity, classes) : false);
+      const isSameTime = s.day.toLowerCase() === selectedSlot.day.toLowerCase() && s.sequence === selectedSlot.sequence;
+      return !(isSameClass && isSameTime);
+    });
 
     const newSchedule: Schedule = {
       academicYearId: selectedYearId,
@@ -505,13 +507,18 @@ export default function Schedules() {
       return;
     }
 
+    const targetClassEntity = classes.find(c => c.id === selectedSlot.classId || c.classId === selectedSlot.classId) ||
+      classes.find(c => isClassMatch(selectedSlot.classId, c, classes));
+    const canonicalClassId = targetClassEntity ? getCanonicalClassId(targetClassEntity, classes) : getCanonicalClassId(selectedSlot.classId, classes);
+
     let updatedSchedules = previewSchedules !== null ? [...previewSchedules] : [...dbSchedules];
 
-    updatedSchedules = updatedSchedules.filter(s => 
-      !(isClassMatch(s.classId, selectedSlot.classId, classes) && 
-        s.day.toLowerCase() === selectedSlot.day.toLowerCase() && 
-        s.sequence === selectedSlot.sequence)
-    );
+    updatedSchedules = updatedSchedules.filter(s => {
+      const sCanonClassId = getCanonicalClassId(s.classId, classes);
+      const isSameClass = sCanonClassId === canonicalClassId || (targetClassEntity ? isClassMatch(s.classId, targetClassEntity, classes) : false);
+      const isSameTime = s.day.toLowerCase() === selectedSlot.day.toLowerCase() && s.sequence === selectedSlot.sequence;
+      return !(isSameClass && isSameTime);
+    });
 
     setPreviewSchedules(updatedSchedules);
     toast("Slot berhasil dikosongkan! Klik 'Simpan Jadwal' untuk menyimpan secara permanen.", "info");
@@ -758,20 +765,66 @@ export default function Schedules() {
       return;
     }
     
-    // Build mapping for active classes (case-insensitive)
+    // Build mapping for active classes: supports exact name, exact ID, and unambiguous grade-level aliases
+    const activeClassesList = classes.filter(c => c.status === "Aktif" && !c.isDeleted);
     const classMap = new Map<string, Class>();
-    classes.forEach(c => {
-      if (c.status === "Aktif" && !c.isDeleted) {
-        classMap.set(c.name.toLowerCase().trim(), c);
+    const mappedClassIds = new Map<string, string>(); // canonicalClassId -> headerName (detect duplicate columns)
+
+    classKeys.forEach(rawKey => {
+      const cleanKey = rawKey.trim();
+      const lowerKey = cleanKey.toLowerCase();
+
+      // 1. Exact ID / classId match
+      let matched: Class | undefined = activeClassesList.find(c => 
+        (c.id && c.id.toLowerCase() === lowerKey) || 
+        (c.classId && c.classId.toLowerCase() === lowerKey)
+      );
+
+      // 2. Exact Name match (case-insensitive)
+      if (!matched) {
+        const byName = activeClassesList.filter(c => c.name && c.name.toLowerCase().trim() === lowerKey);
+        if (byName.length === 1) {
+          matched = byName[0];
+        } else if (byName.length > 1) {
+          errorsList.push(`Kolom "${rawKey}" ambigu: ditemukan lebih dari satu kelas dengan nama "${rawKey}".`);
+          return;
+        }
       }
-    });
-    
-    // Check if any imported class column is not in our active classes list
-    classKeys.forEach(key => {
-      const normalizedKey = key.toLowerCase().trim();
-      if (!classMap.has(normalizedKey)) {
-        errorsList.push(`Kelas "${key}" pada kolom Excel tidak ditemukan atau tidak aktif di sistem.`);
+
+      // 3. Normalized Grade-level alias (e.g. "VII", "7", "Kelas VII", "VIII", "8", "Kelas VIII", "IX", "9", "Kelas IX")
+      if (!matched) {
+        const normGrade = normalizeGradeLevel(cleanKey);
+        if (normGrade !== "INVALID_GRADE_LEVEL") {
+          const byGrade = activeClassesList.filter(c => {
+            const g = normalizeGradeLevel(c.gradeLevel) !== "INVALID_GRADE_LEVEL"
+              ? normalizeGradeLevel(c.gradeLevel)
+              : normalizeGradeLevel(c.name);
+            return g === normGrade;
+          });
+          if (byGrade.length === 1) {
+            matched = byGrade[0];
+          } else if (byGrade.length > 1) {
+            errorsList.push(`Kolom "${rawKey}" ambigu: jenjang ${normGrade} memiliki beberapa rombel (${byGrade.map(c => c.name).join(", ")}). Harap gunakan nama kelas spesifik.`);
+            return;
+          }
+        }
       }
+
+      if (!matched) {
+        errorsList.push(`Kelas "${rawKey}" pada kolom Excel tidak ditemukan atau tidak aktif di sistem.`);
+        return;
+      }
+
+      const canonId = getCanonicalClassId(matched, classes);
+      if (mappedClassIds.has(canonId)) {
+        const existingHeader = mappedClassIds.get(canonId);
+        errorsList.push(`Kolom "${rawKey}" dan "${existingHeader}" mengarah ke kelas yang sama (${matched.name}). Harap gunakan satu kolom per kelas.`);
+        return;
+      }
+
+      mappedClassIds.set(canonId, rawKey);
+      classMap.set(cleanKey, matched);
+      classMap.set(lowerKey, matched);
     });
     
     // Parse each cell in each row
@@ -893,7 +946,9 @@ export default function Schedules() {
             subjectName = matchedMatrixItem.subjectName; // normalize casing
             
             const targetCanonicalClassId = targetClass ? getCanonicalClassId(targetClass, classes) : "";
-            const normGrade = targetClass ? normalizeGradeLevel(targetClass.gradeLevel) : "INVALID_GRADE_LEVEL";
+            const normGrade = targetClass 
+              ? (normalizeGradeLevel(targetClass.gradeLevel) !== "INVALID_GRADE_LEVEL" ? normalizeGradeLevel(targetClass.gradeLevel) : normalizeGradeLevel(targetClass.name))
+              : "INVALID_GRADE_LEVEL";
 
             // Class-aware SSOT 4-tier resolver: teacher_assignments -> matrix_grade -> matrix_global -> fallback
             const resolved = resolveTeacherAssignmentSync({
@@ -941,7 +996,7 @@ export default function Schedules() {
           sequence,
           lessonPeriodId: matchedPeriod?.id || "LPERIOD_IMPORT",
           jp: matchedPeriod?.title || `JP ${sequence}`,
-          className: classNameKey,
+          className: targetClass?.name || classNameKey,
           classId: targetCanonicalClassId,
           subjectName,
           subjectId,
@@ -1143,30 +1198,54 @@ export default function Schedules() {
       return;
     }
     
+    // Identify canonical class IDs present in the imported dataset
+    const importedTargetClassIds = new Set<string>();
+    importedSlots.forEach((slot) => {
+      if (slot.classId) {
+        const cId = getCanonicalClassId(slot.classId, classes);
+        if (cId) importedTargetClassIds.add(cId);
+      }
+    });
+
+    const baseSchedules = previewSchedules !== null ? [...previewSchedules] : [...dbSchedules];
     let updatedSchedules: Schedule[] = [];
-    
+
     if (importOption === "overwrite") {
-      updatedSchedules = [];
+      // OVERWRITE POLICY: Only clear/replace slots belonging to the classes targeted in this import.
+      // Other classes in the system that were NOT in the import file are safely preserved!
+      updatedSchedules = baseSchedules.filter((s) => {
+        const sCanonId = getCanonicalClassId(s.classId, classes);
+        return !importedTargetClassIds.has(sCanonId);
+      });
     } else {
-      updatedSchedules = previewSchedules !== null ? [...previewSchedules] : [...dbSchedules];
+      // MERGE POLICY: Keep all base schedules, only overwrite individual colliding slots
+      updatedSchedules = [...baseSchedules];
     }
     
     importedSlots.forEach((slot) => {
-      if (slot.status === "valid" && slot.classId && slot.subjectId && slot.teacherId) {
-        updatedSchedules = updatedSchedules.filter(s => 
-          !(isClassMatch(s.classId, slot.classId, classes) && 
-            s.day.toLowerCase() === slot.day.toLowerCase() && 
-            s.sequence === slot.sequence)
-        );
+      if (!slot.classId) return;
+      const slotCanonicalClassId = getCanonicalClassId(slot.classId, classes);
+      const slotDayLower = (slot.day || "").trim().toLowerCase();
+      const slotSeq = slot.sequence;
+
+      if (slot.status === "valid" && slot.subjectId && slot.teacherId) {
+        // Remove any slot matching this EXACT target class, day, and sequence
+        updatedSchedules = updatedSchedules.filter((s) => {
+          const sCanonId = getCanonicalClassId(s.classId, classes);
+          const isSameClass = sCanonId === slotCanonicalClassId;
+          const isSameTime = s.day.toLowerCase() === slotDayLower && s.sequence === slotSeq;
+          return !(isSameClass && isSameTime);
+        });
         
+        const targetClassEntity = classes.find(c => c.id === slotCanonicalClassId || c.classId === slotCanonicalClassId);
         const newSchedule: Schedule = {
           academicYearId: selectedYearId,
           semesterId: selectedSemesterId,
-          classId: getCanonicalClassId(slot.classId, classes),
-          className: slot.className,
+          classId: slotCanonicalClassId,
+          className: targetClassEntity?.name || slot.className,
           day: slot.day,
-          sequence: slot.sequence,
-          jp: slot.jp || `JP ${slot.sequence}`,
+          sequence: slotSeq,
+          jp: slot.jp || `JP ${slotSeq}`,
           subjectId: slot.subjectId,
           subjectName: slot.subjectName,
           teacherId: slot.teacherId,
@@ -1178,12 +1257,14 @@ export default function Schedules() {
           lessonPeriodId: slot.lessonPeriodId || "LPERIOD_IMPORT"
         };
         updatedSchedules.push(newSchedule);
-      } else if (slot.status === "empty" && importOption === "overwrite") {
-        updatedSchedules = updatedSchedules.filter(s => 
-          !(isClassMatch(s.classId, slot.classId, classes) && 
-            s.day.toLowerCase() === slot.day.toLowerCase() && 
-            s.sequence === slot.sequence)
-        );
+      } else if (slot.status === "empty" && importOption === "merge") {
+        // For merge option, an explicitly empty slot in Excel means clear that slot for that class
+        updatedSchedules = updatedSchedules.filter((s) => {
+          const sCanonId = getCanonicalClassId(s.classId, classes);
+          const isSameClass = sCanonId === slotCanonicalClassId;
+          const isSameTime = s.day.toLowerCase() === slotDayLower && s.sequence === slotSeq;
+          return !(isSameClass && isSameTime);
+        });
       }
     });
     

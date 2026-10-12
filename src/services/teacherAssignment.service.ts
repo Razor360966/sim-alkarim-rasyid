@@ -14,6 +14,7 @@ import {
 import { db, handleFirestoreError, OperationType } from "../firebase/config";
 import { TeacherAssignment, CurriculumMatrix, Class } from "../types";
 import { semesterService } from "./semester.service";
+import { normalizeGradeLevel } from "../utils/gradeLevelHelper";
 
 const COLLECTION_NAME = "teacher_assignments";
 
@@ -615,27 +616,24 @@ export const teacherAssignmentService = {
 
     // PRIORITAS 2: Cek fallback jenjang curriculum_matrix (teacherId_vii / viii / ix)
     if (curriculumMatrixItem) {
-      const normalizedGrade = String(gradeLevel || "").toUpperCase();
-      const isVii = normalizedGrade.includes("VII") || normalizedGrade === "7";
-      const isViii = normalizedGrade.includes("VIII") || normalizedGrade === "8";
-      const isIx = normalizedGrade.includes("IX") || normalizedGrade === "9";
+      const normGrade = normalizeGradeLevel(gradeLevel);
 
       if (curriculumMatrixItem.useDifferentTeachers) {
-        if (isVii && curriculumMatrixItem.teacherId_vii) {
-          return {
-            teacherId: curriculumMatrixItem.teacherId_vii,
-            teacherName: curriculumMatrixItem.teacherName_vii || "Guru Pengampu",
-            source: "matrix_grade"
-          };
-        }
-        if (isViii && curriculumMatrixItem.teacherId_viii) {
+        if (normGrade === "VIII" && curriculumMatrixItem.teacherId_viii) {
           return {
             teacherId: curriculumMatrixItem.teacherId_viii,
             teacherName: curriculumMatrixItem.teacherName_viii || "Guru Pengampu",
             source: "matrix_grade"
           };
         }
-        if (isIx && curriculumMatrixItem.teacherId_ix) {
+        if (normGrade === "VII" && curriculumMatrixItem.teacherId_vii) {
+          return {
+            teacherId: curriculumMatrixItem.teacherId_vii,
+            teacherName: curriculumMatrixItem.teacherName_vii || "Guru Pengampu",
+            source: "matrix_grade"
+          };
+        }
+        if (normGrade === "IX" && curriculumMatrixItem.teacherId_ix) {
           return {
             teacherId: curriculumMatrixItem.teacherId_ix,
             teacherName: curriculumMatrixItem.teacherName_ix || "Guru Pengampu",
@@ -978,21 +976,18 @@ export const teacherAssignmentService = {
     classSnap.forEach((d) => {
       const data = d.data() as any;
       if (data.isDeleted !== true && data.status !== "Nonaktif") {
-        const clsGrade = String(data.gradeLevel || "").toUpperCase();
-        const clsName = String(data.name || "").toUpperCase();
-        const isMatch = clsGrade === gradeLevel || 
-          (gradeLevel === "VII" && (clsName.includes("7") || clsName.includes("VII"))) ||
-          (gradeLevel === "VIII" && (clsName.includes("8") || clsName.includes("VIII"))) ||
-          (gradeLevel === "IX" && (clsName.includes("9") || clsName.includes("IX")));
+        const clsNormGrade = normalizeGradeLevel(data.gradeLevel) !== "INVALID_GRADE_LEVEL"
+          ? normalizeGradeLevel(data.gradeLevel)
+          : normalizeGradeLevel(data.name);
 
-        if (isMatch) {
+        if (clsNormGrade === gradeLevel) {
           targetClasses.push({
             id: d.id,
             classId: d.id,
+            ...data,
             name: data.name,
             gradeLevel: gradeLevel,
             status: data.status,
-            ...data
           } as Class);
         }
       }

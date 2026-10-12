@@ -43,6 +43,7 @@ const Profile = lazyRetry(() => import("./pages/Profile"), "Profile");
 const SchoolAgendas = lazyRetry(() => import("./pages/SchoolAgendas"), "SchoolAgendas");
 const LessonPeriods = lazyRetry(() => import("./pages/LessonPeriods"), "LessonPeriods");
 const Schedules = lazyRetry(() => import("./pages/Schedules"), "Schedules");
+const ScheduleScenarios = lazyRetry(() => import("./pages/ScheduleScenarios"), "ScheduleScenarios");
 const AcademicCalendar = lazyRetry(() => import("./pages/AcademicCalendar"), "AcademicCalendar");
 const AnnualActivityTimeline = lazyRetry(() => import("./pages/AnnualActivityTimeline"), "AnnualActivityTimeline");
 const EffectiveWeeks = lazyRetry(() => import("./pages/EffectiveWeeks"), "EffectiveWeeks");
@@ -153,6 +154,7 @@ export default function App() {
                         <Route path="users" element={<Users />} />
                         <Route path="lesson-periods" element={<LessonPeriods />} />
                         <Route path="schedules" element={<Schedules />} />
+                        <Route path="schedule-scenarios" element={<ScheduleScenarios />} />
                         <Route path="settings" element={<Settings />} />
                         <Route path="settings/agendas" element={<SchoolAgendas />} />
                         <Route path="curriculum-matrix" element={<CurriculumMatrixPage />} />

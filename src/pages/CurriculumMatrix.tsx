@@ -10,6 +10,7 @@ import { academicYearService } from "../services/academicYear.service";
 import { semesterService } from "../services/semester.service";
 import { teacherAssignmentService } from "../services/teacherAssignment.service";
 import { CurriculumMatrix, Subject, Teacher, Class, AcademicYear, Semester, TeacherAssignment } from "../types";
+import { normalizeGradeLevel } from "../utils/gradeLevelHelper";
 import { Loading } from "../components/Loading";
 import { Dialog } from "../components/Dialog";
 import { exportToExcel, exportToPDF } from "../utils/exportUtils";
@@ -970,15 +971,15 @@ export const CurriculumMatrixPage: React.FC = () => {
       );
 
       // 2. Update curriculum_matrix grade-level snapshot for backward compatibility
-      const gradeStr = (cls.gradeLevel || "").toLowerCase();
-      const gradeKey = (gradeStr === "vii" || gradeStr === "viii" || gradeStr === "ix")
-        ? (gradeStr as "vii" | "viii" | "ix")
-        : cls.name.includes("7") ? "vii" : cls.name.includes("8") ? "viii" : "ix";
+      const normGrade = normalizeGradeLevel(cls.gradeLevel) !== "INVALID_GRADE_LEVEL"
+        ? normalizeGradeLevel(cls.gradeLevel)
+        : normalizeGradeLevel(cls.name);
+      const gradeKey = normGrade === "VII" ? "vii" : normGrade === "VIII" ? "viii" : normGrade === "IX" ? "ix" : null;
 
-      if (["vii", "viii", "ix"].includes(gradeKey)) {
+      if (gradeKey) {
         await curriculumMatrixService.assignTeacherForGrade(
           item.id,
-          gradeKey as "vii" | "viii" | "ix",
+          gradeKey,
           teacherId,
           teacherName,
           user.uid,
@@ -1038,15 +1039,15 @@ export const CurriculumMatrixPage: React.FC = () => {
       });
 
       // Update curriculum_matrix grade-level snapshot for backward compatibility
-      const gradeStr = (cls.gradeLevel || "").toLowerCase();
-      const gradeKey = (gradeStr === "vii" || gradeStr === "viii" || gradeStr === "ix")
-        ? (gradeStr as "vii" | "viii" | "ix")
-        : cls.name.includes("7") ? "vii" : cls.name.includes("8") ? "viii" : "ix";
+      const normGrade = normalizeGradeLevel(cls.gradeLevel) !== "INVALID_GRADE_LEVEL"
+        ? normalizeGradeLevel(cls.gradeLevel)
+        : normalizeGradeLevel(cls.name);
+      const gradeKey = normGrade === "VII" ? "vii" : normGrade === "VIII" ? "viii" : normGrade === "IX" ? "ix" : null;
 
-      if (["vii", "viii", "ix"].includes(gradeKey)) {
+      if (gradeKey) {
         await curriculumMatrixService.assignTeacherForGrade(
           item.id,
-          gradeKey as "vii" | "viii" | "ix",
+          gradeKey,
           newTeacherId,
           newTeacherName,
           user.uid,
@@ -1355,21 +1356,11 @@ export const CurriculumMatrixPage: React.FC = () => {
         }
       }
 
-      // Grade level filter (primary source: gradeLevel / grade, avoid loose name includes)
-      const cGrade = (c.gradeLevel || "").trim().toUpperCase();
-      const legacyGrade = (c.grade || "").trim().toUpperCase();
-
-      if (cGrade) {
-        return cGrade === grade || cGrade === targetArabic;
-      }
-      if (legacyGrade) {
-        return legacyGrade === grade || legacyGrade === targetArabic;
-      }
-
-      // Safe fallback if gradeLevel is missing (word boundary matching)
-      const nameTrim = (c.name || "").trim().toUpperCase();
-      const regex = new RegExp(`(^|\\b|\\s|_|-)(KELAS\\s+)?(${grade}|${targetArabic})($|\\b|\\s|[A-Z]|_|-|\\.)`, "i");
-      return regex.test(nameTrim);
+      // Grade level filter (SSOT: normalizeGradeLevel)
+      const cNormGrade = normalizeGradeLevel(c.gradeLevel) !== "INVALID_GRADE_LEVEL"
+        ? normalizeGradeLevel(c.gradeLevel)
+        : normalizeGradeLevel(c.name);
+      return cNormGrade === grade;
     });
 
     // 2. Client-side deduplication by document ID (classId / id)
