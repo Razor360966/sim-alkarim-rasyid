@@ -7,6 +7,24 @@ export type ValidGradeLevel = "VII" | "VIII" | "IX";
 export type NormalizedGradeLevel = ValidGradeLevel | "INVALID_GRADE_LEVEL";
 
 /**
+ * Checks if a string is strictly an exact recognized grade token or alias.
+ * Prevents random document IDs or strings containing accidental digits (e.g. 7 or 8)
+ * from being mistakenly treated as grade indicators.
+ */
+export function isExactGradeToken(str?: string | null): boolean {
+  if (!str) return false;
+  const s = String(str).trim().toUpperCase();
+  return (
+    s === "VII" || s === "VIII" || s === "IX" ||
+    s === "7" || s === "8" || s === "9" ||
+    s === "KELAS VII" || s === "KELAS VIII" || s === "KELAS IX" ||
+    s === "KELAS 7" || s === "KELAS 8" || s === "KELAS 9" ||
+    s === "KLS VII" || s === "KLS VIII" || s === "KLS IX" ||
+    s === "KLS 7" || s === "KLS 8" || s === "KLS 9"
+  );
+}
+
+/**
  * Safely normalize grade levels:
  * - "VII", "7", "vii", "kelas 7", "kelas vii" -> "VII"
  * - "VIII", "8", "viii", "kelas 8", "kelas viii" -> "VIII"
@@ -14,26 +32,55 @@ export type NormalizedGradeLevel = ValidGradeLevel | "INVALID_GRADE_LEVEL";
  * 
  * CRITICAL: Never silently fall back to "IX" or any default.
  * If grade level cannot be determined, returns "INVALID_GRADE_LEVEL".
+ * Never detects grade level from accidental numbers inside long document IDs.
  */
 export function normalizeGradeLevel(grade?: string | number | null): NormalizedGradeLevel {
   if (grade === null || grade === undefined) return "INVALID_GRADE_LEVEL";
   const s = String(grade).trim().toUpperCase();
   if (!s) return "INVALID_GRADE_LEVEL";
 
-  // Exact standard strings
-  if (s === "VII" || s === "7" || s === "KELAS 7" || s === "KELAS VII") return "VII";
-  if (s === "VIII" || s === "8" || s === "KELAS 8" || s === "KELAS VIII") return "VIII";
-  if (s === "IX" || s === "9" || s === "KELAS 9" || s === "KELAS IX") return "IX";
+  // Reject strings longer than 20 characters unless explicitly prefixed with KELAS / KLS
+  if (s.length > 20 && !/^(?:KELAS|KLS)\b/.test(s)) {
+    return "INVALID_GRADE_LEVEL";
+  }
 
-  // Check VIII before VII because "VIII" contains substring "VII"
-  if (/\bVIII\b/.test(s) || /\b8\b/.test(s)) return "VIII";
-  if (/\bVII\b/.test(s) || /\b7\b/.test(s)) return "VII";
-  if (/\bIX\b/.test(s) || /\b9\b/.test(s)) return "IX";
+  // Reject alphanumeric random IDs (contains both numbers and letters without space/hyphen/dot, length > 4)
+  // e.g. "7aB8cDeF", "c_vii_8abc", "cls7abc8"
+  if (s.length > 4 && /^[A-Z0-9_]{6,}$/.test(s) && !/^(?:KELAS|KLS)\b/.test(s)) {
+    if (s.includes("_") || (/\d/.test(s) && /[A-Z]/.test(s) && s.length > 5)) {
+      return "INVALID_GRADE_LEVEL";
+    }
+  }
 
-  // Substring fallback with careful ordering
-  if (s.includes("VIII") || s.includes("8")) return "VIII";
-  if (s.includes("VII") || s.includes("7")) return "VII";
-  if (s.includes("IX") || s.includes("9")) return "IX";
+  // 1. Exact standard strings
+  if (s === "VIII" || s === "8" || s === "KELAS 8" || s === "KELAS VIII" || s === "KLS 8" || s === "KLS VIII") return "VIII";
+  if (s === "VII" || s === "7" || s === "KELAS 7" || s === "KELAS VII" || s === "KLS 7" || s === "KLS VII") return "VII";
+  if (s === "IX" || s === "9" || s === "KELAS 9" || s === "KELAS IX" || s === "KLS 9" || s === "KLS IX") return "IX";
+
+  // 2. Class names with section rombel (e.g. "Kelas 8A", "8-A", "VIII A", "VIII-B", "Kelas 7A", "7-A", "VII A", "IX A")
+  // Check Grade VIII first so "VIII" is never matched by "VII"
+  if (
+    /^(?:KELAS\s+|KLS\s+)?VIII(?:[\s\-./_]+[A-Z0-9]+|[A-Z])?$/i.test(s) ||
+    /^(?:KELAS\s+|KLS\s+)?8(?:[\s\-./_]+[A-Z0-9]+|[A-Z])?$/i.test(s)
+  ) {
+    return "VIII";
+  }
+
+  // Check Grade VII
+  if (
+    /^(?:KELAS\s+|KLS\s+)?VII(?:[\s\-./_]+[A-Z0-9]+|[A-Z])?$/i.test(s) ||
+    /^(?:KELAS\s+|KLS\s+)?7(?:[\s\-./_]+[A-Z0-9]+|[A-Z])?$/i.test(s)
+  ) {
+    return "VII";
+  }
+
+  // Check Grade IX
+  if (
+    /^(?:KELAS\s+|KLS\s+)?IX(?:[\s\-./_]+[A-Z0-9]+|[A-Z])?$/i.test(s) ||
+    /^(?:KELAS\s+|KLS\s+)?9(?:[\s\-./_]+[A-Z0-9]+|[A-Z])?$/i.test(s)
+  ) {
+    return "IX";
+  }
 
   return "INVALID_GRADE_LEVEL";
 }
@@ -70,17 +117,29 @@ export function getCanonicalClassId(
     return cls.id || cls.classId || "";
   }
   const cleanCls = String(cls).trim();
-  const normGrade = normalizeGradeLevel(cleanCls);
   if (classes && classes.length > 0) {
-    const found = classes.find(c => 
-      c.id === cleanCls || 
-      c.classId === cleanCls || 
-      (c.name && c.name.toLowerCase().trim() === cleanCls.toLowerCase()) ||
-      (normGrade !== "INVALID_GRADE_LEVEL" && c.gradeLevel && normalizeGradeLevel(c.gradeLevel) === normGrade) ||
-      (c.gradeLevel && cleanCls.toUpperCase() === c.gradeLevel.toUpperCase())
-    );
-    if (found) {
-      return found.id || found.classId || cleanCls;
+    // 1. Direct ID match takes absolute precedence
+    const byId = classes.find(c => c.id === cleanCls || c.classId === cleanCls);
+    if (byId) return byId.id || byId.classId || cleanCls;
+
+    // 2. Direct Name match
+    const byName = classes.find(c => c.name && c.name.toLowerCase().trim() === cleanCls.toLowerCase());
+    if (byName) return byName.id || byName.classId || cleanCls;
+
+    // 3. Short grade token fallback ("VII", "VIII", "IX", "7", "8", "9") ONLY if unambiguous single class in grade
+    if (isExactGradeToken(cleanCls)) {
+      const normGrade = normalizeGradeLevel(cleanCls);
+      if (normGrade !== "INVALID_GRADE_LEVEL") {
+        const byGrade = classes.filter(c => {
+          const g = normalizeGradeLevel(c.gradeLevel) !== "INVALID_GRADE_LEVEL"
+            ? normalizeGradeLevel(c.gradeLevel)
+            : normalizeGradeLevel(c.name);
+          return g === normGrade;
+        });
+        if (byGrade.length === 1) {
+          return byGrade[0].id || byGrade[0].classId || cleanCls;
+        }
+      }
     }
   }
   return cleanCls;
@@ -134,6 +193,12 @@ export function isSameSlot(
 /**
  * Checks if a given class ID or schedule matches a class entity,
  * providing backwards compatibility for legacy schedules where cls.classId or cls.id was stored.
+ *
+ * INVARIANT:
+ * - Direct ID match takes absolute precedence.
+ * - If both classes are known entities in directory, they match IF AND ONLY IF they are the exact same class entity.
+ * - Classes across different grade levels (e.g. VII vs VIII vs IX) MUST NEVER MATCH.
+ * - IDs containing accidental digits (e.g. Firestore IDs with 7 or 8) MUST NEVER be treated as grade matches.
  */
 export function isClassMatch(
   classIdA: string | undefined | null,
@@ -143,50 +208,88 @@ export function isClassMatch(
   if (!classIdA || !classEntityOrIdB) return false;
 
   const idB = typeof classEntityOrIdB === "string" ? classEntityOrIdB : (classEntityOrIdB.id || classEntityOrIdB.classId || "");
-  const nameB = typeof classEntityOrIdB === "string" ? classEntityOrIdB : (classEntityOrIdB.name || "");
-  const gradeB = typeof classEntityOrIdB === "string" ? classEntityOrIdB : (classEntityOrIdB.gradeLevel || "");
+  const nameB = typeof classEntityOrIdB === "string" ? "" : (classEntityOrIdB.name || "");
+  const gradeB = typeof classEntityOrIdB === "string" ? "" : (classEntityOrIdB.gradeLevel || "");
 
-  // Direct ID check
+  // 1. Direct ID check
   if (classIdA === idB) return true;
   if (classIdA.toLowerCase().trim() === idB.toLowerCase().trim()) return true;
 
-  // Grade level normalization check (e.g. "IX" matches "9", "Kelas IX")
-  const normGradeA = normalizeGradeLevel(classIdA);
-  const normGradeB = normalizeGradeLevel(gradeB || idB || nameB);
-  if (normGradeA !== "INVALID_GRADE_LEVEL" && normGradeB !== "INVALID_GRADE_LEVEL" && normGradeA === normGradeB) {
-    return true;
-  }
+  // 2. Direct Name check
+  if (nameB && classIdA.toLowerCase().trim() === nameB.toLowerCase().trim()) return true;
 
-  // Cross-match via classes directory
+  // 3. Entity resolution via classes directory
   if (classes && classes.length > 0) {
     const target = classes.find(c => 
       c.id === idB || 
       c.classId === idB || 
-      (c.name && c.name.toLowerCase().trim() === nameB.toLowerCase().trim()) ||
-      (c.name && c.name.toLowerCase().trim() === idB.toLowerCase().trim()) ||
-      (normGradeB !== "INVALID_GRADE_LEVEL" && c.gradeLevel && normalizeGradeLevel(c.gradeLevel) === normGradeB)
+      (c.name && nameB && c.name.toLowerCase().trim() === nameB.toLowerCase().trim()) ||
+      (c.name && c.name.toLowerCase().trim() === idB.toLowerCase().trim())
     );
 
     const source = classes.find(c => 
       c.id === classIdA || 
       c.classId === classIdA || 
-      (c.name && c.name.toLowerCase().trim() === classIdA.toLowerCase().trim()) ||
-      (normGradeA !== "INVALID_GRADE_LEVEL" && c.gradeLevel && normalizeGradeLevel(c.gradeLevel) === normGradeA)
+      (c.name && c.name.toLowerCase().trim() === classIdA.toLowerCase().trim())
     );
 
+    // If both source and target are known distinct classes in directory, do NOT match across classes
     if (target && source) {
-      if (target.id && source.id && target.id === source.id) return true;
-      if (target.classId && source.classId && target.classId === source.classId) return true;
+      const sameId = (target.id && source.id && target.id === source.id) ||
+                     (target.classId && source.classId && target.classId === source.classId);
+      const sameName = Boolean(target.name && source.name && target.name.toLowerCase().trim() === source.name.toLowerCase().trim());
+      return sameId || sameName;
     }
 
     if (target) {
       if (classIdA === target.id || (target.classId && classIdA === target.classId)) return true;
       if (target.name && classIdA.toLowerCase().trim() === target.name.toLowerCase().trim()) return true;
+
+      // Legacy literal grade tokens (e.g. "VII", "VIII", "IX", "7", "8", "9") only if unique class in grade
+      const isLiteralGradeToken = isExactGradeToken(classIdA);
+      const normGradeA = normalizeGradeLevel(classIdA);
+      if (isLiteralGradeToken && normGradeA !== "INVALID_GRADE_LEVEL") {
+        const targetGrade = normalizeGradeLevel(target.gradeLevel) !== "INVALID_GRADE_LEVEL" 
+          ? normalizeGradeLevel(target.gradeLevel) 
+          : normalizeGradeLevel(target.name);
+
+        if (targetGrade === normGradeA) {
+          const matchingGradeClasses = classes.filter(c => {
+            const g = normalizeGradeLevel(c.gradeLevel) !== "INVALID_GRADE_LEVEL" 
+              ? normalizeGradeLevel(c.gradeLevel) 
+              : normalizeGradeLevel(c.name);
+            return g === normGradeA;
+          });
+          if (matchingGradeClasses.length === 1 && (target.id === matchingGradeClasses[0].id || target.classId === matchingGradeClasses[0].classId)) {
+            return true;
+          }
+        }
+      }
     }
 
     if (source) {
       if (idB === source.id || (source.classId && idB === source.classId)) return true;
       if (source.name && idB.toLowerCase().trim() === source.name.toLowerCase().trim()) return true;
+
+      const normGradeB = normalizeGradeLevel(gradeB || idB);
+      const isLiteralGradeToken = isExactGradeToken(idB) || (nameB && isExactGradeToken(nameB));
+      if (isLiteralGradeToken && normGradeB !== "INVALID_GRADE_LEVEL") {
+        const sourceGrade = normalizeGradeLevel(source.gradeLevel) !== "INVALID_GRADE_LEVEL" 
+          ? normalizeGradeLevel(source.gradeLevel) 
+          : normalizeGradeLevel(source.name);
+
+        if (sourceGrade === normGradeB) {
+          const matchingGradeClasses = classes.filter(c => {
+            const g = normalizeGradeLevel(c.gradeLevel) !== "INVALID_GRADE_LEVEL" 
+              ? normalizeGradeLevel(c.gradeLevel) 
+              : normalizeGradeLevel(c.name);
+            return g === normGradeB;
+          });
+          if (matchingGradeClasses.length === 1 && (source.id === matchingGradeClasses[0].id || source.classId === matchingGradeClasses[0].classId)) {
+            return true;
+          }
+        }
+      }
     }
   }
 
