@@ -35,6 +35,7 @@ import {
   ScenarioStatus, 
   ScenarioCurriculumMatrix, 
   ScenarioSchedule, 
+  ScenarioApplyResult,
   Class, 
   Teacher, 
   LessonPeriod,
@@ -47,6 +48,7 @@ import { ScenarioCurriculumEditor } from "../components/ScenarioCurriculumEditor
 import { ScenarioScheduleEditor } from "../components/ScenarioScheduleEditor";
 import { ScenarioComparisonView } from "../components/ScenarioComparisonView";
 import { ScenarioPrintModal } from "../components/ScenarioPrintModal";
+import { ScenarioApplyModal } from "../components/ScenarioApplyModal";
 
 export default function ScheduleScenariosPage() {
   const { user } = useAuth();
@@ -67,6 +69,7 @@ export default function ScheduleScenariosPage() {
   const [showDuplicateModal, setShowDuplicateModal] = useState<ScheduleScenario | null>(null);
   const [showStatusModal, setShowStatusModal] = useState<ScheduleScenario | null>(null);
   const [showPrintModal, setShowPrintModal] = useState(false);
+  const [showApplyModal, setShowApplyModal] = useState<ScheduleScenario | null>(null);
 
   // Forms
   const [createForm, setCreateForm] = useState({
@@ -85,19 +88,43 @@ export default function ScheduleScenariosPage() {
     reason: ""
   });
 
+  // Helper to normalize and check role
+  const checkRoleMatches = (r?: string | null, targetRoles: string[] = []): boolean => {
+    if (!r) return false;
+    const clean = r.toLowerCase().trim().replace(/_/g, " ");
+    return targetRoles.some(t => {
+      const cleanTarget = t.toLowerCase().trim().replace(/_/g, " ");
+      return clean === cleanTarget;
+    });
+  };
+
+  const CURRICULUM_ADMIN_ROLES = [
+    "admin",
+    "operator",
+    "wakil kepala sekolah",
+    "wakakur",
+    "wakakurikulum",
+    "waka kurikulum",
+    "kurikulum",
+    "kepala sekolah",
+    "tata usaha"
+  ];
+
+  const LEADERSHIP_ROLES = [
+    "kepala sekolah",
+    "pimpinan",
+    "ketua yayasan",
+    "yayasan"
+  ];
+
   // Check RBAC permission for editing
   const isCurriculumOrAdmin = 
-    user?.role === "admin" || 
-    user?.role === "operator" || 
-    user?.role === "wakil kepala sekolah" || 
-    user?.role === "kepala sekolah" ||
-    (user?.roles && user.roles.some((r) => ["admin", "operator", "wakil kepala sekolah", "kepala sekolah"].includes(r)));
+    checkRoleMatches(user?.role, CURRICULUM_ADMIN_ROLES) ||
+    Boolean(user?.roles && user.roles.some((r) => checkRoleMatches(r, CURRICULUM_ADMIN_ROLES)));
 
   const isLeadership = 
-    user?.role === "kepala sekolah" || 
-    user?.role === "pimpinan" || 
-    user?.role === "ketua yayasan" ||
-    (user?.roles && user.roles.some((r) => ["kepala sekolah", "pimpinan", "ketua yayasan"].includes(r)));
+    checkRoleMatches(user?.role, LEADERSHIP_ROLES) ||
+    Boolean(user?.roles && user.roles.some((r) => checkRoleMatches(r, LEADERSHIP_ROLES)));
 
   // ---------------------------------------------------------------------------
   // QUERIES
@@ -122,7 +149,12 @@ export default function ScheduleScenariosPage() {
     queryFn: () => classService.getClasses()
   });
 
-  const { data: teachers = [] } = useQuery({
+  const { 
+    data: teachers = [],
+    isLoading: isLoadingTeachers,
+    isError: isErrorTeachers,
+    refetch: refetchTeachers
+  } = useQuery({
     queryKey: ["teachers"],
     queryFn: () => teacherService.getTeachers()
   });
@@ -240,16 +272,54 @@ export default function ScheduleScenariosPage() {
     }
   });
 
+  const publishMutation = useMutation({
+    mutationFn: (scId: string) => {
+      if (!user) throw new Error("Sesi login Anda tidak valid.");
+      return scenarioService.publishScenarioLiveSchedule({
+        scenarioId: scId,
+        user: { uid: user.uid, displayName: user.displayName }
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["schedule_scenarios"] });
+      queryClient.invalidateQueries({ queryKey: ["scenario", activeScenarioId] });
+      queryClient.invalidateQueries({ queryKey: ["schedules"] });
+      showToast("Jadwal operasional resmi SIMAK berhasil dipublikasikan!", "success");
+    },
+    onError: (err: any) => {
+      showToast(parseErrorMessage(err), "error");
+    }
+  });
+
   // Handlers for Curriculum
-  const handleUpdateCurriculumItem = async (item: ScenarioCurriculumMatrix) => {
-    if (!user) return;
-    await scenarioService.updateScenarioCurriculumItem(item, {
-      uid: user.uid,
-      displayName: user.displayName
+  const handleDeleteZeroJp = async (itemIds: string[]) => {
+    if (!user || !activeScenarioId) return;
+    const res = await scenarioService.removeZeroJpCurriculumItems({
+      scenarioId: activeScenarioId,
+      curriculumItemIds: itemIds,
+      user: { uid: user.uid, displayName: user.displayName }
     });
     refetchCurriculums();
     queryClient.invalidateQueries({ queryKey: ["schedule_scenarios"] });
-    showToast("Struktur JP berhasil disimpan di rancangan", "success");
+    showToast(`Berhasil membersihkan ${res.deletedCount} mapel tanpa alokasi JP dari rancangan`, "success");
+  };
+
+  const handleUpdateCurriculumItem = async (item: ScenarioCurriculumMatrix) => {
+    if (!user) return;
+    try {
+      await scenarioService.updateScenarioCurriculumItem(item, {
+        uid: user.uid,
+        displayName: user.displayName
+      });
+      await refetchCurriculums();
+      queryClient.invalidateQueries({ queryKey: ["scenario_curriculums", activeScenarioId] });
+      queryClient.invalidateQueries({ queryKey: ["schedule_scenarios"] });
+      queryClient.invalidateQueries({ queryKey: ["scenario", activeScenarioId] });
+      showToast("Data mapel dan guru pengampu berhasil disimpan di rancangan", "success");
+    } catch (err: any) {
+      showToast(parseErrorMessage(err), "error");
+      throw err;
+    }
   };
 
   const handleToggleSubjectActive = async (id: string, isActive: boolean) => {
@@ -418,6 +488,8 @@ export default function ScheduleScenariosPage() {
                 const statusColor =
                   sc.status === "Disetujui"
                     ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+                    : sc.status === "Diterapkan"
+                    ? "bg-purple-100 text-purple-800 dark:bg-purple-950/40 dark:text-purple-300"
                     : sc.status === "Diajukan"
                     ? "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300"
                     : sc.status === "Perlu Revisi"
@@ -523,14 +595,28 @@ export default function ScheduleScenariosPage() {
                         )}
                       </div>
 
-                      {/* Open Details Button */}
-                      <button
-                        onClick={() => setActiveScenarioId(sc.id)}
-                        className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-colors shadow-xs"
-                      >
-                        <span>Buka Rancangan</span>
-                        <ChevronRight className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        {/* Quick Apply Button on Card if Approved */}
+                        {isCurriculumOrAdmin && (sc.status === "Disetujui" || sc.status === "Diterapkan") && (
+                          <button
+                            onClick={() => setShowApplyModal(sc)}
+                            className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300 rounded-lg text-xs font-bold transition-colors border border-emerald-200 dark:border-emerald-800"
+                            title="Terapkan Massal ke Jadwal Operasional"
+                          >
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span>Terapkan</span>
+                          </button>
+                        )}
+
+                        {/* Open Details Button */}
+                        <button
+                          onClick={() => setActiveScenarioId(sc.id)}
+                          className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-colors shadow-xs"
+                        >
+                          <span>Buka</span>
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
@@ -557,7 +643,19 @@ export default function ScheduleScenariosPage() {
                   <h2 className="text-xl font-bold text-slate-900 dark:text-white">
                     {activeScenario.name}
                   </h2>
-                  <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
+                  <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
+                    activeScenario.status === "Disetujui"
+                      ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+                      : activeScenario.status === "Diterapkan"
+                      ? "bg-purple-100 text-purple-800 dark:bg-purple-950/40 dark:text-purple-300"
+                      : activeScenario.status === "Diajukan"
+                      ? "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300"
+                      : activeScenario.status === "Perlu Revisi"
+                      ? "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+                      : activeScenario.status === "Ditolak"
+                      ? "bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300"
+                      : "bg-slate-100 text-slate-800 dark:bg-zinc-800 dark:text-zinc-300"
+                  }`}>
                     {activeScenario.status}
                   </span>
                 </div>
@@ -567,7 +665,7 @@ export default function ScheduleScenariosPage() {
               </div>
 
               {/* Action Toolbar */}
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <button
                   onClick={() => setShowPrintModal(true)}
                   className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-800 dark:text-zinc-200 text-xs font-bold px-3 py-2 rounded-lg transition-colors"
@@ -590,6 +688,130 @@ export default function ScheduleScenariosPage() {
                   <Clock className="w-4 h-4" />
                   Status Persetujuan
                 </button>
+
+                {isCurriculumOrAdmin && (
+                  <button
+                    onClick={() => setShowApplyModal(activeScenario)}
+                    className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3.5 py-2 rounded-lg transition-colors shadow-xs"
+                    title="Terapkan seluruh jadwal dan struktur kurikulum ke jadwal operasional SIMAK"
+                  >
+                    <Sparkles className="w-4 h-4" />
+                    Terapkan ke Jadwal Operasional
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* WORKFLOW & APPROVAL STATUS BANNER */}
+            <div className={`mt-4 p-4 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 ${
+              activeScenario.status === "Disetujui"
+                ? "bg-emerald-50 border-emerald-200 dark:bg-emerald-950/20 dark:border-emerald-800"
+                : activeScenario.status === "Diterapkan"
+                ? "bg-purple-50 border-purple-200 dark:bg-purple-950/20 dark:border-purple-800"
+                : activeScenario.status === "Diajukan"
+                ? "bg-sky-50 border-sky-200 dark:bg-sky-950/20 dark:border-sky-800"
+                : activeScenario.status === "Perlu Revisi"
+                ? "bg-amber-50 border-amber-200 dark:bg-amber-950/20 dark:border-amber-800"
+                : activeScenario.status === "Ditolak"
+                ? "bg-rose-50 border-rose-200 dark:bg-rose-950/20 dark:border-rose-800"
+                : "bg-slate-50 border-slate-200 dark:bg-zinc-800 dark:border-zinc-700"
+            }`}>
+              <div className="flex items-start gap-2.5">
+                <div className={`p-1.5 rounded-lg mt-0.5 ${
+                  activeScenario.status === "Disetujui"
+                    ? "bg-emerald-500 text-white"
+                    : activeScenario.status === "Diterapkan"
+                    ? "bg-purple-600 text-white"
+                    : activeScenario.status === "Diajukan"
+                    ? "bg-sky-500 text-white"
+                    : "bg-slate-400 text-white"
+                }`}>
+                  <ShieldAlert className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-extrabold text-slate-900 dark:text-white uppercase tracking-wider">
+                      Alur Persetujuan & Penerapan: {activeScenario.status}
+                    </span>
+                    {activeScenario.isPublished && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
+                        Dipublikasikan
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-600 dark:text-zinc-300 mt-0.5 leading-relaxed">
+                    {activeScenario.status === "Draft" && "Rancangan masih dalam tahap penyusunan. Klik Ajukan untuk meminta tinjauan Pimpinan."}
+                    {activeScenario.status === "Diajukan" && "Rancangan telah diajukan dan sedang menunggu persetujuan Kepala Sekolah / Waka Kurikulum."}
+                    {activeScenario.status === "Disetujui" && (
+                      <>Disetujui oleh <strong>{activeScenario.approvedByName || "Pimpinan"}</strong> pada {activeScenario.approvedAt ? new Date(activeScenario.approvedAt).toLocaleDateString("id-ID") : "hari ini"}. Siap diterapkan secara massal ke jadwal operasional.</>
+                    )}
+                    {activeScenario.status === "Diterapkan" && (
+                      <>Telah diterapkan massal ke jadwal operasional SIMAK oleh <strong>{activeScenario.appliedByName || "Operator"}</strong> ({activeScenario.appliedSummary?.totalApplied || 0} slot, {activeScenario.appliedSummary?.emptySlots || 0} slot kosong dipertahankan).</>
+                    )}
+                    {activeScenario.status === "Perlu Revisi" && "Rancangan memerlukan revisi berdasarkan hasil rapat/konsultasi."}
+                    {activeScenario.status === "Ditolak" && "Rancangan tidak disetujui untuk digunakan."}
+                  </p>
+                </div>
+              </div>
+
+              {/* Action buttons inside workflow banner */}
+              <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                {activeScenario.status === "Draft" && isCurriculumOrAdmin && (
+                  <button
+                    onClick={() => {
+                      if (!user) return;
+                      updateStatusMutation.mutate({
+                        scenarioId: activeScenario.id,
+                        status: "Diajukan",
+                        notes: "Diajukan untuk tinjauan dan persetujuan pimpinan",
+                        user: { uid: user.uid, displayName: user.displayName }
+                      });
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded-lg transition-colors shadow-xs"
+                  >
+                    <ArrowRight className="w-3.5 h-3.5" />
+                    Ajukan Persetujuan
+                  </button>
+                )}
+
+                {activeScenario.status === "Diajukan" && (isLeadership || isCurriculumOrAdmin) && (
+                  <button
+                    onClick={() => {
+                      if (!user) return;
+                      updateStatusMutation.mutate({
+                        scenarioId: activeScenario.id,
+                        status: "Disetujui",
+                        notes: "Disetujui untuk rencana jadwal operasional",
+                        user: { uid: user.uid, displayName: user.displayName }
+                      });
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition-colors shadow-xs"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Setujui Rancangan
+                  </button>
+                )}
+
+                {(activeScenario.status === "Disetujui" || activeScenario.status === "Diterapkan") && isCurriculumOrAdmin && (
+                  <button
+                    onClick={() => setShowApplyModal(activeScenario)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition-colors shadow-xs"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Terapkan Massal ke Live
+                  </button>
+                )}
+
+                {activeScenario.status === "Diterapkan" && !activeScenario.isPublished && isCurriculumOrAdmin && (
+                  <button
+                    onClick={() => publishMutation.mutate(activeScenario.id)}
+                    disabled={publishMutation.isPending}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition-colors shadow-xs disabled:opacity-50"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    {publishMutation.isPending ? "Mempublikasikan..." : "Publikasikan Jadwal Live"}
+                  </button>
+                )}
               </div>
             </div>
 
@@ -643,9 +865,14 @@ export default function ScheduleScenariosPage() {
             <ScenarioCurriculumEditor
               curriculums={activeCurriculums}
               subjects={activeSubjects}
+              teachers={teachers}
+              isLoadingTeachers={isLoadingTeachers}
+              isErrorTeachers={isErrorTeachers}
+              onRetryTeachers={() => refetchTeachers()}
               onUpdateItem={handleUpdateCurriculumItem}
               onToggleActive={handleToggleSubjectActive}
               onAddCustomSubject={handleAddCustomSubject}
+              onDeleteZeroJpItems={handleDeleteZeroJp}
               isReadOnly={!isCurriculumOrAdmin}
             />
           )}
@@ -657,6 +884,9 @@ export default function ScheduleScenariosPage() {
               curriculums={activeCurriculums}
               classes={classes}
               teachers={teachers}
+              isLoadingTeachers={isLoadingTeachers}
+              isErrorTeachers={isErrorTeachers}
+              onRetryTeachers={() => refetchTeachers()}
               periods={periods}
               conflicts={activeConflicts}
               onSaveSlot={handleSaveSlot}
@@ -1000,6 +1230,25 @@ export default function ScheduleScenariosPage() {
           periods={periods}
           conflicts={activeConflicts}
           onClose={() => setShowPrintModal(false)}
+        />
+      )}
+
+      {/* MODAL 5: MASS APPLY LIVE SCHEDULE */}
+      {showApplyModal && (
+        <ScenarioApplyModal
+          scenario={showApplyModal}
+          classes={classes}
+          isOpen={Boolean(showApplyModal)}
+          onClose={() => setShowApplyModal(null)}
+          onApplySuccess={(result) => {
+            queryClient.invalidateQueries({ queryKey: ["schedule_scenarios"] });
+            if (activeScenarioId) {
+              queryClient.invalidateQueries({ queryKey: ["scenario", activeScenarioId] });
+            }
+            queryClient.invalidateQueries({ queryKey: ["schedules"] });
+            queryClient.invalidateQueries({ queryKey: ["curriculum_matrix"] });
+          }}
+          user={user ? { uid: user.uid, displayName: user.displayName, role: user.role } : null}
         />
       )}
     </div>

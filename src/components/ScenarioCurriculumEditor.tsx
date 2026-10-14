@@ -10,126 +10,109 @@ import {
   BookOpen, 
   ArrowUpDown, 
   Sparkles,
-  TrendingUp,
   Layers,
   HelpCircle,
-  Search
+  Search,
+  Edit2,
+  UserCheck
 } from "lucide-react";
-import { ScenarioCurriculumMatrix, ScenarioSubject } from "../types";
+import { ScenarioCurriculumMatrix, ScenarioSubject, Teacher } from "../types";
+import { ScenarioTeacherSelect, formatTeacherDisplayName } from "./ScenarioTeacherSelect";
 
 interface Props {
   curriculums: ScenarioCurriculumMatrix[];
-  subjects: ScenarioSubject[];
+  subjects?: ScenarioSubject[];
+  teachers?: Teacher[];
+  isLoadingTeachers?: boolean;
+  isErrorTeachers?: boolean;
+  onRetryTeachers?: () => void;
   onUpdateItem: (item: ScenarioCurriculumMatrix) => Promise<void>;
   onToggleActive: (id: string, isActive: boolean) => Promise<void>;
-  onAddCustomSubject: (data: {
-    name: string;
-    code: string;
-    group: "A" | "B" | "C";
-    jp_vii: number;
-    jp_viii: number;
-    jp_ix: number;
-  }) => Promise<void>;
+  onAddCustomSubject?: (data: any) => Promise<void>;
+  onDeleteZeroJpItems?: (itemIds: string[]) => Promise<void>;
   isReadOnly?: boolean;
 }
 
 export const ScenarioCurriculumEditor: React.FC<Props> = ({
   curriculums,
-  subjects,
+  subjects = [],
+  teachers = [],
+  isLoadingTeachers = false,
+  isErrorTeachers = false,
+  onRetryTeachers,
   onUpdateItem,
   onToggleActive,
   onAddCustomSubject,
+  onDeleteZeroJpItems,
   isReadOnly = false
 }) => {
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [searchKeyword, setSearchKeyword] = useState<string>("");
-  const [editForm, setEditForm] = useState<{
-    jp_vii: number;
-    jp_viii: number;
-    jp_ix: number;
-    subjectName: string;
-    subjectGroup: "A" | "B" | "C";
-    order: number;
-  }>({
-    jp_vii: 0,
-    jp_viii: 0,
-    jp_ix: 0,
-    subjectName: "",
-    subjectGroup: "A",
-    order: 0
-  });
-
+  const [searchTerm, setSearchTerm] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
-  const [newSubForm, setNewSubForm] = useState({
+  const [showZeroJpModal, setShowZeroJpModal] = useState(false);
+  const [selectedZeroJpIds, setSelectedZeroJpIds] = useState<string[]>([]);
+  const [isDeletingZeroJp, setIsDeletingZeroJp] = useState(false);
+
+  // Edit Subject Name & Teacher Modal
+  const [editingItem, setEditingItem] = useState<ScenarioCurriculumMatrix | null>(null);
+  const [editForm, setEditForm] = useState({
+    subjectName: "",
+    teacherName: "",
+    teacherId: ""
+  });
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+  // Add Custom Subject Form
+  const [addForm, setAddForm] = useState({
     name: "",
     code: "",
     group: "A" as "A" | "B" | "C",
+    kkm: 75,
     jp_vii: 2,
     jp_viii: 2,
-    jp_ix: 2
+    jp_ix: 2,
+    teacherName: "",
+    teacherId: ""
   });
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isAdding, setIsAdding] = useState(false);
 
-  // Helper to determine the category of a scenario matrix item
-  // Follows EXACT SAME logic as CurriculumMatrix.tsx:
-  // group === "B" -> "Kepesantrenan", else -> "Umum"
-  const getCategory = (item: ScenarioCurriculumMatrix): "Umum" | "Kepesantrenan" => {
-    const subjectDetail = subjects.find(s => s.id === item.subjectId || s.originalSubjectId === item.subjectId);
-    if (subjectDetail?.group === "B") return "Kepesantrenan";
-    if (item.subjectGroup === "B") return "Kepesantrenan";
-    return "Umum";
+  // Helper to determine the category of a matrix item
+  // Follows CurriculumMatrix.tsx strictly: group "B" is Kepesantrenan, else Umum
+  const getItemCategory = (item: ScenarioCurriculumMatrix): "Kepesantrenan" | "Umum" => {
+    const subjectDetail = subjects.find((s) => s.id === item.subjectId || s.originalSubjectId === item.subjectId);
+    if (subjectDetail) {
+      return subjectDetail.group === "B" ? "Kepesantrenan" : "Umum";
+    }
+    return item.subjectGroup === "B" ? "Kepesantrenan" : "Umum";
   };
 
   // Helper to get resolved Subject display name
-  const getSubjectDisplayName = (item: ScenarioCurriculumMatrix) => {
-    const detail = subjects.find(s => s.id === item.subjectId || s.originalSubjectId === item.subjectId);
-    return detail?.name || item.subjectName || "Mata Pelajaran";
+  const getSubjectDisplayName = (item: ScenarioCurriculumMatrix): string => {
+    const detail = subjects.find((s) => s.id === item.subjectId || s.originalSubjectId === item.subjectId);
+    return item.subjectName || detail?.name || "Mata Pelajaran";
   };
 
-  // Helper to get resolved Subject code
-  const getSubjectCode = (item: ScenarioCurriculumMatrix) => {
-    const detail = subjects.find(s => s.id === item.subjectId || s.originalSubjectId === item.subjectId);
-    return detail?.code || "-";
-  };
-
-  // Helper to get resolved Subject group ("A", "B", "C")
-  const getSubjectGroup = (item: ScenarioCurriculumMatrix): "A" | "B" | "C" => {
-    const detail = subjects.find(s => s.id === item.subjectId || s.originalSubjectId === item.subjectId);
-    return detail?.group || item.subjectGroup || "A";
-  };
-
-  // Filter curriculums by search input
+  // Filtered matrix by search keyword
   const filteredCurriculums = useMemo(() => {
-    if (!searchKeyword.trim()) return curriculums;
-    const query = searchKeyword.toLowerCase().trim();
-    return curriculums.filter(item => {
-      const displayName = getSubjectDisplayName(item);
-      const code = getSubjectCode(item).toLowerCase();
+    if (!searchTerm.trim()) return curriculums;
+    const query = searchTerm.toLowerCase().trim();
+    return curriculums.filter((item) => {
+      const detail = subjects.find((s) => s.id === item.subjectId || s.originalSubjectId === item.subjectId);
+      const code = (detail?.code || "").toLowerCase();
+      const displayName = getSubjectDisplayName(item).toLowerCase();
+      const teacher = (item.teacherName || "").toLowerCase();
+
       return (
-        displayName.toLowerCase().includes(query) ||
-        (item.subjectName || "").toLowerCase().includes(query) ||
+        displayName.includes(query) ||
         code.includes(query) ||
-        (item.teacherName || "").toLowerCase().includes(query)
+        teacher.includes(query)
       );
     });
-  }, [curriculums, searchKeyword, subjects]);
+  }, [curriculums, searchTerm, subjects]);
 
-  // General subjects (Group A and Group C, meaning group !== "B")
-  const umumMatrix = useMemo(() => {
-    return filteredCurriculums
-      .filter((item) => getCategory(item) === "Umum")
-      .sort((a, b) => {
-        const orderA = typeof a.order === "number" ? a.order : 0;
-        const orderB = typeof b.order === "number" ? b.order : 0;
-        if (orderA !== orderB) return orderA - orderB;
-        return getSubjectDisplayName(a).localeCompare(getSubjectDisplayName(b));
-      });
-  }, [filteredCurriculums, subjects]);
-
-  // Kepesantrenan subjects (Group B, meaning group === "B")
+  // Kepesantrenan partition (Group B)
   const kepesantrenanMatrix = useMemo(() => {
     return filteredCurriculums
-      .filter((item) => getCategory(item) === "Kepesantrenan")
+      .filter((item) => getItemCategory(item) === "Kepesantrenan")
       .sort((a, b) => {
         const orderA = typeof a.order === "number" ? a.order : 0;
         const orderB = typeof b.order === "number" ? b.order : 0;
@@ -138,498 +121,438 @@ export const ScenarioCurriculumEditor: React.FC<Props> = ({
       });
   }, [filteredCurriculums, subjects]);
 
-  // Totals calculations for Umum
-  const totalJP_umum = useMemo(() => {
-    return umumMatrix.reduce(
-      (acc, curr) => {
-        if (curr.isActiveInScenario) {
-          acc.vii += curr.jp_vii || 0;
-          acc.viii += curr.jp_viii || 0;
-          acc.ix += curr.jp_ix || 0;
-        }
-        return acc;
-      },
-      { vii: 0, viii: 0, ix: 0 }
-    );
-  }, [umumMatrix]);
+  // Umum partition (Group A and Group C)
+  const umumMatrix = useMemo(() => {
+    return filteredCurriculums
+      .filter((item) => getItemCategory(item) === "Umum")
+      .sort((a, b) => {
+        const orderA = typeof a.order === "number" ? a.order : 0;
+        const orderB = typeof b.order === "number" ? b.order : 0;
+        if (orderA !== orderB) return orderA - orderB;
+        return getSubjectDisplayName(a).localeCompare(getSubjectDisplayName(b));
+      });
+  }, [filteredCurriculums, subjects]);
 
-  // Totals calculations for Kepesantrenan
+  // Totals calculations for Kepesantrenan (Active in scenario only)
   const totalJP_kepesantrenan = useMemo(() => {
     return kepesantrenanMatrix.reduce(
       (acc, curr) => {
-        if (curr.isActiveInScenario) {
-          acc.vii += curr.jp_vii || 0;
-          acc.viii += curr.jp_viii || 0;
-          acc.ix += curr.jp_ix || 0;
-        }
+        if (!curr.isActiveInScenario) return acc;
+        acc.vii += curr.jp_vii || 0;
+        acc.viii += curr.jp_viii || 0;
+        acc.ix += curr.jp_ix || 0;
         return acc;
       },
       { vii: 0, viii: 0, ix: 0 }
     );
   }, [kepesantrenanMatrix]);
 
-  // Overall active totals
-  const activeCurriculums = curriculums.filter((c) => c.isActiveInScenario);
-  const totalVii = activeCurriculums.reduce((s, c) => s + (c.jp_vii || 0), 0);
-  const totalViii = activeCurriculums.reduce((s, c) => s + (c.jp_viii || 0), 0);
-  const totalIx = activeCurriculums.reduce((s, c) => s + (c.jp_ix || 0), 0);
+  // Totals calculations for Umum (Active in scenario only)
+  const totalJP_umum = useMemo(() => {
+    return umumMatrix.reduce(
+      (acc, curr) => {
+        if (!curr.isActiveInScenario) return acc;
+        acc.vii += curr.jp_vii || 0;
+        acc.viii += curr.jp_viii || 0;
+        acc.ix += curr.jp_ix || 0;
+        return acc;
+      },
+      { vii: 0, viii: 0, ix: 0 }
+    );
+  }, [umumMatrix]);
 
-  const baselineVii = curriculums.reduce((s, c) => s + (c.baseline_jp_vii || 0), 0);
-  const baselineViii = curriculums.reduce((s, c) => s + (c.baseline_jp_viii || 0), 0);
-  const baselineIx = curriculums.reduce((s, c) => s + (c.baseline_jp_ix || 0), 0);
+  // Overall totals
+  const totalJP = useMemo(() => {
+    return {
+      vii: totalJP_kepesantrenan.vii + totalJP_umum.vii,
+      viii: totalJP_kepesantrenan.viii + totalJP_umum.viii,
+      ix: totalJP_kepesantrenan.ix + totalJP_umum.ix
+    };
+  }, [totalJP_kepesantrenan, totalJP_umum]);
 
-  const startEdit = (c: ScenarioCurriculumMatrix) => {
+  // Scan items with JP 0 in VII, VIII, and IX
+  const zeroJpItems = useMemo(() => {
+    return curriculums.filter(
+      (c) => (c.jp_vii || 0) === 0 && (c.jp_viii || 0) === 0 && (c.jp_ix || 0) === 0
+    );
+  }, [curriculums]);
+
+  // Handler for JP Input Blur
+  const handleJPChange = (item: ScenarioCurriculumMatrix, field: "jp_vii" | "jp_viii" | "jp_ix", valStr: string) => {
     if (isReadOnly) return;
-    setEditingId(c.id);
-    setEditForm({
-      jp_vii: c.jp_vii || 0,
-      jp_viii: c.jp_viii || 0,
-      jp_ix: c.jp_ix || 0,
-      subjectName: c.subjectName || "",
-      subjectGroup: c.subjectGroup || "A",
-      order: typeof c.order === "number" ? c.order : 0
+    const num = valStr === "" ? 0 : Math.max(0, parseInt(valStr, 10) || 0);
+    if (item[field] === num) return;
+    onUpdateItem({
+      ...item,
+      [field]: num
     });
   };
 
-  const saveEdit = async (originalItem: ScenarioCurriculumMatrix) => {
+  // Handler for Order Input Blur
+  const handleOrderChange = (item: ScenarioCurriculumMatrix, valStr: string) => {
+    if (isReadOnly) return;
+    const num = valStr === "" ? 0 : parseInt(valStr, 10) || 0;
+    if (item.order === num) return;
+    onUpdateItem({
+      ...item,
+      order: num
+    });
+  };
+
+  // Open Edit Modal
+  const handleOpenEdit = (item: ScenarioCurriculumMatrix) => {
+    let initialTeacherId = item.teacherId || "";
+    if (!initialTeacherId && item.teacherName && teachers.length > 0) {
+      const match = teachers.find(
+        (t) =>
+          formatTeacherDisplayName(t).toLowerCase() === item.teacherName.trim().toLowerCase() ||
+          (t.name || "").toLowerCase().trim() === item.teacherName.trim().toLowerCase()
+      );
+      if (match) {
+        initialTeacherId = match.id || match.teacherId || "";
+      }
+    }
+
+    setEditingItem(item);
+    setEditForm({
+      subjectName: item.subjectName || "",
+      teacherName: item.teacherName || "",
+      teacherId: initialTeacherId
+    });
+  };
+
+  // Save Edit
+  const handleSaveEdit = async () => {
+    if (!editingItem || isReadOnly) return;
+    setIsSavingEdit(true);
     try {
-      setIsSubmitting(true);
       await onUpdateItem({
-        ...originalItem,
-        jp_vii: Math.max(0, Number(editForm.jp_vii) || 0),
-        jp_viii: Math.max(0, Number(editForm.jp_viii) || 0),
-        jp_ix: Math.max(0, Number(editForm.jp_ix) || 0),
-        order: Math.max(0, Number(editForm.order) || 0),
-        subjectName: editForm.subjectName.trim() || originalItem.subjectName,
-        subjectGroup: editForm.subjectGroup
+        ...editingItem,
+        subjectName: editForm.subjectName.trim() || editingItem.subjectName,
+        teacherName: editForm.teacherName.trim(),
+        teacherId: editForm.teacherId.trim()
       });
-      setEditingId(null);
+      setEditingItem(null);
     } finally {
-      setIsSubmitting(false);
+      setIsSavingEdit(false);
     }
   };
 
-  const handleAddSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newSubForm.name.trim()) return;
+  // Execute Zero JP Deletion
+  const handleExecuteDeleteZeroJp = async () => {
+    if (selectedZeroJpIds.length === 0 || isReadOnly) return;
+    setIsDeletingZeroJp(true);
     try {
-      setIsSubmitting(true);
-      await onAddCustomSubject({
-        name: newSubForm.name.trim(),
-        code: newSubForm.code.trim() || "SIM-MAPEL",
-        group: newSubForm.group,
-        jp_vii: Math.max(0, Number(newSubForm.jp_vii) || 0),
-        jp_viii: Math.max(0, Number(newSubForm.jp_viii) || 0),
-        jp_ix: Math.max(0, Number(newSubForm.jp_ix) || 0)
-      });
-      setShowAddModal(false);
-      setNewSubForm({
-        name: "",
-        code: "",
-        group: "A",
-        jp_vii: 2,
-        jp_viii: 2,
-        jp_ix: 2
-      });
+      if (onDeleteZeroJpItems) {
+        await onDeleteZeroJpItems(selectedZeroJpIds);
+      } else {
+        // Fallback: toggle active to false or update JP
+        for (const id of selectedZeroJpIds) {
+          await onToggleActive(id, false);
+        }
+      }
+      setShowZeroJpModal(false);
+      setSelectedZeroJpIds([]);
     } finally {
-      setIsSubmitting(false);
+      setIsDeletingZeroJp(false);
     }
   };
 
-  // Helper row renderer for both sections
-  const renderMatrixRow = (item: ScenarioCurriculumMatrix, index: number) => {
-    const isEditing = editingId === item.id;
-    const totalItemJp = (item.jp_vii || 0) + (item.jp_viii || 0) + (item.jp_ix || 0);
-    const totalBaseline = (item.baseline_jp_vii || 0) + (item.baseline_jp_viii || 0) + (item.baseline_jp_ix || 0);
-    const resolvedGroup = isEditing ? editForm.subjectGroup : getSubjectGroup(item);
-    const displayName = getSubjectDisplayName(item);
-    const code = getSubjectCode(item);
+  // Render Table Rows for a list of items
+  const renderRows = (items: ScenarioCurriculumMatrix[]) => {
+    if (items.length === 0) {
+      return (
+        <tr>
+          <td colSpan={7} className="px-6 py-6 text-center text-gray-400 dark:text-zinc-500 italic font-medium">
+            Tidak ada mata pelajaran pada kelompok ini.
+          </td>
+        </tr>
+      );
+    }
 
-    const groupColors = { 
-      A: "text-blue-700 bg-blue-50 dark:bg-blue-950/20 dark:text-blue-400", 
-      B: "text-amber-700 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400", 
-      C: "text-purple-700 bg-purple-50 dark:bg-purple-950/20 dark:text-purple-400" 
-    };
-    const groupLabels = { A: "A (Umum)", B: "B (Kepesantrenan)", C: "C (Mulok)" };
+    return items.map((item) => {
+      const subjectDetail = subjects.find((s) => s.id === item.subjectId || s.originalSubjectId === item.subjectId);
+      const isKepesantrenan = getItemCategory(item) === "Kepesantrenan";
+      const groupCode = isKepesantrenan ? "B" : item.subjectGroup || "A";
+      const groupColors = { 
+        A: "text-blue-700 bg-blue-50 dark:bg-blue-950/20 dark:text-blue-400", 
+        B: "text-amber-700 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400", 
+        C: "text-purple-700 bg-purple-50 dark:bg-purple-950/20 dark:text-purple-400" 
+      };
+      const groupLabels = { A: "A (Umum)", B: "B (Kepesantrenan)", C: "C (Mulok)" };
+      const isZeroJp = (item.jp_vii || 0) === 0 && (item.jp_viii || 0) === 0 && (item.jp_ix || 0) === 0;
 
-    return (
-      <tr 
-        key={item.id}
-        className={`hover:bg-slate-50/50 dark:hover:bg-zinc-850/50 transition-colors ${
-          !item.isActiveInScenario ? "opacity-40 bg-slate-50/30 dark:bg-zinc-950/40" : ""
-        }`}
-      >
-        {/* Order / Urutan */}
-        <td className="py-3 px-3 text-center">
-          {isEditing ? (
-            <input
-              type="number"
-              min={0}
-              value={editForm.order === 0 ? "" : editForm.order}
-              onChange={(e) => setEditForm({ ...editForm, order: e.target.value === "" ? 0 : parseInt(e.target.value, 10) })}
-              className="w-14 text-center border border-emerald-500 rounded px-1.5 py-1 bg-white dark:bg-zinc-800 dark:text-white font-bold text-xs"
-            />
-          ) : (
-            <span className="font-bold text-slate-700 dark:text-zinc-300">
-              {typeof item.order === "number" ? item.order : index + 1}
-            </span>
-          )}
-        </td>
-
-        {/* Subject Name & Details */}
-        <td className="py-3 px-4">
-          {isEditing ? (
-            <div className="space-y-1.5">
+      return (
+        <tr 
+          key={item.id} 
+          className={`hover:bg-slate-50/50 dark:hover:bg-zinc-900/30 transition-colors ${
+            !item.isActiveInScenario ? "opacity-50 bg-slate-50/60 dark:bg-zinc-900/40" : ""
+          }`}
+        >
+          {/* 1. Urutan */}
+          <td className="px-3 py-4 text-center">
+            <div className="flex items-center justify-center">
               <input
-                type="text"
-                value={editForm.subjectName}
-                onChange={(e) => setEditForm({ ...editForm, subjectName: e.target.value })}
-                className="w-full text-sm font-semibold border border-emerald-500 rounded px-2 py-1 bg-white dark:bg-zinc-800 dark:text-white"
+                type="number"
+                min="0"
+                disabled={isReadOnly}
+                defaultValue={item.order === 0 ? "" : item.order || ""}
+                onBlur={(e) => handleOrderChange(item, e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.currentTarget.blur();
+                }}
+                className="w-14 bg-slate-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-lg text-center px-1.5 py-1 text-xs font-bold text-gray-800 dark:text-zinc-100 focus:outline-none disabled:bg-transparent"
               />
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-500">Kelompok:</span>
-                <select
-                  value={editForm.subjectGroup}
-                  onChange={(e) => setEditForm({ ...editForm, subjectGroup: e.target.value as "A" | "B" | "C" })}
-                  className="text-xs border border-slate-300 dark:border-zinc-700 rounded px-1.5 py-0.5 bg-white dark:bg-zinc-800 dark:text-white"
-                >
-                  <option value="A">Kelompok A (Umum)</option>
-                  <option value="B">Kelompok B (Kepesantrenan)</option>
-                  <option value="C">Kelompok C (Mulok)</option>
-                </select>
-              </div>
             </div>
-          ) : (
-            <div className="flex flex-col gap-1 pr-2">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-extrabold text-slate-900 dark:text-zinc-100">
-                  {displayName}
+          </td>
+
+          {/* 2. Nama Mata Pelajaran */}
+          <td className="px-5 py-4">
+            <div className="flex flex-col gap-1 pr-4">
+              <div className="flex items-center gap-2">
+                <span className="font-extrabold text-gray-800 dark:text-zinc-100 truncate">
+                  {getSubjectDisplayName(item)}
                 </span>
+                {!isReadOnly && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenEdit(item)}
+                    className="p-1 text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 rounded-md hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors shrink-0"
+                    title="Edit nama mapel & guru pengampu"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
                 {item.isCustomSubject && (
-                  <span className="bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300 text-[10px] px-2 py-0.5 rounded font-bold">
-                    Mapel Baru Simulasi
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
+                    Simulasi Baru
+                  </span>
+                )}
+                {isZeroJp && (
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300">
+                    0 JP
                   </span>
                 )}
               </div>
               <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="text-[10px] font-mono text-gray-400 dark:text-zinc-500 font-bold uppercase tracking-tight">
-                  {code}
+                  {subjectDetail ? subjectDetail.code : "SIM"}
                 </span>
                 <span className="text-[10px] text-gray-400">•</span>
-                <span className={`inline-flex items-center px-1.5 py-0.5 text-[9px] font-bold rounded-md ${groupColors[resolvedGroup]}`}>
-                  Grup {groupLabels[resolvedGroup]}
+                <span className={`inline-flex items-center px-1.5 py-0.5 text-[9px] font-bold rounded-md ${groupColors[groupCode as keyof typeof groupColors] || groupColors.A}`}>
+                  Grup {groupLabels[groupCode as keyof typeof groupLabels] || "Umum"}
                 </span>
-                {item.teacherName && (
+                {subjectDetail?.kkm && (
                   <>
                     <span className="text-[10px] text-gray-400">•</span>
-                    <span className="text-[10px] text-slate-500 dark:text-zinc-400 font-medium">
-                      Guru: {item.teacherName}
+                    <span className="text-[10px] text-slate-500 dark:text-zinc-400 font-bold bg-slate-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded-md">
+                      KKM {subjectDetail.kkm}
                     </span>
                   </>
                 )}
               </div>
             </div>
-          )}
-        </td>
+          </td>
 
-        {/* JP VII */}
-        <td className="py-3 px-3 text-center">
-          {isEditing ? (
-            <input
-              type="number"
-              min={0}
-              max={20}
-              value={editForm.jp_vii}
-              onChange={(e) => setEditForm({ ...editForm, jp_vii: Number(e.target.value) })}
-              className="w-16 text-center border border-emerald-500 rounded px-2 py-1 bg-white dark:bg-zinc-800 dark:text-white font-bold"
-            />
-          ) : (
-            <div className="flex items-center justify-center gap-1">
-              <span className="font-bold text-slate-800 dark:text-zinc-200">{item.jp_vii}</span>
-              {item.jp_vii !== item.baseline_jp_vii && (
-                <span className={`text-[10px] font-bold ${item.jp_vii > item.baseline_jp_vii ? "text-emerald-600" : "text-rose-600"}`}>
-                  ({item.jp_vii > item.baseline_jp_vii ? `+${item.jp_vii - item.baseline_jp_vii}` : item.jp_vii - item.baseline_jp_vii})
-                </span>
-              )}
+          {/* 3. VII JP */}
+          <td className="px-3 py-4 text-center">
+            <div className="flex items-center justify-center">
+              <input
+                type="number"
+                min="0"
+                disabled={isReadOnly}
+                defaultValue={item.jp_vii === 0 ? "" : item.jp_vii}
+                onBlur={(e) => handleJPChange(item, "jp_vii", e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.currentTarget.blur();
+                }}
+                className="w-14 bg-slate-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-lg text-center px-1.5 py-1 text-xs font-bold text-gray-800 dark:text-zinc-100 focus:outline-none disabled:bg-transparent"
+              />
             </div>
-          )}
-        </td>
+          </td>
 
-        {/* JP VIII */}
-        <td className="py-3 px-3 text-center">
-          {isEditing ? (
-            <input
-              type="number"
-              min={0}
-              max={20}
-              value={editForm.jp_viii}
-              onChange={(e) => setEditForm({ ...editForm, jp_viii: Number(e.target.value) })}
-              className="w-16 text-center border border-emerald-500 rounded px-2 py-1 bg-white dark:bg-zinc-800 dark:text-white font-bold"
-            />
-          ) : (
-            <div className="flex items-center justify-center gap-1">
-              <span className="font-bold text-slate-800 dark:text-zinc-200">{item.jp_viii}</span>
-              {item.jp_viii !== item.baseline_jp_viii && (
-                <span className={`text-[10px] font-bold ${item.jp_viii > item.baseline_jp_viii ? "text-emerald-600" : "text-rose-600"}`}>
-                  ({item.jp_viii > item.baseline_jp_viii ? `+${item.jp_viii - item.baseline_jp_viii}` : item.jp_viii - item.baseline_jp_viii})
-                </span>
-              )}
+          {/* 4. VIII JP */}
+          <td className="px-3 py-4 text-center">
+            <div className="flex items-center justify-center">
+              <input
+                type="number"
+                min="0"
+                disabled={isReadOnly}
+                defaultValue={item.jp_viii === 0 ? "" : item.jp_viii}
+                onBlur={(e) => handleJPChange(item, "jp_viii", e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.currentTarget.blur();
+                }}
+                className="w-14 bg-slate-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-lg text-center px-1.5 py-1 text-xs font-bold text-gray-800 dark:text-zinc-100 focus:outline-none disabled:bg-transparent"
+              />
             </div>
-          )}
-        </td>
+          </td>
 
-        {/* JP IX */}
-        <td className="py-3 px-3 text-center">
-          {isEditing ? (
-            <input
-              type="number"
-              min={0}
-              max={20}
-              value={editForm.jp_ix}
-              onChange={(e) => setEditForm({ ...editForm, jp_ix: Number(e.target.value) })}
-              className="w-16 text-center border border-emerald-500 rounded px-2 py-1 bg-white dark:bg-zinc-800 dark:text-white font-bold"
-            />
-          ) : (
-            <div className="flex items-center justify-center gap-1">
-              <span className="font-bold text-slate-800 dark:text-zinc-200">{item.jp_ix}</span>
-              {item.jp_ix !== item.baseline_jp_ix && (
-                <span className={`text-[10px] font-bold ${item.jp_ix > item.baseline_jp_ix ? "text-emerald-600" : "text-rose-600"}`}>
-                  ({item.jp_ix > item.baseline_jp_ix ? `+${item.jp_ix - item.baseline_jp_ix}` : item.jp_ix - item.baseline_jp_ix})
-                </span>
-              )}
+          {/* 5. IX JP */}
+          <td className="px-3 py-4 text-center">
+            <div className="flex items-center justify-center">
+              <input
+                type="number"
+                min="0"
+                disabled={isReadOnly}
+                defaultValue={item.jp_ix === 0 ? "" : item.jp_ix}
+                onBlur={(e) => handleJPChange(item, "jp_ix", e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.currentTarget.blur();
+                }}
+                className="w-14 bg-slate-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-lg text-center px-1.5 py-1 text-xs font-bold text-gray-800 dark:text-zinc-100 focus:outline-none disabled:bg-transparent"
+              />
             </div>
-          )}
-        </td>
+          </td>
 
-        {/* Total JP in Scenario */}
-        <td className="py-3 px-3 text-center font-bold text-slate-900 dark:text-white">
-          {isEditing 
-            ? (Number(editForm.jp_vii) || 0) + (Number(editForm.jp_viii) || 0) + (Number(editForm.jp_ix) || 0) 
-            : totalItemJp
-          } JP
-        </td>
-
-        {/* Baseline Master */}
-        <td className="py-3 px-3 text-center text-slate-500 text-xs">
-          {item.isCustomSubject ? (
-            <span className="italic text-slate-400">Tidak ada (Baru)</span>
-          ) : (
-            <span>{totalBaseline} JP ({item.baseline_jp_vii}/{item.baseline_jp_viii}/{item.baseline_jp_ix})</span>
-          )}
-        </td>
-
-        {/* Status Toggle */}
-        <td className="py-3 px-3 text-center">
-          {item.isActiveInScenario ? (
-            <span className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 text-xs px-2.5 py-1 rounded-full font-semibold">
-              Aktif
-            </span>
-          ) : (
-            <span className="bg-slate-200 text-slate-700 dark:bg-zinc-800 dark:text-zinc-400 text-xs px-2.5 py-1 rounded-full font-semibold">
-              Dinonaktifkan
-            </span>
-          )}
-        </td>
-
-        {/* Actions */}
-        {!isReadOnly && (
-          <td className="py-3 px-4 text-center">
-            <div className="flex items-center justify-center gap-2">
-              {isEditing ? (
-                <>
-                  <button
-                    onClick={() => saveEdit(item)}
-                    disabled={isSubmitting}
-                    className="p-1.5 bg-emerald-600 text-white rounded hover:bg-emerald-700 transition-colors"
-                    title="Simpan Perubahan"
-                  >
-                    <Check className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => setEditingId(null)}
-                    className="p-1.5 bg-slate-200 dark:bg-zinc-700 text-slate-700 dark:text-zinc-200 rounded hover:bg-slate-300 transition-colors"
-                    title="Batal"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    onClick={() => startEdit(item)}
-                    className="text-xs font-semibold px-2 py-1 bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-200 rounded transition-colors"
-                  >
-                    Edit JP
-                  </button>
-
-                  <button
-                    onClick={() => onToggleActive(item.id, !item.isActiveInScenario)}
-                    className={`p-1.5 rounded transition-colors ${
-                      item.isActiveInScenario
-                        ? "text-slate-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30"
-                        : "text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
-                    }`}
-                    title={item.isActiveInScenario ? "Nonaktifkan dari Rancangan" : "Aktifkan Kembali"}
-                  >
-                    {item.isActiveInScenario ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </>
+          {/* 6. Guru Pengampu */}
+          <td className="px-5 py-4">
+            <div className="flex items-center justify-between gap-2">
+              <div className="truncate">
+                {item.teacherName ? (
+                  <span className="font-semibold text-slate-800 dark:text-zinc-200">
+                    {item.teacherName}
+                  </span>
+                ) : (
+                  <span className="text-slate-400 italic text-[11px]">
+                    Belum Ditugaskan
+                  </span>
+                )}
+              </div>
+              {!isReadOnly && (
+                <button
+                  type="button"
+                  onClick={() => handleOpenEdit(item)}
+                  className="p-1 text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 rounded-md hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors shrink-0"
+                  title="Ubah nama mapel atau guru pengampu"
+                >
+                  <Edit2 className="w-3.5 h-3.5" />
+                </button>
               )}
             </div>
           </td>
-        )}
-      </tr>
-    );
+
+          {/* 7. Aksi */}
+          <td className="px-4 py-4 text-center">
+            <div className="flex items-center justify-center gap-1">
+              {!isReadOnly && (
+                <button
+                  type="button"
+                  onClick={() => onToggleActive(item.id, !item.isActiveInScenario)}
+                  className={`p-1.5 rounded-lg transition-colors ${
+                    item.isActiveInScenario
+                      ? "text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                      : "text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 font-bold"
+                  }`}
+                  title={item.isActiveInScenario ? "Nonaktifkan dari simulasi" : "Aktifkan kembali di simulasi"}
+                >
+                  {item.isActiveInScenario ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                </button>
+              )}
+            </div>
+          </td>
+        </tr>
+      );
+    });
   };
 
   return (
-    <div className="space-y-6">
-      {/* KPI Cards: Total JP comparison */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Kelas VII */}
-        <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl p-4 shadow-xs">
-          <div className="flex items-center justify-between text-slate-500 dark:text-zinc-400 text-xs font-semibold uppercase tracking-wider mb-2">
-            <span>Total JP Kelas VII</span>
-            <span className="text-emerald-600 dark:text-emerald-400 font-bold">Rancangan vs Baseline</span>
-          </div>
-          <div className="flex items-baseline gap-3">
-            <span className="text-3xl font-extrabold text-slate-900 dark:text-white">{totalVii}</span>
-            <span className="text-sm text-slate-500 dark:text-zinc-400">JP / pekan</span>
-            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ml-auto ${
-              totalVii > baselineVii 
-                ? "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400" 
-                : totalVii < baselineVii 
-                ? "bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-400"
-                : "bg-slate-100 text-slate-700 dark:bg-zinc-800 dark:text-zinc-300"
-            }`}>
-              {totalVii - baselineVii > 0 ? `+${totalVii - baselineVii}` : totalVii - baselineVii} JP dari Master ({baselineVii})
-            </span>
-          </div>
+    <div className="space-y-4">
+      {/* Action Bar & Stats Banner */}
+      <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl p-4 shadow-xs flex flex-col md:flex-row items-center justify-between gap-4">
+        {/* Search Input */}
+        <div className="relative w-full md:w-80">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+          <input
+            type="text"
+            placeholder="Cari mapel atau guru di rancangan..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 dark:border-zinc-700 rounded-lg bg-slate-50 dark:bg-zinc-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          />
         </div>
 
-        {/* Kelas VIII */}
-        <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl p-4 shadow-xs">
-          <div className="flex items-center justify-between text-slate-500 dark:text-zinc-400 text-xs font-semibold uppercase tracking-wider mb-2">
-            <span>Total JP Kelas VIII</span>
-            <span className="text-emerald-600 dark:text-emerald-400 font-bold">Rancangan vs Baseline</span>
-          </div>
-          <div className="flex items-baseline gap-3">
-            <span className="text-3xl font-extrabold text-slate-900 dark:text-white">{totalViii}</span>
-            <span className="text-sm text-slate-500 dark:text-zinc-400">JP / pekan</span>
-            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ml-auto ${
-              totalViii > baselineViii 
-                ? "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400" 
-                : totalViii < baselineViii 
-                ? "bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-400"
-                : "bg-slate-100 text-slate-700 dark:bg-zinc-800 dark:text-zinc-300"
-            }`}>
-              {totalViii - baselineViii > 0 ? `+${totalViii - baselineViii}` : totalViii - baselineViii} JP dari Master ({baselineViii})
-            </span>
-          </div>
-        </div>
-
-        {/* Kelas IX */}
-        <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl p-4 shadow-xs">
-          <div className="flex items-center justify-between text-slate-500 dark:text-zinc-400 text-xs font-semibold uppercase tracking-wider mb-2">
-            <span>Total JP Kelas IX</span>
-            <span className="text-emerald-600 dark:text-emerald-400 font-bold">Rancangan vs Baseline</span>
-          </div>
-          <div className="flex items-baseline gap-3">
-            <span className="text-3xl font-extrabold text-slate-900 dark:text-white">{totalIx}</span>
-            <span className="text-sm text-slate-500 dark:text-zinc-400">JP / pekan</span>
-            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ml-auto ${
-              totalIx > baselineIx 
-                ? "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400" 
-                : totalIx < baselineIx 
-                ? "bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-400"
-                : "bg-slate-100 text-slate-700 dark:bg-zinc-800 dark:text-zinc-300"
-            }`}>
-              {totalIx - baselineIx > 0 ? `+${totalIx - baselineIx}` : totalIx - baselineIx} JP dari Master ({baselineIx})
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Action Bar & Quick Search */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-white dark:bg-zinc-900 p-4 border border-slate-200 dark:border-zinc-800 rounded-xl">
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
-            <BookOpen className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-            <h3 className="font-bold text-slate-900 dark:text-white text-base">
-              Matriks Struktur Kurikulum Bayangan
-            </h3>
-          </div>
-          <span className="text-xs bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 px-2 py-0.5 rounded-full">
-            {curriculums.length} Mapel ({activeCurriculums.length} Aktif)
-          </span>
-        </div>
-
-        <div className="flex items-center gap-3 w-full sm:w-auto">
-          {/* Search Input */}
-          <div className="relative flex-1 sm:w-64">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Cari mata pelajaran..."
-              value={searchKeyword}
-              onChange={(e) => setSearchKeyword(e.target.value)}
-              className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 rounded-lg text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            />
-            {searchKeyword && (
-              <button 
-                onClick={() => setSearchKeyword("")}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-
+        {/* Global Action Buttons */}
+        <div className="flex items-center gap-2 w-full md:w-auto justify-end flex-wrap">
+          {/* Zero JP Scan & Cleanup Button */}
           {!isReadOnly && (
             <button
+              type="button"
+              onClick={() => {
+                setSelectedZeroJpIds(zeroJpItems.map((c) => c.id));
+                setShowZeroJpModal(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/30 dark:text-rose-400 dark:hover:bg-rose-950/50 rounded-xl transition-colors border border-rose-200 dark:border-rose-900"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Hapus Mapel Tanpa Alokasi JP ({zeroJpItems.length})</span>
+            </button>
+          )}
+
+          {/* Add Custom Subject Button */}
+          {!isReadOnly && onAddCustomSubject && (
+            <button
+              type="button"
               onClick={() => setShowAddModal(true)}
-              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-2 rounded-lg transition-colors shadow-xs shrink-0"
+              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-colors shadow-xs"
             >
               <Plus className="w-4 h-4" />
-              <span>Tambah Mapel Khusus</span>
+              <span>Tambah Mapel Simulasi</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* Curriculum Table matching CurriculumMatrix.tsx Layout & Grouping */}
-      <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl overflow-hidden shadow-xs">
-        <div className="overflow-x-auto w-full">
-          <table className="w-full text-left text-sm border-collapse min-w-[850px]">
-            <thead className="bg-slate-900 dark:bg-zinc-950 text-white text-[11px] font-bold uppercase tracking-wider border-b border-slate-800">
-              <tr>
-                <th className="py-3 px-3 w-16 text-center">Urutan</th>
-                <th className="py-3 px-4">Nama Mata Pelajaran</th>
-                <th className="py-3 px-3 text-center w-24">VII ({totalVii} JP)</th>
-                <th className="py-3 px-3 text-center w-24">VIII ({totalViii} JP)</th>
-                <th className="py-3 px-3 text-center w-24">IX ({totalIx} JP)</th>
-                <th className="py-3 px-3 text-center w-28">Total JP Rancangan</th>
-                <th className="py-3 px-3 text-center w-28">Baseline Master</th>
-                <th className="py-3 px-3 text-center w-24">Status</th>
-                {!isReadOnly && <th className="py-3 px-4 text-center w-28">Aksi</th>}
+      {/* UNIFIED MATRIX TABLE MATCHING MAIN CURRICULUM */}
+      <div className="bg-white dark:bg-zinc-900 rounded-3xl border border-gray-100 dark:border-zinc-800 shadow-sm overflow-hidden">
+        <div className="overflow-x-auto w-full max-h-[650px] scrollbar-thin">
+          <table className="w-full text-left border-collapse table-fixed min-w-[850px]">
+            <colgroup>
+              <col className="w-[8%]" />
+              <col className="w-[32%]" />
+              <col className="w-[12%]" />
+              <col className="w-[12%]" />
+              <col className="w-[12%]" />
+              <col className="w-[18%]" />
+              <col className="w-[6%]" />
+            </colgroup>
+            <thead className="sticky top-0 z-20 shadow-xs">
+              <tr className="bg-slate-900 dark:bg-zinc-950 text-white text-[11px] font-bold uppercase tracking-wider border-b border-slate-800">
+                <th className="px-3 py-3.5 text-center">Urutan</th>
+                <th className="px-5 py-3.5 text-left">Nama Mata Pelajaran (Rancangan)</th>
+                <th className="px-3 py-3.5 text-center">VII ({totalJP.vii} JP)</th>
+                <th className="px-3 py-3.5 text-center">VIII ({totalJP.viii} JP)</th>
+                <th className="px-3 py-3.5 text-center">IX ({totalJP.ix} JP)</th>
+                <th className="px-5 py-3.5 text-left">Guru Pengampu</th>
+                <th className="px-4 py-3.5 text-center">Aksi</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-zinc-800 text-xs">
+
+            <tbody className="divide-y divide-gray-100 dark:divide-zinc-850/70 text-xs font-semibold text-gray-700 dark:text-zinc-300">
               {filteredCurriculums.length === 0 ? (
                 <tr>
-                  <td colSpan={isReadOnly ? 8 : 9} className="px-6 py-12 text-center text-slate-400 dark:text-zinc-500">
-                    <BookOpen className="w-8 h-8 mx-auto mb-2 text-slate-300 dark:text-zinc-600" />
-                    <p className="font-semibold text-sm">Tidak ada mata pelajaran</p>
-                    <p className="text-xs text-slate-400 mt-1">
-                      {searchKeyword ? "Tidak ada mata pelajaran yang cocok dengan pencarian." : "Belum ada mata pelajaran dalam rancangan ini."}
-                    </p>
+                  <td colSpan={7} className="px-6 py-12 text-center">
+                    <div className="max-w-md mx-auto flex flex-col items-center justify-center space-y-3">
+                      <div className="h-12 w-12 rounded-full bg-slate-50 dark:bg-zinc-900 flex items-center justify-center text-slate-400 dark:text-zinc-600">
+                        <BookOpen className="h-6 w-6" />
+                      </div>
+                      <div className="text-sm font-bold text-gray-800 dark:text-zinc-200">
+                        Belum Ada Struktur Kurikulum di Rancangan
+                      </div>
+                      <p className="text-xs text-gray-400 dark:text-zinc-500 leading-relaxed font-medium">
+                        {searchTerm 
+                          ? "Silakan periksa kembali kata kunci pencarian Anda." 
+                          : "Gunakan tombol Tambah Mapel Simulasi di atas untuk memulai."
+                        }
+                      </p>
+                    </div>
                   </td>
                 </tr>
               ) : (
                 <>
-                  {/* CATEGORY 1: KEPESANTRENAN (Identical to CurriculumMatrix.tsx layout order) */}
-                  <tr className="bg-amber-50/70 dark:bg-amber-950/25 border-y border-amber-200/60 dark:border-amber-900/40">
-                    <td colSpan={isReadOnly ? 8 : 9} className="px-4 py-2.5 text-xs font-black text-amber-800 dark:text-amber-400 uppercase tracking-wider">
+                  {/* CATEGORY SUB-HEADER: KEPESANTRENAN (GROUP B) */}
+                  <tr className="bg-amber-50/60 dark:bg-amber-950/20 border-y border-amber-100/50 dark:border-amber-900/30">
+                    <td colSpan={7} className="px-5 py-3 text-xs font-black text-amber-800 dark:text-amber-400 uppercase tracking-wider">
                       <div className="flex items-center justify-between w-full">
                         <div className="flex items-center gap-2">
                           <span className="h-2.5 w-2.5 rounded-full bg-amber-500 shrink-0 animate-pulse"></span>
@@ -646,19 +569,11 @@ export const ScenarioCurriculumEditor: React.FC<Props> = ({
                     </td>
                   </tr>
 
-                  {kepesantrenanMatrix.length === 0 ? (
-                    <tr>
-                      <td colSpan={isReadOnly ? 8 : 9} className="px-6 py-4 text-center text-slate-400 dark:text-zinc-500 italic">
-                        Tidak ada mata pelajaran kepesantrenan
-                      </td>
-                    </tr>
-                  ) : (
-                    kepesantrenanMatrix.map((item, idx) => renderMatrixRow(item, idx))
-                  )}
+                  {renderRows(kepesantrenanMatrix)}
 
-                  {/* CATEGORY 2: UMUM (Identical to CurriculumMatrix.tsx layout order) */}
-                  <tr className="bg-blue-50/70 dark:bg-blue-950/25 border-y border-blue-200/60 dark:border-blue-900/40">
-                    <td colSpan={isReadOnly ? 8 : 9} className="px-4 py-2.5 text-xs font-black text-blue-800 dark:text-blue-400 uppercase tracking-wider">
+                  {/* CATEGORY SUB-HEADER: UMUM (GROUP A & C) */}
+                  <tr className="bg-blue-50/60 dark:bg-blue-950/20 border-y border-blue-100/50 dark:border-blue-900/30">
+                    <td colSpan={7} className="px-5 py-3 text-xs font-black text-blue-800 dark:text-blue-400 uppercase tracking-wider">
                       <div className="flex items-center justify-between w-full">
                         <div className="flex items-center gap-2">
                           <span className="h-2.5 w-2.5 rounded-full bg-blue-500 shrink-0 animate-pulse"></span>
@@ -675,15 +590,7 @@ export const ScenarioCurriculumEditor: React.FC<Props> = ({
                     </td>
                   </tr>
 
-                  {umumMatrix.length === 0 ? (
-                    <tr>
-                      <td colSpan={isReadOnly ? 8 : 9} className="px-6 py-4 text-center text-slate-400 dark:text-zinc-500 italic">
-                        Tidak ada mata pelajaran umum
-                      </td>
-                    </tr>
-                  ) : (
-                    umumMatrix.map((item, idx) => renderMatrixRow(item, idx))
-                  )}
+                  {renderRows(umumMatrix)}
                 </>
               )}
             </tbody>
@@ -691,27 +598,200 @@ export const ScenarioCurriculumEditor: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Add Custom Subject Modal */}
-      {showAddModal && (
+      {/* MODAL 1: EDIT MAPEL & GURU */}
+      {editingItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
           <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-zinc-800 pb-3">
-              <h3 className="font-bold text-slate-900 dark:text-white text-lg">
-                Tambah Mata Pelajaran Khusus Rancangan
+              <h3 className="font-bold text-slate-900 dark:text-white text-base flex items-center gap-2">
+                <Edit2 className="w-4 h-4 text-emerald-600" />
+                <span>Edit Mapel & Guru Pengampu</span>
               </h3>
-              <button 
-                onClick={() => setShowAddModal(false)}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-zinc-200"
-              >
+              <button onClick={() => setEditingItem(null)} className="text-slate-400 hover:text-slate-600">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <p className="text-xs text-slate-500 dark:text-zinc-400 leading-relaxed">
-              Mata pelajaran ini hanya ada di rancangan simulasi ini dan <strong>tidak akan</strong> mengubah Master Mata Pelajaran operasional SIMAK.
+            <p className="text-xs text-slate-500 dark:text-zinc-400">
+              Perubahan hanya berlaku pada data bayangan/simulasi ini dan tidak mengubah master mata pelajaran operasional.
             </p>
 
-            <form onSubmit={handleAddSubmit} className="space-y-4">
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-zinc-300 uppercase mb-1">
+                  Nama Mata Pelajaran
+                </label>
+                <input
+                  type="text"
+                  value={editForm.subjectName}
+                  onChange={(e) => setEditForm({ ...editForm, subjectName: e.target.value })}
+                  className="w-full text-sm border border-slate-300 dark:border-zinc-700 rounded-lg px-3 py-2 bg-white dark:bg-zinc-800 dark:text-white font-semibold"
+                />
+              </div>
+
+              <div>
+                <ScenarioTeacherSelect
+                  label="Guru Pengampu (Master SIMAK)"
+                  currentTeacherId={editForm.teacherId}
+                  currentTeacherName={editForm.teacherName}
+                  teachers={teachers}
+                  isLoading={isLoadingTeachers}
+                  isError={isErrorTeachers}
+                  onRetry={onRetryTeachers}
+                  onSelect={(teacherId, teacherName) => {
+                    setEditForm((prev) => ({
+                      ...prev,
+                      teacherId,
+                      teacherName
+                    }));
+                  }}
+                  disabled={isSavingEdit}
+                  showClearOption={true}
+                  placeholder="Pilih atau cari guru dari database master..."
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-3">
+              <button
+                type="button"
+                onClick={() => setEditingItem(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800 rounded-lg transition-colors"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                disabled={isSavingEdit || !editForm.subjectName.trim()}
+                onClick={handleSaveEdit}
+                className="px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-xs transition-colors"
+              >
+                {isSavingEdit ? "Menyimpan..." : "Simpan Perubahan"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 2: HAPUS MAPEL TANPA ALOKASI JP (JP 0) */}
+      {showZeroJpModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-zinc-800 pb-3">
+              <h3 className="font-bold text-slate-900 dark:text-white text-base flex items-center gap-2">
+                <Trash2 className="w-4 h-4 text-rose-600" />
+                <span>Konfirmasi Hapus Mapel Tanpa Alokasi JP (0 JP)</span>
+              </h3>
+              <button onClick={() => setShowZeroJpModal(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-zinc-400 leading-relaxed">
+              Ditemukan <strong>{zeroJpItems.length} mata pelajaran</strong> di rancangan ini yang memiliki 0 JP di seluruh kelas (VII, VIII, IX). Pilih mapel yang ingin dibersihkan dari simulasi:
+            </p>
+
+            {zeroJpItems.length === 0 ? (
+              <div className="p-6 text-center text-xs text-slate-400 italic">
+                Tidak ada mata pelajaran dengan alokasi 0 JP.
+              </div>
+            ) : (
+              <div className="max-h-60 overflow-y-auto border border-slate-200 dark:border-zinc-800 rounded-xl divide-y divide-slate-100 dark:divide-zinc-800">
+                {zeroJpItems.map((item) => {
+                  const isChecked = selectedZeroJpIds.includes(item.id);
+                  const cat = getItemCategory(item);
+                  return (
+                    <label
+                      key={item.id}
+                      className="flex items-center justify-between p-3 hover:bg-slate-50 dark:hover:bg-zinc-800 cursor-pointer text-xs"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedZeroJpIds([...selectedZeroJpIds, item.id]);
+                            } else {
+                              setSelectedZeroJpIds(selectedZeroJpIds.filter((id) => id !== item.id));
+                            }
+                          }}
+                          className="rounded border-slate-300 text-rose-600 focus:ring-rose-500"
+                        />
+                        <div>
+                          <span className="font-bold text-slate-800 dark:text-zinc-200 block">
+                            {getSubjectDisplayName(item)}
+                          </span>
+                          <span className="text-[10px] text-slate-400">
+                            Kelompok: {cat} • Guru: {item.teacherName || "Belum Ditugaskan"}
+                          </span>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 dark:bg-zinc-800 dark:text-zinc-400">
+                        0 JP
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-zinc-800">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedZeroJpIds(zeroJpItems.map((c) => c.id))}
+                  className="text-[11px] font-bold text-emerald-600 hover:underline"
+                >
+                  Pilih Semua
+                </button>
+                <span className="text-slate-300">•</span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedZeroJpIds([])}
+                  className="text-[11px] font-bold text-slate-500 hover:underline"
+                >
+                  Batal Pilih
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowZeroJpModal(false)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800 rounded-lg transition-colors"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  disabled={selectedZeroJpIds.length === 0 || isDeletingZeroJp}
+                  onClick={handleExecuteDeleteZeroJp}
+                  className="px-4 py-2 text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white rounded-lg shadow-xs transition-colors disabled:opacity-40"
+                >
+                  {isDeletingZeroJp ? "Menghapus..." : `Hapus (${selectedZeroJpIds.length}) Mapel`}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 3: TAMBAH MAPEL SIMULASI */}
+      {showAddModal && onAddCustomSubject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-zinc-800 pb-3">
+              <h3 className="font-bold text-slate-900 dark:text-white text-base flex items-center gap-2">
+                <Plus className="w-4 h-4 text-emerald-600" />
+                <span>Tambah Mata Pelajaran Simulasi</span>
+              </h3>
+              <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-zinc-300 uppercase mb-1">
                   Nama Mata Pelajaran
@@ -719,10 +799,10 @@ export const ScenarioCurriculumEditor: React.FC<Props> = ({
                 <input
                   type="text"
                   required
-                  placeholder="Contoh: Robotika & Kecerdasan Buatan"
-                  value={newSubForm.name}
-                  onChange={(e) => setNewSubForm({ ...newSubForm, name: e.target.value })}
-                  className="w-full text-sm border border-slate-300 dark:border-zinc-700 rounded-lg px-3 py-2 bg-white dark:bg-zinc-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  placeholder="Contoh: Robotika & Coding"
+                  value={addForm.name}
+                  onChange={(e) => setAddForm({ ...addForm, name: e.target.value })}
+                  className="w-full text-sm border border-slate-300 dark:border-zinc-700 rounded-lg px-3 py-2 bg-white dark:bg-zinc-800 dark:text-white"
                 />
               </div>
 
@@ -733,10 +813,10 @@ export const ScenarioCurriculumEditor: React.FC<Props> = ({
                   </label>
                   <input
                     type="text"
-                    placeholder="ROBOT"
-                    value={newSubForm.code}
-                    onChange={(e) => setNewSubForm({ ...newSubForm, code: e.target.value })}
-                    className="w-full text-sm border border-slate-300 dark:border-zinc-700 rounded-lg px-3 py-2 bg-white dark:bg-zinc-800 dark:text-white uppercase focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    placeholder="ROB"
+                    value={addForm.code}
+                    onChange={(e) => setAddForm({ ...addForm, code: e.target.value.toUpperCase() })}
+                    className="w-full text-sm border border-slate-300 dark:border-zinc-700 rounded-lg px-3 py-2 bg-white dark:bg-zinc-800 dark:text-white font-mono"
                   />
                 </div>
                 <div>
@@ -744,76 +824,115 @@ export const ScenarioCurriculumEditor: React.FC<Props> = ({
                     Kelompok
                   </label>
                   <select
-                    value={newSubForm.group}
-                    onChange={(e) => setNewSubForm({ ...newSubForm, group: e.target.value as "A" | "B" | "C" })}
-                    className="w-full text-sm border border-slate-300 dark:border-zinc-700 rounded-lg px-3 py-2 bg-white dark:bg-zinc-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    value={addForm.group}
+                    onChange={(e) => setAddForm({ ...addForm, group: e.target.value as any })}
+                    className="w-full text-sm border border-slate-300 dark:border-zinc-700 rounded-lg px-3 py-2 bg-white dark:bg-zinc-800 dark:text-white"
                   >
-                    <option value="A">Kelompok A (Umum)</option>
-                    <option value="B">Kelompok B (Kepesantrenan)</option>
-                    <option value="C">Kelompok C (Mulok)</option>
+                    <option value="A">A (Umum)</option>
+                    <option value="B">B (Kepesantrenan)</option>
+                    <option value="C">C (Muatan Lokal)</option>
                   </select>
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-3 bg-slate-50 dark:bg-zinc-800/50 p-3 rounded-xl border border-slate-200 dark:border-zinc-700">
+              <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-600 dark:text-zinc-400 mb-1 text-center">
-                    JP Kelas VII
+                  <label className="block text-xs font-bold text-slate-700 dark:text-zinc-300 uppercase mb-1">
+                    JP VII
                   </label>
                   <input
                     type="number"
-                    min={0}
-                    max={10}
-                    value={newSubForm.jp_vii}
-                    onChange={(e) => setNewSubForm({ ...newSubForm, jp_vii: Number(e.target.value) })}
-                    className="w-full text-center text-sm font-bold border border-slate-300 dark:border-zinc-600 rounded px-2 py-1.5 bg-white dark:bg-zinc-800 dark:text-white"
+                    min="0"
+                    value={addForm.jp_vii}
+                    onChange={(e) => setAddForm({ ...addForm, jp_vii: parseInt(e.target.value, 10) || 0 })}
+                    className="w-full text-sm border border-slate-300 dark:border-zinc-700 rounded-lg px-3 py-2 bg-white dark:bg-zinc-800 dark:text-white text-center"
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-600 dark:text-zinc-400 mb-1 text-center">
-                    JP Kelas VIII
+                  <label className="block text-xs font-bold text-slate-700 dark:text-zinc-300 uppercase mb-1">
+                    JP VIII
                   </label>
                   <input
                     type="number"
-                    min={0}
-                    max={10}
-                    value={newSubForm.jp_viii}
-                    onChange={(e) => setNewSubForm({ ...newSubForm, jp_viii: Number(e.target.value) })}
-                    className="w-full text-center text-sm font-bold border border-slate-300 dark:border-zinc-600 rounded px-2 py-1.5 bg-white dark:bg-zinc-800 dark:text-white"
+                    min="0"
+                    value={addForm.jp_viii}
+                    onChange={(e) => setAddForm({ ...addForm, jp_viii: parseInt(e.target.value, 10) || 0 })}
+                    className="w-full text-sm border border-slate-300 dark:border-zinc-700 rounded-lg px-3 py-2 bg-white dark:bg-zinc-800 dark:text-white text-center"
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-600 dark:text-zinc-400 mb-1 text-center">
-                    JP Kelas IX
+                  <label className="block text-xs font-bold text-slate-700 dark:text-zinc-300 uppercase mb-1">
+                    JP IX
                   </label>
                   <input
                     type="number"
-                    min={0}
-                    max={10}
-                    value={newSubForm.jp_ix}
-                    onChange={(e) => setNewSubForm({ ...newSubForm, jp_ix: Number(e.target.value) })}
-                    className="w-full text-center text-sm font-bold border border-slate-300 dark:border-zinc-600 rounded px-2 py-1.5 bg-white dark:bg-zinc-800 dark:text-white"
+                    min="0"
+                    value={addForm.jp_ix}
+                    onChange={(e) => setAddForm({ ...addForm, jp_ix: parseInt(e.target.value, 10) || 0 })}
+                    className="w-full text-sm border border-slate-300 dark:border-zinc-700 rounded-lg px-3 py-2 bg-white dark:bg-zinc-800 dark:text-white text-center"
                   />
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setShowAddModal(false)}
-                  className="px-4 py-2 text-sm font-semibold text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800 rounded-lg transition-colors"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="px-4 py-2 text-sm font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors shadow-xs"
-                >
-                  {isSubmitting ? "Menambahkan..." : "Tambahkan ke Rancangan"}
-                </button>
+              <div>
+                <ScenarioTeacherSelect
+                  label="Guru Pengampu (Opsional)"
+                  currentTeacherId={addForm.teacherId}
+                  currentTeacherName={addForm.teacherName}
+                  teachers={teachers}
+                  isLoading={isLoadingTeachers}
+                  isError={isErrorTeachers}
+                  onRetry={onRetryTeachers}
+                  onSelect={(teacherId, teacherName) => {
+                    setAddForm((prev) => ({
+                      ...prev,
+                      teacherId,
+                      teacherName
+                    }));
+                  }}
+                  disabled={isAdding}
+                  showClearOption={true}
+                  placeholder="Pilih guru pengampu dari master SIMAK..."
+                />
               </div>
-            </form>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-3">
+              <button
+                type="button"
+                onClick={() => setShowAddModal(false)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800 rounded-lg"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                disabled={isAdding || !addForm.name.trim()}
+                onClick={async () => {
+                  setIsAdding(true);
+                  try {
+                    await onAddCustomSubject(addForm);
+                    setShowAddModal(false);
+                    setAddForm({
+                      name: "",
+                      code: "",
+                      group: "A",
+                      kkm: 75,
+                      jp_vii: 2,
+                      jp_viii: 2,
+                      jp_ix: 2,
+                      teacherName: "",
+                      teacherId: ""
+                    });
+                  } finally {
+                    setIsAdding(false);
+                  }
+                }}
+                className="px-4 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-xs"
+              >
+                {isAdding ? "Menambahkan..." : "Tambah ke Simulasi"}
+              </button>
+            </div>
           </div>
         </div>
       )}

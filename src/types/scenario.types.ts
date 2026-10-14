@@ -1,4 +1,4 @@
-export type ScenarioStatus = "Draft" | "Diajukan" | "Perlu Revisi" | "Disetujui" | "Ditolak";
+export type ScenarioStatus = "Draft" | "Diajukan" | "Perlu Revisi" | "Disetujui" | "Ditolak" | "Diterapkan";
 
 export interface StatusHistoryEntry {
   status: ScenarioStatus;
@@ -47,6 +47,29 @@ export interface ScheduleScenario {
     totalScheduleSlots: number;
     conflictCount: number;
   };
+
+  // Mass Apply Metadata
+  appliedAt?: string;
+  appliedBy?: string;
+  appliedByName?: string;
+  appliedSummary?: {
+    totalApplied: number;
+    classesApplied: string[];
+    addedSlots: number;
+    updatedSlots: number;
+    emptySlots: number;
+  };
+
+  // Approval Metadata
+  approvedAt?: string;
+  approvedBy?: string;
+  approvedByName?: string;
+
+  // Publication Metadata
+  isPublished?: boolean;
+  publishedAt?: string;
+  publishedBy?: string;
+  publishedByName?: string;
 
   // RBAC & Audit
   createdBy: string;
@@ -130,7 +153,16 @@ export interface ScenarioSchedule {
 export interface ScenarioChangeLog {
   id: string;
   scenarioId: string;
-  action: "CREATE_SCENARIO" | "DUPLICATE_SCENARIO" | "UPDATE_CURRICULUM" | "UPDATE_SCHEDULE" | "CHANGE_STATUS" | "DELETE_SCENARIO";
+  action: 
+    | "CREATE_SCENARIO" 
+    | "DUPLICATE_SCENARIO" 
+    | "UPDATE_CURRICULUM" 
+    | "UPDATE_SCHEDULE" 
+    | "CHANGE_STATUS" 
+    | "DELETE_SCENARIO"
+    | "APPLY_TO_LIVE_SCHEDULE"
+    | "PUBLISH_LIVE_SCHEDULE"
+    | "REMOVE_ZERO_JP_SUBJECTS";
   description: string;
   changedBy: string;
   changedByName: string;
@@ -151,4 +183,61 @@ export interface ScenarioConflict {
   teacherName?: string;
   subjectId?: string;
   subjectName?: string;
+}
+
+export interface ScenarioApplyPreview {
+  academicYearId: string;
+  academicYearName: string;
+  semesterId: string;
+  semesterName: string;
+  selectedClassIds: string[];
+  totalSlotsInScenario: number;
+  addedSlots: Array<{
+    slotKey: string;
+    classId: string;
+    className: string;
+    day: string;
+    sequence: number;
+    jp: string;
+    subjectName: string;
+    teacherName: string;
+    isIntentionalEmpty: boolean;
+  }>;
+  updatedSlots: Array<{
+    slotKey: string;
+    classId: string;
+    className: string;
+    day: string;
+    sequence: number;
+    jp: string;
+    oldSubjectName: string;
+    newSubjectName: string;
+    oldTeacherName: string;
+    newTeacherName: string;
+    isIntentionalEmpty: boolean;
+  }>;
+  emptySlotsCount: number;
+  unchangedSlotsCount: number;
+  conflicts: ScenarioConflict[];
+  curriculumChanges?: {
+    addedSubjects: Array<{ subjectId: string; subjectName: string; group: string }>;
+    removedZeroJpSubjects: Array<{ subjectId: string; subjectName: string }>;
+    renamedSubjects: Array<{ subjectId: string; oldName: string; newName: string }>;
+    jpChangedSubjects: Array<{ subjectId: string; subjectName: string; oldJp: string; newJp: string }>;
+  };
+  hasBlockingErrors: boolean;
+  canApply: boolean;
+  blockReason?: string;
+}
+
+export interface ScenarioApplyResult {
+  totalApplied: number;
+  classesApplied: string[];
+  addedCount: number;
+  updatedCount: number;
+  emptySlotsCount: number;
+  deletedDuplicatesCount: number;
+  curriculumAppliedCount?: number;
+  appliedAt: string;
+  appliedBy: string;
 }

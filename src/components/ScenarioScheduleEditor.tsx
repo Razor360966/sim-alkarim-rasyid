@@ -26,6 +26,7 @@ import {
   ScenarioConflict 
 } from "../types";
 import { isClassMatch } from "../utils/gradeLevelHelper";
+import { ScenarioTeacherSelect } from "./ScenarioTeacherSelect";
 
 interface Props {
   scenarioId: string;
@@ -33,6 +34,9 @@ interface Props {
   curriculums: ScenarioCurriculumMatrix[];
   classes: Class[];
   teachers: Teacher[];
+  isLoadingTeachers?: boolean;
+  isErrorTeachers?: boolean;
+  onRetryTeachers?: () => void;
   periods: LessonPeriod[];
   conflicts: ScenarioConflict[];
   onSaveSlot: (slot: Partial<ScenarioSchedule> & { scenarioId: string; classId: string; day: string; sequence: number }) => Promise<void>;
@@ -48,6 +52,9 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
   curriculums,
   classes,
   teachers,
+  isLoadingTeachers = false,
+  isErrorTeachers = false,
+  onRetryTeachers,
   periods,
   conflicts,
   onSaveSlot,
@@ -150,6 +157,7 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
     if (!activeSlotData) return;
     try {
       setIsSaving(true);
+      const isSlotEmpty = !activeSlotData.subjectId || activeSlotData.subjectName === "Kosong" || activeSlotData.subjectName === "Belum Ditugaskan";
       await onSaveSlot({
         id: activeSlotData.slotId,
         scenarioId,
@@ -159,10 +167,10 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
         sequence: activeSlotData.sequence,
         jp: activeSlotData.jp,
         lessonPeriodId: activeSlotData.lessonPeriodId,
-        subjectId: activeSlotData.subjectId,
-        subjectName: activeSlotData.subjectName,
-        teacherId: activeSlotData.teacherId,
-        teacherName: activeSlotData.teacherName,
+        subjectId: isSlotEmpty ? "" : activeSlotData.subjectId,
+        subjectName: isSlotEmpty ? "Kosong" : activeSlotData.subjectName,
+        teacherId: isSlotEmpty ? "" : activeSlotData.teacherId,
+        teacherName: isSlotEmpty ? "Belum Ditugaskan" : activeSlotData.teacherName,
         isLocked: activeSlotData.isLocked
       });
       setActiveSlotData(null);
@@ -326,13 +334,19 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
                         );
                       }
 
+                      const isIntentionalEmpty = Boolean(
+                        matched && (!matched.subjectId || matched.subjectName === "Kosong" || matched.subjectName === "Belum Ditugaskan")
+                      );
+
                       return (
                         <div
                           key={period.id || period.sequence}
                           onClick={() => handleSlotClick(day, period)}
                           className={`p-2.5 rounded-lg border text-left cursor-pointer transition-all hover:scale-[1.02] shadow-xs relative ${
                             matched
-                              ? slotConflicts.length > 0
+                              ? isIntentionalEmpty
+                                ? "bg-amber-50/60 border-dashed border-amber-300 dark:bg-amber-950/20 dark:border-amber-800"
+                                : slotConflicts.length > 0
                                 ? "bg-amber-50 border-amber-300 dark:bg-amber-950/30 dark:border-amber-800"
                                 : "bg-emerald-50/80 border-emerald-200 dark:bg-emerald-950/20 dark:border-emerald-900"
                               : "bg-white dark:bg-zinc-850 border-slate-200 dark:border-zinc-700/60 hover:border-emerald-400"
@@ -345,26 +359,38 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
                           </div>
 
                           {matched ? (
-                            <div>
-                              <p className="text-xs font-bold text-slate-900 dark:text-white line-clamp-1">
-                                {matched.subjectName}
-                              </p>
-                              <p className="text-[11px] text-slate-600 dark:text-zinc-400 line-clamp-1 mt-0.5">
-                                {viewMode === "class" ? matched.teacherName || "-" : matched.className || "-"}
-                              </p>
+                            isIntentionalEmpty ? (
+                              <div>
+                                <p className="text-xs font-bold text-amber-800 dark:text-amber-300 line-clamp-1 flex items-center gap-1">
+                                  <span className="w-2 h-2 rounded-full bg-amber-500 inline-block shrink-0"></span>
+                                  <span>Kosong (Belum Ditugaskan)</span>
+                                </p>
+                                <p className="text-[10px] text-slate-500 dark:text-zinc-400 line-clamp-1 mt-0.5">
+                                  Slot sengaja dikosongkan
+                                </p>
+                              </div>
+                            ) : (
+                              <div>
+                                <p className="text-xs font-bold text-slate-900 dark:text-white line-clamp-1">
+                                  {matched.subjectName}
+                                </p>
+                                <p className="text-[11px] text-slate-600 dark:text-zinc-400 line-clamp-1 mt-0.5">
+                                  {viewMode === "class" ? matched.teacherName || "-" : matched.className || "-"}
+                                </p>
 
-                              {matched.isLocked && (
-                                <span className="absolute top-2 right-2 text-slate-400" title="Terkunci">
-                                  <Lock className="w-3 h-3" />
-                                </span>
-                              )}
+                                {matched.isLocked && (
+                                  <span className="absolute top-2 right-2 text-slate-400" title="Terkunci">
+                                    <Lock className="w-3 h-3" />
+                                  </span>
+                                )}
 
-                              {slotConflicts.length > 0 && (
-                                <span className="absolute bottom-1.5 right-1.5 text-amber-600" title="Ada potensi tabrakan">
-                                  <AlertTriangle className="w-3.5 h-3.5" />
-                                </span>
-                              )}
-                            </div>
+                                {slotConflicts.length > 0 && (
+                                  <span className="absolute bottom-1.5 right-1.5 text-amber-600" title="Ada potensi tabrakan">
+                                    <AlertTriangle className="w-3.5 h-3.5" />
+                                  </span>
+                                )}
+                              </div>
+                            )
                           ) : (
                             <div className="py-2 text-center text-slate-400 dark:text-zinc-600 text-[11px] font-medium flex items-center justify-center gap-1">
                               <Plus className="w-3 h-3" />
@@ -406,25 +432,52 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
             <div className="space-y-4">
               {/* Select Subject */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-zinc-300 uppercase mb-1">
-                  Mata Pelajaran (dari Kurikulum Rancangan)
-                </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-700 dark:text-zinc-300 uppercase">
+                      Mata Pelajaran (dari Kurikulum Rancangan)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveSlotData({
+                          ...activeSlotData,
+                          subjectId: "",
+                          subjectName: "Kosong",
+                          teacherId: "",
+                          teacherName: "Belum Ditugaskan"
+                        });
+                      }}
+                      className="text-[11px] font-bold text-amber-700 dark:text-amber-400 hover:underline"
+                    >
+                      Tandai Slot Kosong
+                    </button>
+                  </div>
                 <select
                   value={activeSlotData.subjectId}
                   onChange={(e) => {
                     const subId = e.target.value;
-                    const sub = availableSubjects.find((s) => s.subjectId === subId);
-                    setActiveSlotData({
-                      ...activeSlotData,
-                      subjectId: subId,
-                      subjectName: sub ? sub.subjectName : "",
-                      teacherId: sub?.teacherId || activeSlotData.teacherId,
-                      teacherName: sub?.teacherName || activeSlotData.teacherName
-                    });
+                    if (!subId) {
+                      setActiveSlotData({
+                        ...activeSlotData,
+                        subjectId: "",
+                        subjectName: "Kosong",
+                        teacherId: "",
+                        teacherName: "Belum Ditugaskan"
+                      });
+                    } else {
+                      const sub = availableSubjects.find((s) => s.subjectId === subId);
+                      setActiveSlotData({
+                        ...activeSlotData,
+                        subjectId: subId,
+                        subjectName: sub ? sub.subjectName : "",
+                        teacherId: sub?.teacherId || activeSlotData.teacherId,
+                        teacherName: sub?.teacherName || activeSlotData.teacherName
+                      });
+                    }
                   }}
                   className="w-full text-sm font-semibold border border-slate-300 dark:border-zinc-700 rounded-lg px-3 py-2 bg-white dark:bg-zinc-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 >
-                  <option value="">-- Pilih Mata Pelajaran --</option>
+                  <option value="">-- [Slot Kosong / Belum Ditugaskan] --</option>
                   {availableSubjects.map((sub) => (
                     <option key={sub.id} value={sub.subjectId}>
                       {sub.subjectName} ({sub.isCustomSubject ? "Mapel Baru" : `Kel. ${sub.subjectGroup}`})
@@ -435,29 +488,23 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
 
               {/* Select Teacher */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-zinc-300 uppercase mb-1">
-                  Guru Pengampu
-                </label>
-                <select
-                  value={activeSlotData.teacherId}
-                  onChange={(e) => {
-                    const tchId = e.target.value;
-                    const tch = teachers.find((t) => t.id === tchId);
+                <ScenarioTeacherSelect
+                  label="Guru Pengampu"
+                  currentTeacherId={activeSlotData.teacherId}
+                  currentTeacherName={activeSlotData.teacherName}
+                  teachers={teachers}
+                  isLoading={isLoadingTeachers}
+                  isError={isErrorTeachers}
+                  onRetry={onRetryTeachers}
+                  onSelect={(tchId, tchName) => {
                     setActiveSlotData({
                       ...activeSlotData,
                       teacherId: tchId,
-                      teacherName: tch ? tch.name : ""
+                      teacherName: tchName
                     });
                   }}
-                  className="w-full text-sm font-semibold border border-slate-300 dark:border-zinc-700 rounded-lg px-3 py-2 bg-white dark:bg-zinc-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                >
-                  <option value="">-- Pilih Guru --</option>
-                  {teachers.map((tch) => (
-                    <option key={tch.id} value={tch.id}>
-                      {tch.name}
-                    </option>
-                  ))}
-                </select>
+                  disabled={isReadOnly}
+                />
               </div>
 
               {/* Locked Toggle */}
@@ -502,7 +549,7 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
                 <button
                   type="button"
                   onClick={handleSaveModal}
-                  disabled={isSaving || !activeSlotData.subjectId}
+                  disabled={isSaving}
                   className="px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors shadow-xs disabled:opacity-50"
                 >
                   {isSaving ? "Menyimpan..." : "Simpan Slot"}
