@@ -57,7 +57,14 @@ export const ScenarioCurriculumEditor: React.FC<Props> = ({
   const [editForm, setEditForm] = useState({
     subjectName: "",
     teacherName: "",
-    teacherId: ""
+    teacherId: "",
+    useDifferentTeachers: false,
+    teacherId_vii: "",
+    teacherName_vii: "",
+    teacherId_viii: "",
+    teacherName_viii: "",
+    teacherId_ix: "",
+    teacherName_ix: ""
   });
   const [isSavingEdit, setIsSavingEdit] = useState(false);
 
@@ -201,23 +208,36 @@ export const ScenarioCurriculumEditor: React.FC<Props> = ({
 
   // Open Edit Modal
   const handleOpenEdit = (item: ScenarioCurriculumMatrix) => {
-    let initialTeacherId = item.teacherId || "";
-    if (!initialTeacherId && item.teacherName && teachers.length > 0) {
-      const match = teachers.find(
-        (t) =>
-          formatTeacherDisplayName(t).toLowerCase() === item.teacherName.trim().toLowerCase() ||
-          (t.name || "").toLowerCase().trim() === item.teacherName.trim().toLowerCase()
-      );
-      if (match) {
-        initialTeacherId = match.id || match.teacherId || "";
+    const resolveInitialId = (id?: string, name?: string) => {
+      let tId = id || "";
+      if (!tId && name && teachers.length > 0) {
+        const match = teachers.find(
+          (t) =>
+            formatTeacherDisplayName(t).toLowerCase() === name.trim().toLowerCase() ||
+            (t.name || "").toLowerCase().trim() === name.trim().toLowerCase()
+        );
+        if (match) tId = match.id || match.teacherId || "";
       }
-    }
+      return tId;
+    };
+
+    const initialTeacherId = resolveInitialId(item.teacherId, item.teacherName);
+    const initialViiId = resolveInitialId(item.teacherId_vii, item.teacherName_vii) || (item.useDifferentTeachers ? "" : initialTeacherId);
+    const initialViiiId = resolveInitialId(item.teacherId_viii, item.teacherName_viii) || (item.useDifferentTeachers ? "" : initialTeacherId);
+    const initialIxId = resolveInitialId(item.teacherId_ix, item.teacherName_ix) || (item.useDifferentTeachers ? "" : initialTeacherId);
 
     setEditingItem(item);
     setEditForm({
       subjectName: item.subjectName || "",
       teacherName: item.teacherName || "",
-      teacherId: initialTeacherId
+      teacherId: initialTeacherId,
+      useDifferentTeachers: Boolean(item.useDifferentTeachers),
+      teacherId_vii: initialViiId,
+      teacherName_vii: item.teacherName_vii || (item.useDifferentTeachers ? "" : item.teacherName || ""),
+      teacherId_viii: initialViiiId,
+      teacherName_viii: item.teacherName_viii || (item.useDifferentTeachers ? "" : item.teacherName || ""),
+      teacherId_ix: initialIxId,
+      teacherName_ix: item.teacherName_ix || (item.useDifferentTeachers ? "" : item.teacherName || "")
     });
   };
 
@@ -226,11 +246,26 @@ export const ScenarioCurriculumEditor: React.FC<Props> = ({
     if (!editingItem || isReadOnly) return;
     setIsSavingEdit(true);
     try {
+      const isDiff = Boolean(editForm.useDifferentTeachers);
+      const primaryId = isDiff
+        ? (editForm.teacherId_vii || editForm.teacherId_viii || editForm.teacherId_ix || editForm.teacherId.trim())
+        : editForm.teacherId.trim();
+      const primaryName = isDiff
+        ? (editForm.teacherName_vii || editForm.teacherName_viii || editForm.teacherName_ix || editForm.teacherName.trim())
+        : editForm.teacherName.trim();
+
       await onUpdateItem({
         ...editingItem,
         subjectName: editForm.subjectName.trim() || editingItem.subjectName,
-        teacherName: editForm.teacherName.trim(),
-        teacherId: editForm.teacherId.trim()
+        teacherName: primaryName,
+        teacherId: primaryId,
+        useDifferentTeachers: isDiff,
+        teacherId_vii: isDiff ? editForm.teacherId_vii.trim() : primaryId,
+        teacherName_vii: isDiff ? editForm.teacherName_vii.trim() : primaryName,
+        teacherId_viii: isDiff ? editForm.teacherId_viii.trim() : primaryId,
+        teacherName_viii: isDiff ? editForm.teacherName_viii.trim() : primaryName,
+        teacherId_ix: isDiff ? editForm.teacherId_ix.trim() : primaryId,
+        teacherName_ix: isDiff ? editForm.teacherName_ix.trim() : primaryName
       });
       setEditingItem(null);
     } finally {
@@ -407,10 +442,43 @@ export const ScenarioCurriculumEditor: React.FC<Props> = ({
 
           {/* 6. Guru Pengampu */}
           <td className="px-5 py-4">
-            <div className="flex items-center justify-between gap-2">
-              <div className="truncate">
-                {item.teacherName ? (
-                  <span className="font-semibold text-slate-800 dark:text-zinc-200">
+            <div className="flex items-start justify-between gap-2">
+              <div className="space-y-1 min-w-0">
+                {item.useDifferentTeachers ? (
+                  <div className="space-y-1 text-xs">
+                    {(item.jp_vii ?? 0) > 0 && (
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 shrink-0">
+                          VII
+                        </span>
+                        <span className="font-semibold text-slate-800 dark:text-zinc-200 truncate">
+                          {item.teacherName_vii || <span className="text-slate-400 italic">Belum Ditugaskan</span>}
+                        </span>
+                      </div>
+                    )}
+                    {(item.jp_viii ?? 0) > 0 && (
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 shrink-0">
+                          VIII
+                        </span>
+                        <span className="font-semibold text-slate-800 dark:text-zinc-200 truncate">
+                          {item.teacherName_viii || <span className="text-slate-400 italic">Belum Ditugaskan</span>}
+                        </span>
+                      </div>
+                    )}
+                    {(item.jp_ix ?? 0) > 0 && (
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300 shrink-0">
+                          IX
+                        </span>
+                        <span className="font-semibold text-slate-800 dark:text-zinc-200 truncate">
+                          {item.teacherName_ix || <span className="text-slate-400 italic">Belum Ditugaskan</span>}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                ) : item.teacherName ? (
+                  <span className="font-semibold text-slate-800 dark:text-zinc-200 block truncate">
                     {item.teacherName}
                   </span>
                 ) : (
@@ -629,27 +697,140 @@ export const ScenarioCurriculumEditor: React.FC<Props> = ({
                 />
               </div>
 
-              <div>
-                <ScenarioTeacherSelect
-                  label="Guru Pengampu (Master SIMAK)"
-                  currentTeacherId={editForm.teacherId}
-                  currentTeacherName={editForm.teacherName}
-                  teachers={teachers}
-                  isLoading={isLoadingTeachers}
-                  isError={isErrorTeachers}
-                  onRetry={onRetryTeachers}
-                  onSelect={(teacherId, teacherName) => {
-                    setEditForm((prev) => ({
-                      ...prev,
-                      teacherId,
-                      teacherName
-                    }));
-                  }}
-                  disabled={isSavingEdit}
-                  showClearOption={true}
-                  placeholder="Pilih atau cari guru dari database master..."
-                />
+              {/* Toggle Guru Berbeda Tiap Jenjang */}
+              <div className="pt-1 pb-1">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={editForm.useDifferentTeachers}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setEditForm((prev) => ({
+                        ...prev,
+                        useDifferentTeachers: checked,
+                        teacherId_vii: prev.teacherId_vii || prev.teacherId,
+                        teacherName_vii: prev.teacherName_vii || prev.teacherName,
+                        teacherId_viii: prev.teacherId_viii || prev.teacherId,
+                        teacherName_viii: prev.teacherName_viii || prev.teacherName,
+                        teacherId_ix: prev.teacherId_ix || prev.teacherId,
+                        teacherName_ix: prev.teacherName_ix || prev.teacherName
+                      }));
+                    }}
+                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <span className="text-xs font-bold text-slate-700 dark:text-zinc-300">
+                    Guru Pengampu Berbeda Tiap Jenjang (VII, VIII, IX)
+                  </span>
+                </label>
               </div>
+
+              {!editForm.useDifferentTeachers ? (
+                <div>
+                  <ScenarioTeacherSelect
+                    label="Guru Pengampu (Semua Jenjang)"
+                    currentTeacherId={editForm.teacherId}
+                    currentTeacherName={editForm.teacherName}
+                    teachers={teachers}
+                    isLoading={isLoadingTeachers}
+                    isError={isErrorTeachers}
+                    onRetry={onRetryTeachers}
+                    onSelect={(teacherId, teacherName) => {
+                      setEditForm((prev) => ({
+                        ...prev,
+                        teacherId,
+                        teacherName,
+                        teacherId_vii: teacherId,
+                        teacherName_vii: teacherName,
+                        teacherId_viii: teacherId,
+                        teacherName_viii: teacherName,
+                        teacherId_ix: teacherId,
+                        teacherName_ix: teacherName
+                      }));
+                    }}
+                    disabled={isSavingEdit}
+                    showClearOption={true}
+                    placeholder="Pilih atau cari guru dari database master..."
+                  />
+                </div>
+              ) : (
+                <div className="space-y-3 p-3 bg-slate-50 dark:bg-zinc-850/60 rounded-xl border border-slate-200 dark:border-zinc-800">
+                  <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                    Penugasan Guru Spesifik Jenjang
+                  </div>
+
+                  <div>
+                    <span className="text-[10px] font-extrabold uppercase text-blue-600 dark:text-blue-400 block mb-1">
+                      Kelas VII (Alokasi: {editingItem.jp_vii || 0} JP)
+                    </span>
+                    <ScenarioTeacherSelect
+                      currentTeacherId={editForm.teacherId_vii}
+                      currentTeacherName={editForm.teacherName_vii}
+                      teachers={teachers}
+                      isLoading={isLoadingTeachers}
+                      isError={isErrorTeachers}
+                      onRetry={onRetryTeachers}
+                      onSelect={(teacherId, teacherName) => {
+                        setEditForm((prev) => ({
+                          ...prev,
+                          teacherId_vii: teacherId,
+                          teacherName_vii: teacherName
+                        }));
+                      }}
+                      disabled={isSavingEdit}
+                      showClearOption={true}
+                      placeholder="Pilih guru untuk Kelas VII..."
+                    />
+                  </div>
+
+                  <div>
+                    <span className="text-[10px] font-extrabold uppercase text-amber-600 dark:text-amber-400 block mb-1">
+                      Kelas VIII (Alokasi: {editingItem.jp_viii || 0} JP)
+                    </span>
+                    <ScenarioTeacherSelect
+                      currentTeacherId={editForm.teacherId_viii}
+                      currentTeacherName={editForm.teacherName_viii}
+                      teachers={teachers}
+                      isLoading={isLoadingTeachers}
+                      isError={isErrorTeachers}
+                      onRetry={onRetryTeachers}
+                      onSelect={(teacherId, teacherName) => {
+                        setEditForm((prev) => ({
+                          ...prev,
+                          teacherId_viii: teacherId,
+                          teacherName_viii: teacherName
+                        }));
+                      }}
+                      disabled={isSavingEdit}
+                      showClearOption={true}
+                      placeholder="Pilih guru untuk Kelas VIII..."
+                    />
+                  </div>
+
+                  <div>
+                    <span className="text-[10px] font-extrabold uppercase text-purple-600 dark:text-purple-400 block mb-1">
+                      Kelas IX (Alokasi: {editingItem.jp_ix || 0} JP)
+                    </span>
+                    <ScenarioTeacherSelect
+                      currentTeacherId={editForm.teacherId_ix}
+                      currentTeacherName={editForm.teacherName_ix}
+                      teachers={teachers}
+                      isLoading={isLoadingTeachers}
+                      isError={isErrorTeachers}
+                      onRetry={onRetryTeachers}
+                      onSelect={(teacherId, teacherName) => {
+                        setEditForm((prev) => ({
+                          ...prev,
+                          teacherId_ix: teacherId,
+                          teacherName_ix: teacherName
+                        }));
+                      }}
+                      disabled={isSavingEdit}
+                      showClearOption={true}
+                      placeholder="Pilih guru untuk Kelas IX..."
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-end gap-3 pt-3">

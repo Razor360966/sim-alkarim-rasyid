@@ -27,6 +27,7 @@ import {
 } from "../types";
 import { isClassMatch } from "../utils/gradeLevelHelper";
 import { ScenarioTeacherSelect } from "./ScenarioTeacherSelect";
+import { getScenarioCurriculumTeacherForClass, toValidGradeLevel } from "../services/scenario.service";
 
 interface Props {
   scenarioId: string;
@@ -136,6 +137,22 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
     });
 
     const targetClass = existing ? classes.find((c) => isClassMatch(c.id, existing.classId, classes)) || activeClass : activeClass;
+    const targetGrade = toValidGradeLevel(targetClass?.gradeLevel || targetClass?.name);
+
+    let initialTeacherId = existing?.teacherId || (viewMode === "teacher" ? selectedTeacherId : "");
+    let initialTeacherName = existing?.teacherName || (viewMode === "teacher" ? activeTeacher?.name : "");
+
+    // If teacher is missing on existing slot but subject is set, resolve from scenario curriculums for this grade
+    if (!initialTeacherId && existing?.subjectId) {
+      const cur = curriculums.find((c) => c.subjectId === existing.subjectId || c.originalCurriculumId === existing.subjectId);
+      if (cur) {
+        const resolved = getScenarioCurriculumTeacherForClass(cur, targetGrade);
+        if (resolved.teacherId) {
+          initialTeacherId = resolved.teacherId;
+          initialTeacherName = resolved.teacherName;
+        }
+      }
+    }
 
     setActiveSlotData({
       slotId: existing?.id,
@@ -147,8 +164,8 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
       lessonPeriodId: period.id || "",
       subjectId: existing?.subjectId || "",
       subjectName: existing?.subjectName || "",
-      teacherId: existing?.teacherId || (viewMode === "teacher" ? selectedTeacherId : ""),
-      teacherName: existing?.teacherName || (viewMode === "teacher" ? activeTeacher?.name : ""),
+      teacherId: initialTeacherId,
+      teacherName: initialTeacherName,
       isLocked: existing?.isLocked || false
     });
   };
@@ -375,7 +392,18 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
                                   {matched.subjectName}
                                 </p>
                                 <p className="text-[11px] text-slate-600 dark:text-zinc-400 line-clamp-1 mt-0.5">
-                                  {viewMode === "class" ? matched.teacherName || "-" : matched.className || "-"}
+                                  {viewMode === "class" 
+                                    ? (matched.teacherName && matched.teacherName !== "Belum Ditugaskan"
+                                        ? matched.teacherName
+                                        : (() => {
+                                            if (!matched.subjectId) return "-";
+                                            const cur = curriculums.find((c) => c.subjectId === matched.subjectId || c.originalCurriculumId === matched.subjectId);
+                                            const cls = classes.find((c) => isClassMatch(c.id, matched.classId, classes));
+                                            const slotGrade = toValidGradeLevel(cls?.gradeLevel || cls?.name || matched.className);
+                                            const res = cur ? getScenarioCurriculumTeacherForClass(cur, slotGrade) : null;
+                                            return res?.teacherName && res.teacherName !== "Belum Ditugaskan" ? res.teacherName : "-";
+                                          })())
+                                    : matched.className || "-"}
                                 </p>
 
                                 {matched.isLocked && (
@@ -465,13 +493,17 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
                         teacherName: "Belum Ditugaskan"
                       });
                     } else {
-                      const sub = availableSubjects.find((s) => s.subjectId === subId);
+                      const sub = availableSubjects.find((s) => s.subjectId === subId || s.id === subId);
+                      const cls = classes.find((c) => isClassMatch(c.id, activeSlotData.classId, classes));
+                      const slotGrade = toValidGradeLevel(cls?.gradeLevel || cls?.name || activeSlotData.className);
+                      const resolved = sub ? getScenarioCurriculumTeacherForClass(sub, slotGrade) : { teacherId: "", teacherName: "" };
+
                       setActiveSlotData({
                         ...activeSlotData,
                         subjectId: subId,
                         subjectName: sub ? sub.subjectName : "",
-                        teacherId: sub?.teacherId || activeSlotData.teacherId,
-                        teacherName: sub?.teacherName || activeSlotData.teacherName
+                        teacherId: resolved.teacherId || sub?.teacherId || activeSlotData.teacherId,
+                        teacherName: resolved.teacherId ? resolved.teacherName : (sub?.teacherName || activeSlotData.teacherName)
                       });
                     }
                   }}

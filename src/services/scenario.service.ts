@@ -27,18 +27,87 @@ import {
   Class,
   LessonPeriod,
   LessonPeriodType,
-  Teacher
+  Teacher,
+  TeacherAssignment
 } from "../types";
 import { curriculumMatrixService } from "./curriculumMatrixService";
 import { scheduleService } from "./schedule.service";
 import { subjectService } from "./subjectService";
 import { classService } from "./classService";
 import { lessonPeriodService } from "./lessonPeriod.service";
+import { teacherAssignmentService } from "./teacherAssignment.service";
 import { isClassMatch, normalizeGradeLevel, getCanonicalSlotKey } from "../utils/gradeLevelHelper";
 
-function toValidGradeLevel(val?: string | number | null): "VII" | "VIII" | "IX" {
+export function toValidGradeLevel(val?: string | number | null): "VII" | "VIII" | "IX" {
   const norm = normalizeGradeLevel(val);
   return norm === "INVALID_GRADE_LEVEL" ? "VII" : norm;
+}
+
+/**
+ * Resolves the appropriate teacher from a Scenario Curriculum Matrix item
+ * for a specific class/grade level (VII, VIII, IX).
+ * Handles multi-teacher per grade (useDifferentTeachers) and safe fallbacks.
+ */
+export function getScenarioCurriculumTeacherForClass(
+  curriculumItem: ScenarioCurriculumMatrix | Partial<ScenarioCurriculumMatrix> | undefined,
+  gradeLevel: "VII" | "VIII" | "IX" | string
+): { teacherId: string; teacherName: string } {
+  if (!curriculumItem) {
+    return { teacherId: "", teacherName: "Belum Ditugaskan" };
+  }
+  const normGrade = toValidGradeLevel(gradeLevel);
+
+  // 1. If different teachers per grade are explicitly enabled or populated
+  if (curriculumItem.useDifferentTeachers) {
+    if (normGrade === "VII" && curriculumItem.teacherId_vii && curriculumItem.teacherId_vii.trim() !== "") {
+      return {
+        teacherId: curriculumItem.teacherId_vii.trim(),
+        teacherName: curriculumItem.teacherName_vii ? curriculumItem.teacherName_vii.trim() : "Guru Pengampu"
+      };
+    }
+    if (normGrade === "VIII" && curriculumItem.teacherId_viii && curriculumItem.teacherId_viii.trim() !== "") {
+      return {
+        teacherId: curriculumItem.teacherId_viii.trim(),
+        teacherName: curriculumItem.teacherName_viii ? curriculumItem.teacherName_viii.trim() : "Guru Pengampu"
+      };
+    }
+    if (normGrade === "IX" && curriculumItem.teacherId_ix && curriculumItem.teacherId_ix.trim() !== "") {
+      return {
+        teacherId: curriculumItem.teacherId_ix.trim(),
+        teacherName: curriculumItem.teacherName_ix ? curriculumItem.teacherName_ix.trim() : "Guru Pengampu"
+      };
+    }
+  }
+
+  // 2. Direct grade-level fallback even without flag
+  if (normGrade === "VII" && curriculumItem.teacherId_vii && curriculumItem.teacherId_vii.trim() !== "") {
+    return {
+      teacherId: curriculumItem.teacherId_vii.trim(),
+      teacherName: curriculumItem.teacherName_vii ? curriculumItem.teacherName_vii.trim() : "Guru Pengampu"
+    };
+  }
+  if (normGrade === "VIII" && curriculumItem.teacherId_viii && curriculumItem.teacherId_viii.trim() !== "") {
+    return {
+      teacherId: curriculumItem.teacherId_viii.trim(),
+      teacherName: curriculumItem.teacherName_viii ? curriculumItem.teacherName_viii.trim() : "Guru Pengampu"
+    };
+  }
+  if (normGrade === "IX" && curriculumItem.teacherId_ix && curriculumItem.teacherId_ix.trim() !== "") {
+    return {
+      teacherId: curriculumItem.teacherId_ix.trim(),
+      teacherName: curriculumItem.teacherName_ix ? curriculumItem.teacherName_ix.trim() : "Guru Pengampu"
+    };
+  }
+
+  // 3. Global teacher fallback
+  if (curriculumItem.teacherId && curriculumItem.teacherId.trim() !== "") {
+    return {
+      teacherId: curriculumItem.teacherId.trim(),
+      teacherName: curriculumItem.teacherName ? curriculumItem.teacherName.trim() : "Guru Pengampu"
+    };
+  }
+
+  return { teacherId: "", teacherName: "Belum Ditugaskan" };
 }
 
 function cleanUndefinedFields<T extends Record<string, any>>(obj: T): T {
@@ -124,41 +193,167 @@ export const scenarioService = {
     const scenarioId = `scenario_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
     // 1. Fetch operational source data (strictly READ-ONLY)
-    const [opCurriculums, opSchedules, opSubjects] = await Promise.all([
+    const [opCurriculums, opSchedules, opSubjects, opClasses, opAssignmentsPeriod, allAssignments] = await Promise.all([
       curriculumMatrixService.getCurriculumMatrix().catch(() => [] as CurriculumMatrix[]),
       scheduleService.getSchedules(params.academicYearId, params.semesterId).catch(() => [] as Schedule[]),
-      subjectService.getSubjects().catch(() => [] as Subject[])
+      subjectService.getSubjects().catch(() => [] as Subject[]),
+      classService.getClasses().catch(() => [] as Class[]),
+      teacherAssignmentService.getTeacherAssignmentsByPeriod(params.academicYearId, params.semesterId).catch(() => [] as TeacherAssignment[]),
+      teacherAssignmentService.getAllTeacherAssignments().catch(() => [] as TeacherAssignment[])
     ]);
 
-    // 2. Prepare Snapshot for scenario_curriculum_matrix
-    const curriculumSnapshots: ScenarioCurriculumMatrix[] = opCurriculums.map((cm, idx) => ({
-      id: `${scenarioId}_cm_${cm.id || idx}`,
-      scenarioId,
-      originalCurriculumId: cm.id,
-      subjectId: cm.subjectId,
-      subjectName: cm.subjectName,
-      subjectGroup: "A", // Default group
-      isCustomSubject: false,
-      isActiveInScenario: true,
-      jp_vii: cm.jp_vii || 0,
-      jp_viii: cm.jp_viii || 0,
-      jp_ix: cm.jp_ix || 0,
-      baseline_jp_vii: cm.jp_vii || 0,
-      baseline_jp_viii: cm.jp_viii || 0,
-      baseline_jp_ix: cm.jp_ix || 0,
-      teacherId: cm.teacherId || "",
-      teacherName: cm.teacherName || "",
-      teacherId_vii: cm.teacherId_vii || "",
-      teacherName_vii: cm.teacherName_vii || "",
-      teacherId_viii: cm.teacherId_viii || "",
-      teacherName_viii: cm.teacherName_viii || "",
-      teacherId_ix: cm.teacherId_ix || "",
-      teacherName_ix: cm.teacherName_ix || "",
-      useDifferentTeachers: Boolean(cm.useDifferentTeachers),
-      order: cm.order ?? idx,
-      createdAt: now,
-      updatedAt: now
-    }));
+    // Combined assignments prioritizing the selected period assignments
+    const opAssignments = opAssignmentsPeriod.length > 0 ? opAssignmentsPeriod : allAssignments;
+
+    // 2. Prepare Snapshot for scenario_curriculum_matrix with accurate grade-level teacher assignments
+    const curriculumSnapshots: ScenarioCurriculumMatrix[] = opCurriculums.map((cm, idx) => {
+      // Helper to resolve operational teacher for a specific grade level
+      const resolveTeacherForGrade = (targetGrade: "VII" | "VIII" | "IX") => {
+        const gradeClasses = opClasses.filter(
+          (c) => toValidGradeLevel(c.gradeLevel || c.name) === targetGrade
+        );
+
+        // Priority 1: Check active assignments in teacher_assignments for this grade
+        // Match by subjectId, cm.id, or exact subjectName, and classId or gradeLevel/className
+        if (opAssignments.length > 0) {
+          for (const a of opAssignments) {
+            if (a.isActive === false || !a.teacherId || a.teacherId.trim() === "" || a.teacherName === "Belum Ditentukan") {
+              continue;
+            }
+            const isSubMatch = (a.subjectId && (a.subjectId === cm.subjectId || a.subjectId === cm.id)) ||
+              (Boolean(a.subjectName && cm.subjectName) && a.subjectName.trim().toLowerCase() === cm.subjectName.trim().toLowerCase());
+            if (!isSubMatch) continue;
+
+            const isGrdMatch = (a.gradeLevel && toValidGradeLevel(a.gradeLevel) === targetGrade) ||
+              (a.className && toValidGradeLevel(a.className) === targetGrade) ||
+              (a.classId && gradeClasses.some((c) => isClassMatch(a.classId, c.id || c.classId, opClasses)));
+            if (isGrdMatch) {
+              return {
+                id: a.teacherId.trim(),
+                name: a.teacherName ? a.teacherName.trim() : "Guru Pengampu"
+              };
+            }
+          }
+        }
+
+        // Priority 1B: Fallback to allAssignments if opAssignments didn't yield a match
+        if (allAssignments.length > 0 && allAssignments !== opAssignments) {
+          for (const a of allAssignments) {
+            if (a.isActive === false || !a.teacherId || a.teacherId.trim() === "" || a.teacherName === "Belum Ditentukan") {
+              continue;
+            }
+            const isSubMatch = (a.subjectId && (a.subjectId === cm.subjectId || a.subjectId === cm.id)) ||
+              (Boolean(a.subjectName && cm.subjectName) && a.subjectName.trim().toLowerCase() === cm.subjectName.trim().toLowerCase());
+            if (!isSubMatch) continue;
+
+            const isGrdMatch = (a.gradeLevel && toValidGradeLevel(a.gradeLevel) === targetGrade) ||
+              (a.className && toValidGradeLevel(a.className) === targetGrade) ||
+              (a.classId && gradeClasses.some((c) => isClassMatch(a.classId, c.id || c.classId, opClasses)));
+            if (isGrdMatch) {
+              return {
+                id: a.teacherId.trim(),
+                name: a.teacherName ? a.teacherName.trim() : "Guru Pengampu"
+              };
+            }
+          }
+        }
+
+        // Priority 2: Check operational live schedules for this grade
+        if (opSchedules.length > 0) {
+          for (const s of opSchedules) {
+            if (!s.teacherId || s.teacherId.trim() === "" || s.teacherName === "Belum Ditentukan") {
+              continue;
+            }
+            const isSubMatch = (s.subjectId && (s.subjectId === cm.subjectId || s.subjectId === cm.id)) ||
+              (Boolean(s.subjectName && cm.subjectName) && s.subjectName.trim().toLowerCase() === cm.subjectName.trim().toLowerCase());
+            if (!isSubMatch) continue;
+
+            const isGrdMatch = toValidGradeLevel(s.gradeLevel || s.className) === targetGrade ||
+              (s.classId && gradeClasses.some((c) => isClassMatch(s.classId, c.id || c.classId, opClasses)));
+            if (isGrdMatch) {
+              return {
+                id: s.teacherId.trim(),
+                name: s.teacherName ? s.teacherName.trim() : "Guru Pengampu"
+              };
+            }
+          }
+        }
+
+        // Priority 3: Legacy curriculum matrix grade-specific fields
+        if (targetGrade === "VII" && cm.teacherId_vii && cm.teacherId_vii.trim() !== "") {
+          return {
+            id: cm.teacherId_vii.trim(),
+            name: cm.teacherName_vii ? cm.teacherName_vii.trim() : "Guru Pengampu"
+          };
+        }
+        if (targetGrade === "VIII" && cm.teacherId_viii && cm.teacherId_viii.trim() !== "") {
+          return {
+            id: cm.teacherId_viii.trim(),
+            name: cm.teacherName_viii ? cm.teacherName_viii.trim() : "Guru Pengampu"
+          };
+        }
+        if (targetGrade === "IX" && cm.teacherId_ix && cm.teacherId_ix.trim() !== "") {
+          return {
+            id: cm.teacherId_ix.trim(),
+            name: cm.teacherName_ix ? cm.teacherName_ix.trim() : "Guru Pengampu"
+          };
+        }
+
+        // Priority 4: Fallback to global curriculum matrix teacher ONLY IF not using different teachers
+        if (!cm.useDifferentTeachers && cm.teacherId && cm.teacherId.trim() !== "") {
+          return {
+            id: cm.teacherId.trim(),
+            name: cm.teacherName ? cm.teacherName.trim() : "Guru Pengampu"
+          };
+        }
+
+        return { id: "", name: "" };
+      };
+
+      const tchVii = resolveTeacherForGrade("VII");
+      const tchViii = resolveTeacherForGrade("VIII");
+      const tchIx = resolveTeacherForGrade("IX");
+
+      // Verify if teachers differ across any grades
+      const hasDistinctTeachers = Boolean(
+        (tchVii.id && tchViii.id && tchVii.id !== tchViii.id) ||
+        (tchVii.id && tchIx.id && tchVii.id !== tchIx.id) ||
+        (tchViii.id && tchIx.id && tchViii.id !== tchIx.id)
+      );
+      const useDifferentTeachers = Boolean(cm.useDifferentTeachers) || hasDistinctTeachers;
+
+      const primaryTeacherId = tchVii.id || tchViii.id || tchIx.id || cm.teacherId || "";
+      const primaryTeacherName = tchVii.name || tchViii.name || tchIx.name || cm.teacherName || "";
+
+      return {
+        id: `${scenarioId}_cm_${cm.id || idx}`,
+        scenarioId,
+        originalCurriculumId: cm.id,
+        subjectId: cm.subjectId,
+        subjectName: cm.subjectName,
+        subjectGroup: "A", // Default group
+        isCustomSubject: false,
+        isActiveInScenario: true,
+        jp_vii: cm.jp_vii || 0,
+        jp_viii: cm.jp_viii || 0,
+        jp_ix: cm.jp_ix || 0,
+        baseline_jp_vii: cm.jp_vii || 0,
+        baseline_jp_viii: cm.jp_viii || 0,
+        baseline_jp_ix: cm.jp_ix || 0,
+        teacherId: primaryTeacherId,
+        teacherName: primaryTeacherName,
+        teacherId_vii: tchVii.id || (useDifferentTeachers ? "" : primaryTeacherId),
+        teacherName_vii: tchVii.name || (useDifferentTeachers ? "" : primaryTeacherName),
+        teacherId_viii: tchViii.id || (useDifferentTeachers ? "" : primaryTeacherId),
+        teacherName_viii: tchViii.name || (useDifferentTeachers ? "" : primaryTeacherName),
+        teacherId_ix: tchIx.id || (useDifferentTeachers ? "" : primaryTeacherId),
+        teacherName_ix: tchIx.name || (useDifferentTeachers ? "" : primaryTeacherName),
+        useDifferentTeachers,
+        order: cm.order ?? idx,
+        createdAt: now,
+        updatedAt: now
+      };
+    });
 
     // 3. Prepare Snapshot for scenario_subjects (matching subjects referenced in curriculum or master)
     const subjectSnapshots: ScenarioSubject[] = opSubjects.map((sb) => ({
@@ -185,27 +380,48 @@ export const scenarioService = {
       if (s) cm.subjectGroup = s.group;
     });
 
-    // 4. Prepare Snapshot for scenario_schedules
-    const scheduleSnapshots: ScenarioSchedule[] = opSchedules.map((sc, idx) => ({
-      id: `${scenarioId}_sc_${sc.id || idx}`,
-      scenarioId,
-      academicYearId: params.academicYearId,
-      semesterId: params.semesterId,
-      classId: sc.classId,
-      className: sc.className,
-      gradeLevel: toValidGradeLevel(sc.className),
-      day: sc.day,
-      lessonPeriodId: sc.lessonPeriodId,
-      sequence: sc.sequence,
-      jp: sc.jp,
-      subjectId: sc.subjectId,
-      subjectName: sc.subjectName,
-      teacherId: sc.teacherId,
-      teacherName: sc.teacherName,
-      isLocked: Boolean(sc.isLocked),
-      createdAt: now,
-      updatedAt: now
-    }));
+    // 4. Prepare Snapshot for scenario_schedules strictly mapped to scenario curriculum matrix teachers
+    const scheduleSnapshots: ScenarioSchedule[] = opSchedules.map((sc, idx) => {
+      const matchedCls = opClasses.find((c) => isClassMatch(c.id, sc.classId, opClasses));
+      const grade = toValidGradeLevel(sc.gradeLevel || matchedCls?.gradeLevel || matchedCls?.name || sc.className);
+      let teacherId = sc.teacherId || "";
+      let teacherName = sc.teacherName || "";
+
+      // Strict SSOT: Resolve teacher from snapshot curriculum matrix for this grade!
+      const cur = curriculumSnapshots.find((c) =>
+        (sc.subjectId && (c.subjectId === sc.subjectId || c.originalCurriculumId === sc.subjectId)) ||
+        (Boolean(c.subjectName && sc.subjectName) && c.subjectName.trim().toLowerCase() === sc.subjectName.trim().toLowerCase())
+      );
+
+      if (cur) {
+        const res = getScenarioCurriculumTeacherForClass(cur, grade);
+        if (res.teacherId) {
+          teacherId = res.teacherId;
+          teacherName = res.teacherName;
+        }
+      }
+
+      return {
+        id: `${scenarioId}_sc_${sc.id || idx}`,
+        scenarioId,
+        academicYearId: params.academicYearId,
+        semesterId: params.semesterId,
+        classId: sc.classId,
+        className: sc.className,
+        gradeLevel: grade,
+        day: sc.day,
+        lessonPeriodId: sc.lessonPeriodId,
+        sequence: sc.sequence,
+        jp: sc.jp,
+        subjectId: sc.subjectId,
+        subjectName: sc.subjectName,
+        teacherId,
+        teacherName,
+        isLocked: Boolean(sc.isLocked),
+        createdAt: now,
+        updatedAt: now
+      };
+    });
 
     // 5. Calculate initial metrics
     const totalJpVii = curriculumSnapshots.reduce((acc, c) => acc + (c.isActiveInScenario ? c.jp_vii : 0), 0);
@@ -602,6 +818,13 @@ export const scenarioService = {
       ...item,
       teacherId: item.teacherId !== undefined ? item.teacherId.trim() : (oldData?.teacherId || ""),
       teacherName: item.teacherName !== undefined ? item.teacherName.trim() : (oldData?.teacherName || ""),
+      teacherId_vii: item.teacherId_vii !== undefined ? item.teacherId_vii.trim() : (oldData?.teacherId_vii || ""),
+      teacherName_vii: item.teacherName_vii !== undefined ? item.teacherName_vii.trim() : (oldData?.teacherName_vii || ""),
+      teacherId_viii: item.teacherId_viii !== undefined ? item.teacherId_viii.trim() : (oldData?.teacherId_viii || ""),
+      teacherName_viii: item.teacherName_viii !== undefined ? item.teacherName_viii.trim() : (oldData?.teacherName_viii || ""),
+      teacherId_ix: item.teacherId_ix !== undefined ? item.teacherId_ix.trim() : (oldData?.teacherId_ix || ""),
+      teacherName_ix: item.teacherName_ix !== undefined ? item.teacherName_ix.trim() : (oldData?.teacherName_ix || ""),
+      useDifferentTeachers: item.useDifferentTeachers !== undefined ? Boolean(item.useDifferentTeachers) : Boolean(oldData?.useDifferentTeachers),
       subjectName: item.subjectName ? item.subjectName.trim() : (oldData?.subjectName || ""),
       updatedAt: now
     });
@@ -609,8 +832,23 @@ export const scenarioService = {
 
     await updateDoc(curRef, payload);
 
+    // Check if any teacher assignment changed (global or per-grade)
+    const teacherChanged = Boolean(
+      oldData && (
+        oldData.teacherId !== payload.teacherId ||
+        oldData.teacherName !== payload.teacherName ||
+        oldData.teacherId_vii !== payload.teacherId_vii ||
+        oldData.teacherName_vii !== payload.teacherName_vii ||
+        oldData.teacherId_viii !== payload.teacherId_viii ||
+        oldData.teacherName_viii !== payload.teacherName_viii ||
+        oldData.teacherId_ix !== payload.teacherId_ix ||
+        oldData.teacherName_ix !== payload.teacherName_ix ||
+        oldData.useDifferentTeachers !== payload.useDifferentTeachers
+      )
+    );
+
     // If teacher changed, log to audit trail
-    if (oldData && (oldData.teacherId !== payload.teacherId || oldData.teacherName !== payload.teacherName)) {
+    if (teacherChanged) {
       const callerUid = auth?.currentUser?.uid || user?.uid || "system";
       const callerName = auth?.currentUser?.displayName || user?.displayName || "Pengguna";
       const logId = `${item.scenarioId}_log_tch_${Date.now()}`;
@@ -619,13 +857,57 @@ export const scenarioService = {
           id: logId,
           scenarioId: item.scenarioId,
           action: "UPDATE_CURRICULUM_TEACHER",
-          description: `Mengubah guru pengampu untuk "${payload.subjectName || oldData.subjectName}" menjadi "${payload.teacherName || 'Belum Ditugaskan'}" pada rancangan.`,
+          description: payload.useDifferentTeachers
+            ? `Mengubah penugasan guru per jenjang untuk "${payload.subjectName || oldData?.subjectName}" (VII: ${payload.teacherName_vii || '-'}, VIII: ${payload.teacherName_viii || '-'}, IX: ${payload.teacherName_ix || '-'}) pada rancangan.`
+            : `Mengubah guru pengampu untuk "${payload.subjectName || oldData?.subjectName}" menjadi "${payload.teacherName || 'Belum Ditugaskan'}" pada rancangan.`,
           changedBy: callerUid,
           changedByName: callerName,
           changedAt: now
         }));
       } catch (logErr) {
         console.warn("Could not write audit log for teacher update:", logErr);
+      }
+
+      // Synchronize scenario_schedules for this subject matching each slot's grade level
+      try {
+        const qSchedules = query(
+          collection(db, SCENARIO_SCHEDULES_COL),
+          where("scenarioId", "==", item.scenarioId)
+        );
+        const schSnaps = await getDocs(qSchedules);
+        if (!schSnaps.empty) {
+          const matchingSlots: { ref: any; teacherId: string; teacherName: string }[] = [];
+          schSnaps.forEach((d) => {
+            const schData = d.data() as ScenarioSchedule;
+            const isMatch = (schData.subjectId && (schData.subjectId === item.subjectId || schData.subjectId === item.originalCurriculumId)) ||
+              (Boolean(schData.subjectName && (payload.subjectName || oldData?.subjectName)) &&
+                schData.subjectName.trim().toLowerCase() === (payload.subjectName || oldData?.subjectName || "").trim().toLowerCase());
+            if (isMatch) {
+              const slotGrade = schData.gradeLevel || toValidGradeLevel(schData.className);
+              const resolved = getScenarioCurriculumTeacherForClass(payload, slotGrade);
+              matchingSlots.push({
+                ref: d.ref,
+                teacherId: resolved.teacherId,
+                teacherName: resolved.teacherName
+              });
+            }
+          });
+
+          for (let i = 0; i < matchingSlots.length; i += 400) {
+            const schBatch = writeBatch(db);
+            const chunk = matchingSlots.slice(i, i + 400);
+            chunk.forEach(({ ref, teacherId, teacherName }) => {
+              schBatch.update(ref, {
+                teacherId,
+                teacherName,
+                updatedAt: now
+              });
+            });
+            await schBatch.commit();
+          }
+        }
+      } catch (schSyncErr) {
+        console.warn("Could not sync scenario_schedules during teacher update:", schSyncErr);
       }
     }
 
@@ -634,19 +916,32 @@ export const scenarioService = {
       try {
         const qSchedules = query(
           collection(db, SCENARIO_SCHEDULES_COL),
-          where("scenarioId", "==", item.scenarioId),
-          where("subjectId", "==", item.subjectId)
+          where("scenarioId", "==", item.scenarioId)
         );
         const schSnaps = await getDocs(qSchedules);
         if (!schSnaps.empty) {
-          const schBatch = writeBatch(db);
+          const renameSlots: any[] = [];
           schSnaps.forEach((d) => {
-            schBatch.update(d.ref, {
-              subjectName: payload.subjectName,
-              updatedAt: now
-            });
+            const schData = d.data() as ScenarioSchedule;
+            const isMatch = (schData.subjectId && (schData.subjectId === item.subjectId || schData.subjectId === item.originalCurriculumId)) ||
+              (Boolean(schData.subjectName && oldData?.subjectName) &&
+                schData.subjectName.trim().toLowerCase() === oldData.subjectName.trim().toLowerCase());
+            if (isMatch) {
+              renameSlots.push(d.ref);
+            }
           });
-          await schBatch.commit();
+
+          for (let i = 0; i < renameSlots.length; i += 400) {
+            const schBatch = writeBatch(db);
+            const chunk = renameSlots.slice(i, i + 400);
+            chunk.forEach((ref) => {
+              schBatch.update(ref, {
+                subjectName: payload.subjectName,
+                updatedAt: now
+              });
+            });
+            await schBatch.commit();
+          }
         }
       } catch (e) {
         console.warn("Could not sync scenario_schedules during subject rename:", e);
@@ -807,6 +1102,33 @@ export const scenarioService = {
 
     await updateDoc(curRef, updatePayload);
 
+    // Synchronize scenario_schedules slots for this subject in the same scenario per grade
+    try {
+      const qSchedules = query(
+        collection(db, SCENARIO_SCHEDULES_COL),
+        where("scenarioId", "==", params.scenarioId),
+        where("subjectId", "==", curData.subjectId)
+      );
+      const schSnaps = await getDocs(qSchedules);
+      if (!schSnaps.empty) {
+        const schBatch = writeBatch(db);
+        const mergedCur = { ...curData, ...updatePayload };
+        schSnaps.forEach((d) => {
+          const schData = d.data() as ScenarioSchedule;
+          const slotGrade = schData.gradeLevel || toValidGradeLevel(schData.className);
+          const resolved = getScenarioCurriculumTeacherForClass(mergedCur, slotGrade);
+          schBatch.update(d.ref, {
+            teacherId: resolved.teacherId,
+            teacherName: resolved.teacherName,
+            updatedAt: now
+          });
+        });
+        await schBatch.commit();
+      }
+    } catch (schSyncErr) {
+      console.warn("Could not sync scenario_schedules during updateScenarioCurriculumTeacher:", schSyncErr);
+    }
+
     // Audit log
     const callerUid = auth?.currentUser?.uid || params.user?.uid || "system";
     const callerName = auth?.currentUser?.displayName || params.user?.displayName || "Pengguna";
@@ -815,7 +1137,9 @@ export const scenarioService = {
       id: logId,
       scenarioId: params.scenarioId,
       action: "UPDATE_CURRICULUM_TEACHER",
-      description: `Mengubah guru pengampu untuk "${curData.subjectName}" menjadi "${params.teacherName || 'Belum Ditugaskan'}" pada rancangan.`,
+      description: params.useDifferentTeachers
+        ? `Mengubah penugasan guru per jenjang untuk "${curData.subjectName}" (VII: ${params.teacherName_vii || '-'}, VIII: ${params.teacherName_viii || '-'}, IX: ${params.teacherName_ix || '-'}) pada rancangan.`
+        : `Mengubah guru pengampu untuk "${curData.subjectName}" menjadi "${params.teacherName || 'Belum Ditugaskan'}" pada rancangan.`,
       changedBy: callerUid,
       changedByName: callerName,
       changedAt: now
@@ -823,6 +1147,448 @@ export const scenarioService = {
 
     await this.checkAndResetApprovalIfModified(params.scenarioId, params.user, `perubahan guru pengampu "${curData.subjectName}"`);
     await this.refreshScenarioSummary(params.scenarioId, params.user);
+  },
+
+  /**
+   * Preview differences between operational source assignments and current shadow curriculum/schedules,
+   * without writing or modifying any data.
+   */
+  async previewRealignScenarioTeachers(scenarioId: string): Promise<{
+    scenarioName: string;
+    differences: {
+      curriculumId: string;
+      subjectId: string;
+      subjectName: string;
+      currentVii: string;
+      sourceVii: string;
+      currentViii: string;
+      sourceViii: string;
+      currentIx: string;
+      sourceIx: string;
+      hasDifference: boolean;
+    }[];
+    schedulesAffectedCount: number;
+  }> {
+    const scenario = await this.getScenarioById(scenarioId);
+    if (!scenario) throw new Error("Rancangan tidak ditemukan.");
+
+    const [scenarioCurriculums, scenarioSchedules, opCurriculums, opSchedules, opClasses, opAssignments] =
+      await Promise.all([
+        this.getScenarioCurriculums(scenarioId),
+        this.getScenarioSchedules(scenarioId),
+        curriculumMatrixService.getCurriculumMatrix().catch(() => [] as CurriculumMatrix[]),
+        scheduleService.getSchedules(scenario.academicYearId, scenario.semesterId).catch(() => [] as Schedule[]),
+        classService.getClasses().catch(() => [] as Class[]),
+        teacherAssignmentService.getTeacherAssignmentsByPeriod(scenario.academicYearId, scenario.semesterId).catch(() => [] as TeacherAssignment[])
+      ]);
+
+    const differences: any[] = [];
+    let schedulesAffectedCount = 0;
+
+    for (const sc of scenarioCurriculums) {
+      if (sc.isCustomSubject) continue;
+      const cm = opCurriculums.find((c) => c.subjectId === sc.subjectId || c.id === sc.originalCurriculumId);
+      if (!cm) continue;
+
+      const resolveTeacherForGrade = (targetGrade: "VII" | "VIII" | "IX") => {
+        const gradeClasses = opClasses.filter(
+          (c) => toValidGradeLevel(c.gradeLevel || c.name) === targetGrade
+        );
+
+        if (opAssignments.length > 0 && gradeClasses.length > 0) {
+          for (const cls of gradeClasses) {
+            const classId = cls.id || cls.classId;
+            const matchedAssignment = opAssignments.find(
+              (a) =>
+                a.subjectId === cm.subjectId &&
+                isClassMatch(a.classId, classId, opClasses) &&
+                a.isActive !== false &&
+                a.teacherId &&
+                a.teacherId.trim() !== "" &&
+                a.teacherName !== "Belum Ditentukan"
+            );
+            if (matchedAssignment) {
+              return {
+                id: matchedAssignment.teacherId.trim(),
+                name: matchedAssignment.teacherName ? matchedAssignment.teacherName.trim() : "Guru Pengampu"
+              };
+            }
+          }
+        }
+
+        if (opSchedules.length > 0 && gradeClasses.length > 0) {
+          for (const cls of gradeClasses) {
+            const classId = cls.id || cls.classId;
+            const matchedSchedule = opSchedules.find(
+              (s) =>
+                s.subjectId === cm.subjectId &&
+                isClassMatch(s.classId, classId, opClasses) &&
+                s.teacherId &&
+                s.teacherId.trim() !== "" &&
+                s.teacherName !== "Belum Ditentukan"
+            );
+            if (matchedSchedule) {
+              return {
+                id: matchedSchedule.teacherId.trim(),
+                name: matchedSchedule.teacherName ? matchedSchedule.teacherName.trim() : "Guru Pengampu"
+              };
+            }
+          }
+        }
+
+        if (targetGrade === "VII" && cm.teacherId_vii?.trim()) return { id: cm.teacherId_vii.trim(), name: cm.teacherName_vii?.trim() || "Guru Pengampu" };
+        if (targetGrade === "VIII" && cm.teacherId_viii?.trim()) return { id: cm.teacherId_viii.trim(), name: cm.teacherName_viii?.trim() || "Guru Pengampu" };
+        if (targetGrade === "IX" && cm.teacherId_ix?.trim()) return { id: cm.teacherId_ix.trim(), name: cm.teacherName_ix?.trim() || "Guru Pengampu" };
+
+        if (cm.teacherId?.trim()) return { id: cm.teacherId.trim(), name: cm.teacherName?.trim() || "Guru Pengampu" };
+        return { id: "", name: "" };
+      };
+
+      const srcVii = resolveTeacherForGrade("VII");
+      const srcViii = resolveTeacherForGrade("VIII");
+      const srcIx = resolveTeacherForGrade("IX");
+
+      const currViiName = sc.teacherName_vii || sc.teacherName || "-";
+      const currViiiName = sc.teacherName_viii || sc.teacherName || "-";
+      const currIxName = sc.teacherName_ix || sc.teacherName || "-";
+
+      const diffVii = (sc.jp_vii || 0) > 0 && srcVii.id && srcVii.id !== (sc.teacherId_vii || sc.teacherId);
+      const diffViii = (sc.jp_viii || 0) > 0 && srcViii.id && srcViii.id !== (sc.teacherId_viii || sc.teacherId);
+      const diffIx = (sc.jp_ix || 0) > 0 && srcIx.id && srcIx.id !== (sc.teacherId_ix || sc.teacherId);
+
+      const hasDiff = diffVii || diffViii || diffIx;
+      if (hasDiff) {
+        differences.push({
+          curriculumId: sc.id,
+          subjectId: sc.subjectId,
+          subjectName: sc.subjectName,
+          currentVii: currViiName,
+          sourceVii: srcVii.name || "-",
+          currentViii: currViiiName,
+          sourceViii: srcViii.name || "-",
+          currentIx: currIxName,
+          sourceIx: srcIx.name || "-",
+          hasDifference: true
+        });
+
+        // Count affected schedules
+        const affected = scenarioSchedules.filter((s) => s.subjectId === sc.subjectId);
+        schedulesAffectedCount += affected.length;
+      }
+    }
+
+    return {
+      scenarioName: scenario.name,
+      differences,
+      schedulesAffectedCount
+    };
+  },
+
+  /**
+   * Non-destructive targeted realignment of shadow curriculum teachers and shadow schedules
+   * from operational source assignments. Only updates teacher fields of shadow items.
+   */
+  async realignScenarioTeachersFromOperational(params: {
+    scenarioId: string;
+    user: { uid: string; displayName?: string };
+  }): Promise<{ updatedSubjectsCount: number; updatedSchedulesCount: number }> {
+    const scenario = await this.getScenarioById(params.scenarioId);
+    if (!scenario) throw new Error("Rancangan tidak ditemukan.");
+
+    const now = new Date().toISOString();
+    const [scenarioCurriculums, scenarioSchedules, opCurriculums, opSchedules, opClasses, opAssignmentsPeriod, allAssignments] =
+      await Promise.all([
+        this.getScenarioCurriculums(params.scenarioId),
+        this.getScenarioSchedules(params.scenarioId),
+        curriculumMatrixService.getCurriculumMatrix().catch(() => [] as CurriculumMatrix[]),
+        scheduleService.getSchedules(scenario.academicYearId, scenario.semesterId).catch(() => [] as Schedule[]),
+        classService.getClasses().catch(() => [] as Class[]),
+        teacherAssignmentService.getTeacherAssignmentsByPeriod(scenario.academicYearId, scenario.semesterId).catch(() => [] as TeacherAssignment[]),
+        teacherAssignmentService.getAllTeacherAssignments().catch(() => [] as TeacherAssignment[])
+      ]);
+
+    const opAssignments = opAssignmentsPeriod.length > 0 ? opAssignmentsPeriod : allAssignments;
+    const curBatch = writeBatch(db);
+    let updatedSubjectsCount = 0;
+    const updatedCurriculumMap = new Map<string, ScenarioCurriculumMatrix>();
+
+    for (const sc of scenarioCurriculums) {
+      if (sc.isCustomSubject) continue;
+      const cm = opCurriculums.find((c) =>
+        c.subjectId === sc.subjectId ||
+        c.id === sc.originalCurriculumId ||
+        (Boolean(c.subjectName && sc.subjectName) && c.subjectName.trim().toLowerCase() === sc.subjectName.trim().toLowerCase())
+      );
+      if (!cm) continue;
+
+      const resolveTeacherForGrade = (targetGrade: "VII" | "VIII" | "IX") => {
+        const gradeClasses = opClasses.filter(
+          (c) => toValidGradeLevel(c.gradeLevel || c.name) === targetGrade
+        );
+
+        // Priority 1: Check active assignments in teacher_assignments for this grade
+        if (opAssignments.length > 0) {
+          for (const a of opAssignments) {
+            if (a.isActive === false || !a.teacherId || a.teacherId.trim() === "" || a.teacherName === "Belum Ditentukan") {
+              continue;
+            }
+            const isSubMatch = (a.subjectId && (a.subjectId === cm.subjectId || a.subjectId === cm.id)) ||
+              (Boolean(a.subjectName && cm.subjectName) && a.subjectName.trim().toLowerCase() === cm.subjectName.trim().toLowerCase());
+            if (!isSubMatch) continue;
+
+            const isGrdMatch = (a.gradeLevel && toValidGradeLevel(a.gradeLevel) === targetGrade) ||
+              (a.className && toValidGradeLevel(a.className) === targetGrade) ||
+              (a.classId && gradeClasses.some((c) => isClassMatch(a.classId, c.id || c.classId, opClasses)));
+            if (isGrdMatch) {
+              return {
+                id: a.teacherId.trim(),
+                name: a.teacherName ? a.teacherName.trim() : "Guru Pengampu"
+              };
+            }
+          }
+        }
+
+        // Priority 1B: Fallback to allAssignments if opAssignments didn't yield a match
+        if (allAssignments.length > 0 && allAssignments !== opAssignments) {
+          for (const a of allAssignments) {
+            if (a.isActive === false || !a.teacherId || a.teacherId.trim() === "" || a.teacherName === "Belum Ditentukan") {
+              continue;
+            }
+            const isSubMatch = (a.subjectId && (a.subjectId === cm.subjectId || a.subjectId === cm.id)) ||
+              (Boolean(a.subjectName && cm.subjectName) && a.subjectName.trim().toLowerCase() === cm.subjectName.trim().toLowerCase());
+            if (!isSubMatch) continue;
+
+            const isGrdMatch = (a.gradeLevel && toValidGradeLevel(a.gradeLevel) === targetGrade) ||
+              (a.className && toValidGradeLevel(a.className) === targetGrade) ||
+              (a.classId && gradeClasses.some((c) => isClassMatch(a.classId, c.id || c.classId, opClasses)));
+            if (isGrdMatch) {
+              return {
+                id: a.teacherId.trim(),
+                name: a.teacherName ? a.teacherName.trim() : "Guru Pengampu"
+              };
+            }
+          }
+        }
+
+        // Priority 2: Check operational live schedules for this grade
+        if (opSchedules.length > 0) {
+          for (const s of opSchedules) {
+            if (!s.teacherId || s.teacherId.trim() === "" || s.teacherName === "Belum Ditentukan") {
+              continue;
+            }
+            const isSubMatch = (s.subjectId && (s.subjectId === cm.subjectId || s.subjectId === cm.id)) ||
+              (Boolean(s.subjectName && cm.subjectName) && s.subjectName.trim().toLowerCase() === cm.subjectName.trim().toLowerCase());
+            if (!isSubMatch) continue;
+
+            const isGrdMatch = toValidGradeLevel(s.gradeLevel || s.className) === targetGrade ||
+              (s.classId && gradeClasses.some((c) => isClassMatch(s.classId, c.id || c.classId, opClasses)));
+            if (isGrdMatch) {
+              return {
+                id: s.teacherId.trim(),
+                name: s.teacherName ? s.teacherName.trim() : "Guru Pengampu"
+              };
+            }
+          }
+        }
+
+        // Priority 3: Grade-specific fields from curriculum_matrix
+        if (targetGrade === "VII" && cm.teacherId_vii?.trim()) return { id: cm.teacherId_vii.trim(), name: cm.teacherName_vii?.trim() || "Guru Pengampu" };
+        if (targetGrade === "VIII" && cm.teacherId_viii?.trim()) return { id: cm.teacherId_viii.trim(), name: cm.teacherName_viii?.trim() || "Guru Pengampu" };
+        if (targetGrade === "IX" && cm.teacherId_ix?.trim()) return { id: cm.teacherId_ix.trim(), name: cm.teacherName_ix?.trim() || "Guru Pengampu" };
+
+        // Priority 4: Fallback to global curriculum matrix teacher ONLY IF not using different teachers
+        if (!cm.useDifferentTeachers && cm.teacherId?.trim()) {
+          return { id: cm.teacherId.trim(), name: cm.teacherName?.trim() || "Guru Pengampu" };
+        }
+        return { id: "", name: "" };
+      };
+
+      const tchVii = resolveTeacherForGrade("VII");
+      const tchViii = resolveTeacherForGrade("VIII");
+      const tchIx = resolveTeacherForGrade("IX");
+
+      const hasDistinctTeachers = Boolean(
+        (tchVii.id && tchViii.id && tchVii.id !== tchViii.id) ||
+        (tchVii.id && tchIx.id && tchVii.id !== tchIx.id) ||
+        (tchViii.id && tchIx.id && tchViii.id !== tchIx.id)
+      );
+      const useDifferentTeachers = Boolean(cm.useDifferentTeachers) || hasDistinctTeachers;
+
+      const primaryTeacherId = tchVii.id || tchViii.id || tchIx.id || cm.teacherId || "";
+      const primaryTeacherName = tchVii.name || tchViii.name || tchIx.name || cm.teacherName || "";
+
+      const updatedSc: ScenarioCurriculumMatrix = {
+        ...sc,
+        teacherId: primaryTeacherId,
+        teacherName: primaryTeacherName,
+        teacherId_vii: tchVii.id || (useDifferentTeachers ? "" : primaryTeacherId),
+        teacherName_vii: tchVii.name || (useDifferentTeachers ? "" : primaryTeacherName),
+        teacherId_viii: tchViii.id || (useDifferentTeachers ? "" : primaryTeacherId),
+        teacherName_viii: tchViii.name || (useDifferentTeachers ? "" : primaryTeacherName),
+        teacherId_ix: tchIx.id || (useDifferentTeachers ? "" : primaryTeacherId),
+        teacherName_ix: tchIx.name || (useDifferentTeachers ? "" : primaryTeacherName),
+        useDifferentTeachers,
+        updatedAt: now
+      };
+
+      updatedCurriculumMap.set(sc.subjectId, updatedSc);
+      curBatch.update(doc(db, SCENARIO_CURRICULUM_COL, sc.id), cleanUndefinedFields({
+        teacherId: primaryTeacherId,
+        teacherName: primaryTeacherName,
+        teacherId_vii: tchVii.id || (useDifferentTeachers ? "" : primaryTeacherId),
+        teacherName_vii: tchVii.name || (useDifferentTeachers ? "" : primaryTeacherName),
+        teacherId_viii: tchViii.id || (useDifferentTeachers ? "" : primaryTeacherId),
+        teacherName_viii: tchViii.name || (useDifferentTeachers ? "" : primaryTeacherName),
+        teacherId_ix: tchIx.id || (useDifferentTeachers ? "" : primaryTeacherId),
+        teacherName_ix: tchIx.name || (useDifferentTeachers ? "" : primaryTeacherName),
+        useDifferentTeachers,
+        updatedAt: now
+      }));
+      updatedSubjectsCount++;
+    }
+
+    if (updatedSubjectsCount > 0) {
+      await curBatch.commit();
+    }
+
+    // Now update scenario schedules strictly to match the realigned curriculum
+    let updatedSchedulesCount = 0;
+    const schBatch = writeBatch(db);
+
+    for (const sch of scenarioSchedules) {
+      if (!sch.subjectId && (!sch.subjectName || sch.subjectName === "Kosong")) continue;
+      const cur = updatedCurriculumMap.get(sch.subjectId) ||
+        Array.from(updatedCurriculumMap.values()).find((c) =>
+          (sch.subjectName && c.subjectName && c.subjectName.trim().toLowerCase() === sch.subjectName.trim().toLowerCase()) ||
+          c.originalCurriculumId === sch.subjectId
+        );
+      if (!cur) continue;
+
+      const matchedCls = opClasses.find((c) => isClassMatch(c.id, sch.classId, opClasses));
+      const grade = toValidGradeLevel(sch.gradeLevel || matchedCls?.gradeLevel || matchedCls?.name || sch.className);
+      const res = getScenarioCurriculumTeacherForClass(cur, grade);
+
+      if (res.teacherId && (res.teacherId !== sch.teacherId || res.teacherName !== sch.teacherName)) {
+        schBatch.update(doc(db, SCENARIO_SCHEDULES_COL, sch.id), {
+          teacherId: res.teacherId,
+          teacherName: res.teacherName,
+          updatedAt: now
+        });
+        updatedSchedulesCount++;
+      }
+    }
+
+    if (updatedSchedulesCount > 0) {
+      await schBatch.commit();
+    }
+
+    const callerUid = auth?.currentUser?.uid || params.user?.uid || "system";
+    const callerName = auth?.currentUser?.displayName || params.user?.displayName || "Pengguna";
+    const logId = `${params.scenarioId}_log_realign_${Date.now()}`;
+    await setDoc(doc(db, SCENARIO_LOGS_COL, logId), cleanUndefinedFields({
+      id: logId,
+      scenarioId: params.scenarioId,
+      action: "UPDATE_CURRICULUM_TEACHER",
+      description: `Menyelaraskan ulang penugasan guru per jenjang (${updatedSubjectsCount} mapel, ${updatedSchedulesCount} slot jadwal) dari snapshot operasional.`,
+      changedBy: callerUid,
+      changedByName: callerName,
+      changedAt: now
+    }));
+
+    await this.refreshScenarioSummary(params.scenarioId, params.user);
+    return { updatedSubjectsCount, updatedSchedulesCount };
+  },
+
+  /**
+   * Strictly synchronizes ALL scenario schedule slots to match their corresponding
+   * scenario curriculum matrix teacher assignments for each class's grade level.
+   * Ensures that if Aqidah Grade VII has Guru A, and Grade VIII has Guru B:
+   * all Grade VII schedule slots for Aqidah have Guru A, and all Grade VIII slots have Guru B.
+   */
+  async syncScenarioCurriculumToSchedules(params: {
+    scenarioId: string;
+    user: { uid: string; displayName?: string };
+  }): Promise<{ syncedSlotsCount: number }> {
+    const scenario = await this.getScenarioById(params.scenarioId);
+    if (!scenario) throw new Error("Rancangan tidak ditemukan.");
+
+    const now = new Date().toISOString();
+    const [curriculums, schedules, classes] = await Promise.all([
+      this.getScenarioCurriculums(params.scenarioId),
+      this.getScenarioSchedules(params.scenarioId),
+      classService.getClasses().catch(() => [] as Class[])
+    ]);
+
+    let syncedSlotsCount = 0;
+    const BATCH_SIZE = 400;
+
+    // Build lookup map for curriculums by subjectId, originalCurriculumId, and subjectName
+    const curMap = new Map<string, ScenarioCurriculumMatrix>();
+    const curNameMap = new Map<string, ScenarioCurriculumMatrix>();
+    curriculums.forEach((c) => {
+      if (c.subjectId) curMap.set(c.subjectId, c);
+      if (c.originalCurriculumId) curMap.set(c.originalCurriculumId, c);
+      if (c.subjectName) curNameMap.set(c.subjectName.trim().toLowerCase(), c);
+    });
+
+    const slotsToUpdate: { id: string; teacherId: string; teacherName: string }[] = [];
+
+    for (const sch of schedules) {
+      if (!sch.subjectId && (!sch.subjectName || sch.subjectName === "Kosong")) continue;
+
+      const cur = curMap.get(sch.subjectId) || 
+        (sch.subjectName ? curNameMap.get(sch.subjectName.trim().toLowerCase()) : undefined);
+
+      if (!cur) continue;
+
+      const matchedCls = classes.find((c) => isClassMatch(c.id, sch.classId, classes));
+      const grade = toValidGradeLevel(sch.gradeLevel || matchedCls?.gradeLevel || matchedCls?.name || sch.className);
+      const res = getScenarioCurriculumTeacherForClass(cur, grade);
+
+      if (res.teacherId && (res.teacherId !== sch.teacherId || res.teacherName !== sch.teacherName)) {
+        slotsToUpdate.push({
+          id: sch.id,
+          teacherId: res.teacherId,
+          teacherName: res.teacherName
+        });
+      }
+    }
+
+    for (let i = 0; i < slotsToUpdate.length; i += BATCH_SIZE) {
+      const batch = writeBatch(db);
+      const chunk = slotsToUpdate.slice(i, i + BATCH_SIZE);
+      chunk.forEach((s) => {
+        batch.update(doc(db, SCENARIO_SCHEDULES_COL, s.id), {
+          teacherId: s.teacherId,
+          teacherName: s.teacherName,
+          updatedAt: now
+        });
+      });
+      await batch.commit();
+      syncedSlotsCount += chunk.length;
+    }
+
+    if (syncedSlotsCount > 0) {
+      const callerUid = auth?.currentUser?.uid || params.user?.uid || "system";
+      const callerName = auth?.currentUser?.displayName || params.user?.displayName || "Pengguna";
+      const logId = `${params.scenarioId}_log_sync_${Date.now()}`;
+      try {
+        await setDoc(doc(db, SCENARIO_LOGS_COL, logId), cleanUndefinedFields({
+          id: logId,
+          scenarioId: params.scenarioId,
+          action: "UPDATE_SCHEDULE",
+          description: `Sinkronisasi guru dari matriks kurikulum rancangan ke seluruh jadwal bayangan (${syncedSlotsCount} slot disesuaikan).`,
+          changedBy: callerUid,
+          changedByName: callerName,
+          changedAt: now
+        }));
+      } catch (e) {
+        console.warn("Could not write audit log for sync:", e);
+      }
+      await this.refreshScenarioSummary(params.scenarioId, params.user);
+    }
+
+    return { syncedSlotsCount };
   },
 
   async addCustomSubjectToScenario(params: {
