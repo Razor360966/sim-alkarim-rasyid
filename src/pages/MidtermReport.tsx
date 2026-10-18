@@ -56,7 +56,7 @@ export default function MidtermReport() {
   const [selectedAcademicYearId, setSelectedAcademicYearId] = useState<string>("");
   const [selectedSemesterId, setSelectedSemesterId] = useState<string>("");
   const [selectedClassId, setSelectedClassId] = useState<string>("");
-  const [reportType, setReportType] = useState<MidtermReportType>("UMUM");
+  const [reportType, setReportType] = useState<MidtermReportType>("TERPADU");
 
   // Data & Execution State
   const [reportContext, setReportContext] = useState<MidtermReportContext | null>(null);
@@ -341,10 +341,16 @@ export default function MidtermReport() {
               <span>RAPOR TENGAH SEMESTER (RAPOR BAYANGAN)</span>
             </div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-zinc-50">
-              {reportType === "UMUM" ? "SMP ALKARIM RASYID" : "PONDOK PESANTREN ALKARIM RASYID"}
+              {reportType === "TERPADU"
+                ? "SMP & PONDOK PESANTREN ALKARIM RASYID"
+                : reportType === "UMUM"
+                ? "SMP ALKARIM RASYID"
+                : "PONDOK PESANTREN ALKARIM RASYID"}
             </h1>
             <p className="text-sm text-slate-500 dark:text-zinc-400">
-              {reportType === "UMUM"
+              {reportType === "TERPADU"
+                ? "Rekapitulasi Nilai Asesmen Tengah Semester (UTS/STS) Terpadu: Mata Pelajaran Umum & Kepesantrenan."
+                : reportType === "UMUM"
                 ? "Rekapitulasi Nilai Asesmen Tengah Semester (UTS/STS) Mata Pelajaran Umum."
                 : "Rekapitulasi Nilai Ujian Tengah Semester (UTS) Mata Pelajaran Diniyyah & Kepesantrenan."}
             </p>
@@ -499,7 +505,18 @@ export default function MidtermReport() {
             <label className="text-xs font-semibold text-slate-600 dark:text-zinc-400">
               Jenis Rapor
             </label>
-            <div className="grid grid-cols-2 p-1 bg-slate-100 dark:bg-zinc-800 rounded-xl">
+            <div className="grid grid-cols-3 p-1 bg-slate-100 dark:bg-zinc-800 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setReportType("TERPADU")}
+                className={`py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  reportType === "TERPADU"
+                    ? "bg-white dark:bg-zinc-900 text-emerald-700 dark:text-emerald-300 shadow-sm"
+                    : "text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200"
+                }`}
+              >
+                Rapor Terpadu
+              </button>
               <button
                 type="button"
                 onClick={() => setReportType("UMUM")}
@@ -523,6 +540,7 @@ export default function MidtermReport() {
                 Rapor Pondok
               </button>
             </div>
+
           </div>
         </div>
       </div>
@@ -593,7 +611,12 @@ export default function MidtermReport() {
           <div className="flex items-center gap-2">
             <BookOpen className="w-4 h-4 text-emerald-600" />
             <h2 className="text-sm font-bold text-slate-800 dark:text-zinc-100">
-              Daftar Nilai UTS {reportType === "UMUM" ? "Rapor Umum" : "Rapor Pondok"}
+              Daftar Nilai UTS{" "}
+              {reportType === "TERPADU"
+                ? "Rapor Terpadu (Umum & Diniyah)"
+                : reportType === "UMUM"
+                ? "Rapor Umum"
+                : "Rapor Pondok"}
             </h2>
             {reportContext && (
               <span className="text-xs text-slate-400 dark:text-zinc-500">
@@ -707,6 +730,17 @@ export default function MidtermReport() {
                           {subj.subjectName || subj.subjectCode || "-"}
                         </span>
                         <div className="flex items-center gap-1 text-[10px] text-slate-400 font-normal">
+                          {reportType === "TERPADU" && (
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                subj.subjectType === "UMUM"
+                                  ? "bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300"
+                                  : "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+                              }`}
+                            >
+                              {subj.subjectType === "UMUM" ? "Umum" : "Diniyah"}
+                            </span>
+                          )}
                           {subj.group && <span>Kel. {subj.group}</span>}
                           {subj.kkm !== undefined && subj.kkm > 0 && <span>• KKM {subj.kkm}</span>}
                         </div>
@@ -715,6 +749,7 @@ export default function MidtermReport() {
                             Tanpa UTS
                           </span>
                         )}
+
                       </div>
                     </th>
                   ))}
@@ -1043,10 +1078,21 @@ function MidtermPrintModal({
               <div className="inline-flex rounded-lg p-0.5 bg-slate-200/80 dark:bg-zinc-800">
                 <button
                   type="button"
+                  onClick={() => onReportTypeChange("TERPADU")}
+                  className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-all ${
+                    reportType === "TERPADU"
+                      ? "bg-emerald-600 text-white shadow-sm"
+                      : "text-slate-600 dark:text-zinc-400 hover:text-slate-900"
+                  }`}
+                >
+                  Rapor Terpadu
+                </button>
+                <button
+                  type="button"
                   onClick={() => onReportTypeChange("UMUM")}
                   className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-all ${
                     reportType === "UMUM"
-                      ? "bg-emerald-600 text-white shadow-sm"
+                      ? "bg-blue-600 text-white shadow-sm"
                       : "text-slate-600 dark:text-zinc-400 hover:text-slate-900"
                   }`}
                 >
@@ -1064,6 +1110,7 @@ function MidtermPrintModal({
                   Rapor Pondok
                 </button>
               </div>
+
 
               {/* Ukuran Kertas */}
               <div className="inline-flex rounded-lg p-0.5 bg-slate-200/80 dark:bg-zinc-800">

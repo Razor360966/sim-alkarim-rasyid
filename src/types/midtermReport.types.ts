@@ -7,7 +7,7 @@
  * RAPOR-1: Read-Only Adapter untuk Nilai UTS (Tanpa Rekalkulasi)
  */
 
-export type MidtermReportType = "UMUM" | "PONDOK";
+export type MidtermReportType = "UMUM" | "PONDOK" | "TERPADU";
 
 export type MidtermScoreStatus =
   | "TERISI"
@@ -53,6 +53,8 @@ export interface MidtermReportContext {
   homeroomTeacherName?: string;
 
   subjects: MidtermReportSubject[];
+  umumSubjects?: MidtermReportSubject[];
+  pondokSubjects?: MidtermReportSubject[];
   students: MidtermReportStudent[];
 
   generatedAt: string;

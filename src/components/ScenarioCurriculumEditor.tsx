@@ -14,7 +14,9 @@ import {
   HelpCircle,
   Search,
   Edit2,
-  UserCheck
+  UserCheck,
+  RefreshCw,
+  RotateCcw
 } from "lucide-react";
 import { ScenarioCurriculumMatrix, ScenarioSubject, Teacher } from "../types";
 import { ScenarioTeacherSelect, formatTeacherDisplayName } from "./ScenarioTeacherSelect";
@@ -30,6 +32,9 @@ interface Props {
   onToggleActive: (id: string, isActive: boolean) => Promise<void>;
   onAddCustomSubject?: (data: any) => Promise<void>;
   onDeleteZeroJpItems?: (itemIds: string[]) => Promise<void>;
+  onSyncTeachersToSchedules?: () => void | Promise<void>;
+  onSyncCurriculumToSchedules?: () => void | Promise<void>;
+  onRealignFromOperational?: () => Promise<void>;
   isReadOnly?: boolean;
 }
 
@@ -44,8 +49,13 @@ export const ScenarioCurriculumEditor: React.FC<Props> = ({
   onToggleActive,
   onAddCustomSubject,
   onDeleteZeroJpItems,
+  onSyncTeachersToSchedules,
+  onSyncCurriculumToSchedules,
+  onRealignFromOperational,
   isReadOnly = false
 }) => {
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [isRealigning, setIsRealigning] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
   const [showZeroJpModal, setShowZeroJpModal] = useState(false);
@@ -290,6 +300,30 @@ export const ScenarioCurriculumEditor: React.FC<Props> = ({
       setSelectedZeroJpIds([]);
     } finally {
       setIsDeletingZeroJp(false);
+    }
+  };
+
+  const handleSyncTeachers = async () => {
+    const fn = onSyncCurriculumToSchedules || onSyncTeachersToSchedules;
+    if (!fn || isReadOnly || isSyncing) return;
+    setIsSyncing(true);
+    try {
+      await fn();
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleRealignFromOperational = async () => {
+    if (!onRealignFromOperational || isReadOnly || isRealigning) return;
+    if (!window.confirm("Sesuaikan penugasan guru di rancangan ini mengikuti data operasional asli? Penugasan guru yang sudah diubah secara manual di rancangan ini akan diperbarui.")) {
+      return;
+    }
+    setIsRealigning(true);
+    try {
+      await onRealignFromOperational();
+    } finally {
+      setIsRealigning(false);
     }
   };
 
@@ -542,6 +576,34 @@ export const ScenarioCurriculumEditor: React.FC<Props> = ({
 
         {/* Global Action Buttons */}
         <div className="flex items-center gap-2 w-full md:w-auto justify-end flex-wrap">
+          {/* Realign Teachers from Operational Source */}
+          {!isReadOnly && onRealignFromOperational && (
+            <button
+              type="button"
+              onClick={handleRealignFromOperational}
+              disabled={isRealigning}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/30 dark:text-amber-400 dark:hover:bg-amber-950/50 rounded-xl transition-colors border border-amber-200 dark:border-amber-900"
+              title="Perbarui penugasan guru rancangan ini mengikuti data operasional asli"
+            >
+              <RotateCcw className={`w-3.5 h-3.5 ${isRealigning ? "animate-spin" : ""}`} />
+              <span>Sesuaikan Guru dari Asli</span>
+            </button>
+          )}
+
+          {/* Sync Structure (JP & Teachers) from Shadow Curriculum to Shadow Schedule */}
+          {!isReadOnly && (onSyncCurriculumToSchedules || onSyncTeachersToSchedules) && (
+            <button
+              type="button"
+              onClick={handleSyncTeachers}
+              disabled={isSyncing}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/30 dark:text-blue-400 dark:hover:bg-blue-950/50 rounded-xl transition-colors border border-blue-200 dark:border-blue-900"
+              title="Sinkronkan alokasi JP dan penugasan guru dari Struktur Kurikulum Bayangan ke seluruh slot Jadwal Bayangan (dengan Pratinjau)"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin" : ""}`} />
+              <span>Sinkronkan Struktur ke Jadwal</span>
+            </button>
+          )}
+
           {/* Zero JP Scan & Cleanup Button */}
           {!isReadOnly && (
             <button

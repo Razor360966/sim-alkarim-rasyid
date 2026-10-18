@@ -241,3 +241,40 @@ export interface ScenarioApplyResult {
   appliedAt: string;
   appliedBy: string;
 }
+
+export interface ScenarioSyncAffectedSlot {
+  id: string;
+  day: string;
+  sequence: number;
+  jp: string;
+  isLocked: boolean;
+  actionDescription: string;
+}
+
+export interface ScenarioSyncItemPreview {
+  subjectId: string;
+  subjectName: string;
+  classId: string;
+  className: string;
+  gradeLevel: "VII" | "VIII" | "IX";
+  currentJp: number;
+  targetJp: number;
+  diff: number; // targetJp - currentJp (negatif = berkurang, positif = bertambah)
+  action: "REDUCE" | "INCREASE" | "UNCHANGED";
+  teacherId: string;
+  teacherName: string;
+  affectedSlots: ScenarioSyncAffectedSlot[];
+  warning?: string;
+}
+
+export interface ScenarioSyncPreviewResult {
+  scenarioId: string;
+  totalChanges: number;
+  reducedCount: number;
+  increasedCount: number;
+  teacherUpdateCount: number;
+  unchangedCount: number;
+  items: ScenarioSyncItemPreview[];
+  warnings: string[];
+}
+

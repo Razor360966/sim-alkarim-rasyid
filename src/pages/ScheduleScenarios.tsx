@@ -36,6 +36,7 @@ import {
   ScenarioCurriculumMatrix, 
   ScenarioSchedule, 
   ScenarioApplyResult,
+  ScenarioSyncPreviewResult,
   Class, 
   Teacher, 
   LessonPeriod,
@@ -49,6 +50,7 @@ import { ScenarioScheduleEditor } from "../components/ScenarioScheduleEditor";
 import { ScenarioComparisonView } from "../components/ScenarioComparisonView";
 import { ScenarioPrintModal } from "../components/ScenarioPrintModal";
 import { ScenarioApplyModal } from "../components/ScenarioApplyModal";
+import { ScenarioSyncModal } from "../components/ScenarioSyncModal";
 
 export default function ScheduleScenariosPage() {
   const { user } = useAuth();
@@ -70,6 +72,10 @@ export default function ScheduleScenariosPage() {
   const [showStatusModal, setShowStatusModal] = useState<ScheduleScenario | null>(null);
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [showApplyModal, setShowApplyModal] = useState<ScheduleScenario | null>(null);
+  const [showSyncModal, setShowSyncModal] = useState(false);
+  const [syncPreview, setSyncPreview] = useState<ScenarioSyncPreviewResult | null>(null);
+  const [isLoadingSyncPreview, setIsLoadingSyncPreview] = useState(false);
+  const [isApplyingSync, setIsApplyingSync] = useState(false);
 
   // Forms
   const [createForm, setCreateForm] = useState({
@@ -312,13 +318,77 @@ export default function ScheduleScenariosPage() {
         displayName: user.displayName
       });
       await refetchCurriculums();
+      await refetchSchedules();
       queryClient.invalidateQueries({ queryKey: ["scenario_curriculums", activeScenarioId] });
+      queryClient.invalidateQueries({ queryKey: ["scenario_schedules", activeScenarioId] });
       queryClient.invalidateQueries({ queryKey: ["schedule_scenarios"] });
       queryClient.invalidateQueries({ queryKey: ["scenario", activeScenarioId] });
       showToast("Data mapel dan guru pengampu berhasil disimpan di rancangan", "success");
     } catch (err: any) {
       showToast(parseErrorMessage(err), "error");
       throw err;
+    }
+  };
+
+  const handleOpenSyncModal = async () => {
+    if (!activeScenarioId) return;
+    setIsLoadingSyncPreview(true);
+    try {
+      const preview = await scenarioService.previewScenarioCurriculumSync({
+        scenarioId: activeScenarioId
+      });
+      setSyncPreview(preview);
+      setShowSyncModal(true);
+    } catch (err: any) {
+      showToast(parseErrorMessage(err), "error");
+    } finally {
+      setIsLoadingSyncPreview(false);
+    }
+  };
+
+  const handleApplySync = async () => {
+    if (!user || !activeScenarioId) return;
+    setIsApplyingSync(true);
+    try {
+      const res = await scenarioService.syncScenarioCurriculumToSchedules({
+        scenarioId: activeScenarioId,
+        user: { uid: user.uid, displayName: user.displayName },
+        preview: syncPreview || undefined
+      });
+      await refetchSchedules();
+      await refetchCurriculums();
+      queryClient.invalidateQueries({ queryKey: ["scenario_schedules", activeScenarioId] });
+      queryClient.invalidateQueries({ queryKey: ["scenario_curriculums", activeScenarioId] });
+      queryClient.invalidateQueries({ queryKey: ["schedule_scenarios"] });
+      queryClient.invalidateQueries({ queryKey: ["scenario", activeScenarioId] });
+      setShowSyncModal(false);
+      showToast(
+        `Sinkronisasi berhasil diterapkan: ${res.freedSlotsCount} slot dikosongkan, ${res.addedSlotsCount} slot ditambahkan, ${res.syncedTeachersCount} penugasan guru diselaraskan.`,
+        "success"
+      );
+    } catch (err: any) {
+      showToast(parseErrorMessage(err), "error");
+    } finally {
+      setIsApplyingSync(false);
+    }
+  };
+
+  const handleRealignFromOperational = async () => {
+    if (!user || !activeScenarioId) return;
+    try {
+      const res = await scenarioService.realignScenarioTeachersFromOperational({
+        scenarioId: activeScenarioId,
+        user: { uid: user.uid, displayName: user.displayName }
+      });
+      await refetchCurriculums();
+      await refetchSchedules();
+      queryClient.invalidateQueries({ queryKey: ["scenario_curriculums", activeScenarioId] });
+      queryClient.invalidateQueries({ queryKey: ["scenario_schedules", activeScenarioId] });
+      queryClient.invalidateQueries({ queryKey: ["schedule_scenarios"] });
+      queryClient.invalidateQueries({ queryKey: ["scenario", activeScenarioId] });
+      showToast(`Berhasil menyelaraskan ${res.updatedSubjectsCount} mapel dan ${res.updatedSchedulesCount} slot jadwal dari data asli`, "success");
+    } catch (err: any) {
+      showToast(parseErrorMessage(err), "error");
     }
   };
 
@@ -367,6 +437,43 @@ export default function ScheduleScenariosPage() {
     queryClient.invalidateQueries({ queryKey: ["schedule_scenarios"] });
     showToast("Slot jadwal simulasi dikosongkan", "info");
   };
+
+  const handleMoveOrSwapSlot = async (data: any) => {
+    if (!user || !activeScenarioId) return;
+    try {
+      await scenarioService.moveOrSwapScenarioScheduleSlot({
+        scenarioId: activeScenarioId,
+        ...data,
+        user: {
+          uid: user.uid,
+          displayName: user.displayName
+        }
+      });
+      await refetchSchedules();
+      queryClient.invalidateQueries({ queryKey: ["scenario_schedules", activeScenarioId] });
+      queryClient.invalidateQueries({ queryKey: ["schedule_scenarios"] });
+
+      const srcSubject = data.sourceSlot?.schedule?.subjectName || "Mata Pelajaran";
+      const targetExisting = data.targetSlot?.existingSchedule;
+      const hasTarget = Boolean(
+        targetExisting &&
+        targetExisting.subjectId &&
+        targetExisting.subjectName !== "Kosong" &&
+        targetExisting.subjectName !== "Belum Ditugaskan"
+      );
+
+      if (hasTarget) {
+        showToast(`Berhasil menukar slot ${srcSubject} dengan ${targetExisting.subjectName} di kelas ${data.targetSlot.className}!`, "success");
+      } else {
+        showToast(`Berhasil memindahkan ${srcSubject} ke Kelas ${data.targetSlot.className} pada ${data.targetSlot.day} ${data.targetSlot.jp || `JP ${data.targetSlot.sequence}`}!`, "success");
+      }
+    } catch (err: any) {
+      console.error("Gagal memindahkan slot jadwal bayangan:", err);
+      showToast(parseErrorMessage(err) || "Gagal memindahkan slot jadwal bayangan. Data sebelumnya dipertahankan.", "error");
+      throw err;
+    }
+  };
+
 
   // Filtered Scenarios
   const filteredScenarios = scenarios.filter((sc) => {
@@ -873,6 +980,9 @@ export default function ScheduleScenariosPage() {
               onToggleActive={handleToggleSubjectActive}
               onAddCustomSubject={handleAddCustomSubject}
               onDeleteZeroJpItems={handleDeleteZeroJp}
+              onSyncTeachersToSchedules={handleOpenSyncModal}
+              onSyncCurriculumToSchedules={handleOpenSyncModal}
+              onRealignFromOperational={handleRealignFromOperational}
               isReadOnly={!isCurriculumOrAdmin}
             />
           )}
@@ -891,8 +1001,11 @@ export default function ScheduleScenariosPage() {
               conflicts={activeConflicts}
               onSaveSlot={handleSaveSlot}
               onClearSlot={handleClearSlot}
+              onMoveOrSwapSlot={handleMoveOrSwapSlot}
+              onSyncCurriculumToSchedules={handleOpenSyncModal}
               isReadOnly={!isCurriculumOrAdmin}
             />
+
           )}
 
           {activeTab === "compare" && (
@@ -1249,6 +1362,17 @@ export default function ScheduleScenariosPage() {
             queryClient.invalidateQueries({ queryKey: ["curriculum_matrix"] });
           }}
           user={user ? { uid: user.uid, displayName: user.displayName, role: user.role } : null}
+        />
+      )}
+
+      {/* MODAL 6: SYNC CURRICULUM TO SCHEDULE PREVIEW & CONFIRMATION */}
+      {showSyncModal && syncPreview && (
+        <ScenarioSyncModal
+          preview={syncPreview}
+          isOpen={showSyncModal}
+          onClose={() => setShowSyncModal(false)}
+          onApply={handleApplySync}
+          isApplying={isApplyingSync}
         />
       )}
     </div>

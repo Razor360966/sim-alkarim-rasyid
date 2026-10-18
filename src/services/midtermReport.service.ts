@@ -136,6 +136,8 @@ export function assembleMidtermReportContext(params: {
   reportType: MidtermReportType;
   students: Student[];
   subjects: MidtermReportSubject[];
+  umumSubjects?: MidtermReportSubject[];
+  pondokSubjects?: MidtermReportSubject[];
   assessmentsMap: Map<string, { utsScore?: number | null }>;
   pondokSchemesMap?: Map<string, { hasUts?: boolean }>;
 }): MidtermReportContext {
@@ -150,6 +152,8 @@ export function assembleMidtermReportContext(params: {
     reportType,
     students,
     subjects,
+    umumSubjects,
+    pondokSubjects,
     assessmentsMap,
     pondokSchemesMap
   } = params;
@@ -162,7 +166,7 @@ export function assembleMidtermReportContext(params: {
   const reportStudents: MidtermReportStudent[] = activeStudents.map((st) => {
     const studentScores: MidtermReportScore[] = subjects.map((subj) => {
       const scheme = pondokSchemesMap?.get(subj.subjectId);
-      const isPondokWithoutUts = reportType === "PONDOK" && scheme && scheme.hasUts === false;
+      const isPondokWithoutUts = subj.subjectType === "PONDOK" && scheme && scheme.hasUts === false;
 
       // Look up assessment in Map using composite key: `${subjectId}_${studentId}`
       const mapKey = `${subj.subjectId}_${st.id}`;
@@ -200,6 +204,8 @@ export function assembleMidtermReportContext(params: {
     homeroomTeacherId,
     homeroomTeacherName,
     subjects,
+    umumSubjects,
+    pondokSubjects,
     students: reportStudents,
     generatedAt: new Date().toISOString()
   };
@@ -238,41 +244,53 @@ export const midtermReportService = {
     // 4. Fetch master subjects
     const subjectsCol = collection(db, "subjects");
 
-    // 5. Fetch assessments based on report type
-    const assessmentColName =
-      reportType === "UMUM" ? "e_rapor_assessments" : "e_rapor_pondok_assessments";
-    const assessmentsCol = collection(db, assessmentColName);
-    const assessmentsQ = query(
-      assessmentsCol,
-      where("academicYearId", "==", academicYearId),
-      where("semesterId", "==", semesterId),
-      where("classId", "==", classId)
-    );
+    // 5. Fetch assessments based on report type (for TERPADU, query both)
+    const needUmumAssessments = reportType === "UMUM" || reportType === "TERPADU";
+    const needPondokAssessments = reportType === "PONDOK" || reportType === "TERPADU";
 
-    // Optional pondok schemes query if PONDOK
+    const umumAssessmentsQ = needUmumAssessments
+      ? query(
+          collection(db, "e_rapor_assessments"),
+          where("academicYearId", "==", academicYearId),
+          where("semesterId", "==", semesterId),
+          where("classId", "==", classId)
+        )
+      : null;
+
+    const pondokAssessmentsQ = needPondokAssessments
+      ? query(
+          collection(db, "e_rapor_pondok_assessments"),
+          where("academicYearId", "==", academicYearId),
+          where("semesterId", "==", semesterId),
+          where("classId", "==", classId)
+        )
+      : null;
+
+    // Pondok schemes query if PONDOK or TERPADU
     const pondokSchemesCol = collection(db, "e_rapor_pondok_schemes");
-    const pondokSchemesQ =
-      reportType === "PONDOK"
-        ? query(
-            pondokSchemesCol,
-            where("academicYearId", "==", academicYearId),
-            where("semesterId", "==", semesterId),
-            where("classId", "==", classId)
-          )
-        : null;
+    const pondokSchemesQ = needPondokAssessments
+      ? query(
+          pondokSchemesCol,
+          where("academicYearId", "==", academicYearId),
+          where("semesterId", "==", semesterId),
+          where("classId", "==", classId)
+        )
+      : null;
 
     // Execute queries in parallel
     const [
       studentsSnap,
       schedulesSnap,
       subjectsSnap,
-      assessmentsSnap,
+      umumSnap,
+      pondokSnap,
       pondokSchemesSnap
     ] = await Promise.all([
       getDocs(studentsQ),
       getDocs(schedulesQ),
       getDocs(subjectsCol),
-      getDocs(assessmentsQ),
+      umumAssessmentsQ ? getDocs(umumAssessmentsQ) : Promise.resolve(null),
+      pondokAssessmentsQ ? getDocs(pondokAssessmentsQ) : Promise.resolve(null),
       pondokSchemesQ ? getDocs(pondokSchemesQ) : Promise.resolve(null)
     ]);
 
@@ -308,23 +326,41 @@ export const midtermReportService = {
       });
     }
 
-    // Filter Subjects
-    const subjects = filterMidtermSubjects(
-      scheduleSubjectIds,
-      subjectsMap,
-      reportType,
-      pondokSchemesMap
-    );
+    // Filter Subjects based on reportType
+    let subjects: MidtermReportSubject[] = [];
+    let umumSubjects: MidtermReportSubject[] | undefined = undefined;
+    let pondokSubjects: MidtermReportSubject[] | undefined = undefined;
+
+    if (reportType === "TERPADU") {
+      umumSubjects = filterMidtermSubjects(scheduleSubjectIds, subjectsMap, "UMUM", pondokSchemesMap);
+      pondokSubjects = filterMidtermSubjects(scheduleSubjectIds, subjectsMap, "PONDOK", pondokSchemesMap);
+      subjects = [...umumSubjects, ...pondokSubjects];
+    } else {
+      subjects = filterMidtermSubjects(scheduleSubjectIds, subjectsMap, reportType, pondokSchemesMap);
+      if (reportType === "UMUM") umumSubjects = subjects;
+      if (reportType === "PONDOK") pondokSubjects = subjects;
+    }
 
     // Build Assessments Map keyed by `${subjectId}_${studentId}`
     const assessmentsMap = new Map<string, { utsScore?: number | null }>();
-    assessmentsSnap.forEach((d) => {
-      const data = d.data();
-      if (data.subjectId && data.studentId) {
-        const key = `${data.subjectId}_${data.studentId}`;
-        assessmentsMap.set(key, { utsScore: data.utsScore });
-      }
-    });
+    if (umumSnap) {
+      umumSnap.forEach((d) => {
+        const data = d.data();
+        if (data.subjectId && data.studentId) {
+          const key = `${data.subjectId}_${data.studentId}`;
+          assessmentsMap.set(key, { utsScore: data.utsScore });
+        }
+      });
+    }
+    if (pondokSnap) {
+      pondokSnap.forEach((d) => {
+        const data = d.data();
+        if (data.subjectId && data.studentId) {
+          const key = `${data.subjectId}_${data.studentId}`;
+          assessmentsMap.set(key, { utsScore: data.utsScore });
+        }
+      });
+    }
 
     // Assemble and return final context
     return assembleMidtermReportContext({
@@ -338,6 +374,8 @@ export const midtermReportService = {
       reportType,
       students,
       subjects,
+      umumSubjects,
+      pondokSubjects,
       assessmentsMap,
       pondokSchemesMap
     });
