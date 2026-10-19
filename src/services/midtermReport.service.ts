@@ -417,3 +417,6 @@ export const midtermReportService = {
     return filterMidtermSubjects(scheduleSubjectIds, subjectsMap, reportType);
   }
 };
+
+export { midtermPrintSettingsService } from "./midtermPrintSettings.service";
+

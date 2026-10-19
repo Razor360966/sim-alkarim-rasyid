@@ -4,7 +4,8 @@ import {
   MidtermReportContext,
   MidtermReportType,
   MidtermReportScore,
-  MidtermReportSubject
+  MidtermReportSubject,
+  MidtermPrintSettings
 } from "../types/midtermReport.types";
 import { ERaporSettingsConfig } from "../types/eRapor.types";
 import { AppConfig } from "../config/appConfig";
@@ -14,6 +15,7 @@ export interface MidtermStudentReportPrintableProps {
   context: MidtermReportContext;
   reportType: MidtermReportType;
   printConfig?: ERaporSettingsConfig;
+  midtermPrintConfig?: MidtermPrintSettings;
   identity?: AppConfig;
   paperSize?: "A4" | "F4";
   printDate?: string;
@@ -25,6 +27,7 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
   context,
   reportType,
   printConfig,
+  midtermPrintConfig,
   identity,
   paperSize = "A4",
   printDate,
@@ -33,15 +36,24 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
   const isPondok = reportType === "PONDOK";
   const isTerpadu = reportType === "TERPADU";
 
-  // Resolve Headers
-  const genHeader = printConfig?.generalReportHeader || {
-    institutionName: identity?.schoolName || "SMP ALKARIM RASYID",
-    subTitle: "Sekolah Menengah Pertama Berbasis Pesantren",
-    address: identity?.address || "Jl. Pendidikan No. 1, Kota Solok, Sumatera Barat",
-    phone: identity?.phone || "(021) 1234567",
-    email: identity?.email || "info@alkarimrasyid.sch.id",
-    website: identity?.website || "www.alkarimrasyid.sch.id"
-  };
+  // Resolve Headers: Prioritize RTS customHeader if provided, else fallback to printConfig or identity
+  const genHeader = midtermPrintConfig?.customHeader?.institutionName
+    ? {
+        institutionName: midtermPrintConfig.customHeader.institutionName,
+        subTitle: midtermPrintConfig.customHeader.subTitle || "Sekolah Menengah Pertama Berbasis Pesantren",
+        address: midtermPrintConfig.customHeader.address || identity?.address || "Jl. Pendidikan No. 1, Kota Solok, Sumatera Barat",
+        phone: midtermPrintConfig.customHeader.phone || identity?.phone || "(021) 1234567",
+        email: midtermPrintConfig.customHeader.email || identity?.email || "info@alkarimrasyid.sch.id",
+        website: midtermPrintConfig.customHeader.website || identity?.website || "www.alkarimrasyid.sch.id"
+      }
+    : printConfig?.generalReportHeader || {
+        institutionName: identity?.schoolName || "SMP ALKARIM RASYID",
+        subTitle: "Sekolah Menengah Pertama Berbasis Pesantren",
+        address: identity?.address || "Jl. Pendidikan No. 1, Kota Solok, Sumatera Barat",
+        phone: identity?.phone || "(021) 1234567",
+        email: identity?.email || "info@alkarimrasyid.sch.id",
+        website: identity?.website || "www.alkarimrasyid.sch.id"
+      };
 
   const pesHeader = printConfig?.pesantrenReportHeader || {
     institutionName: "PONDOK PESANTREN ALKARIM RASYID",
@@ -57,18 +69,36 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
 
   // Resolve Headmaster & Signatures
   const headmasterName =
+    midtermPrintConfig?.headmasterName ||
     printConfig?.headmasterName ||
     identity?.principalName ||
     identity?.headmasterName ||
     "H. Abdullah, M.Pd.";
 
+  const headmasterTitle =
+    midtermPrintConfig?.headmasterTitle ||
+    "Kepala Sekolah / Kepala Madrasah";
+
   const headmasterSignatureUrl =
+    midtermPrintConfig?.headmasterSignatureUrl ||
     printConfig?.headmasterSignatureUrl ||
     identity?.principalSignatureUrl ||
     identity?.headmasterSignatureUrl ||
     "";
 
-  const principalNipNiy = identity?.principalNipNiy || "NIY. 202001001";
+  const principalNipNiy =
+    midtermPrintConfig?.headmasterNipNiy ||
+    identity?.principalNipNiy ||
+    "NIY. 202001001";
+
+  // Resolve School Stamp & Homeroom Teacher Signature
+  const schoolStampUrl = midtermPrintConfig?.schoolStampUrl || "";
+
+  const homeroomSignatureUrl =
+    (context.classId && midtermPrintConfig?.homeroomSignatures?.[context.classId]) ||
+    (context.homeroomTeacherId && midtermPrintConfig?.homeroomSignatures?.[context.homeroomTeacherId]) ||
+    "";
+
 
   // Score Map for Fast Lookup
   const scoreMap = React.useMemo(() => {
@@ -378,37 +408,71 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
         </p>
       </div>
 
-      {/* 6. TANDA TANGAN RESMI (2 KOLOM GABUNGAN: WALI KELAS & KEPALA SEKOLAH/KEPALA MADRASAH) */}
+      {/* 6. TANDA TANGAN RESMI (2 KOLOM: WALI KELAS & KEPALA SEKOLAH/KEPALA MADRASAH DENGAN CAP) */}
       <div className="grid grid-cols-2 gap-8 text-center text-xs font-sans pt-2 print:break-inside-avoid">
         {/* Kolom 1: Wali Kelas */}
-        <div className="flex flex-col justify-between h-32">
+        <div className="flex flex-col justify-between h-36">
           <div>
             <p className="font-semibold">Wali Kelas {context.className}</p>
           </div>
+
+          {/* Area Tanda Tangan Wali Kelas (Opsional, jika kosong tetap memberi ruang manual) */}
+          <div className="h-16 flex items-center justify-center my-0.5">
+            {homeroomSignatureUrl ? (
+              <img
+                src={homeroomSignatureUrl}
+                alt="Tanda Tangan Wali Kelas"
+                className="max-h-16 max-w-[130px] object-contain"
+                onError={(e) => {
+                  (e.currentTarget as HTMLElement).style.display = "none";
+                }}
+              />
+            ) : null}
+          </div>
+
           <div>
             <p className="font-bold underline">{context.homeroomTeacherName || "-"}</p>
             <p className="text-[10px] text-slate-500">Wali Kelas</p>
           </div>
         </div>
 
-        {/* Kolom 2: Kepala Sekolah / Kepala Madrasah (1 Nama & 1 Kolom Tanda Tangan) */}
-        <div className="flex flex-col justify-between h-32">
+        {/* Kolom 2: Kepala Sekolah / Kepala Madrasah (1 Nama, Cap Resmi & Tanda Tangan) */}
+        <div className="flex flex-col justify-between h-36">
           <div>
             <p>Solok, {formattedDate}</p>
             <p>Mengetahui,</p>
-            <p className="font-semibold">Kepala Sekolah / Kepala Madrasah</p>
+            <p className="font-semibold">{headmasterTitle}</p>
           </div>
-          <div>
-            {headmasterSignatureUrl ? (
-              <div className="h-12 flex items-center justify-center my-0.5">
-                <img
-                  src={headmasterSignatureUrl}
-                  alt="Tanda Tangan"
-                  className="max-h-12 object-contain"
-                />
-              </div>
+
+          {/* Area Tanda Tangan & Cap Kepala Sekolah */}
+          <div className="h-16 relative flex items-center justify-center my-0.5">
+            {/* Cap Sekolah (Stempel Resmi, diletakkan menumpuk di sisi kiri atas tanda tangan) */}
+            {schoolStampUrl ? (
+              <img
+                src={schoolStampUrl}
+                alt="Cap Sekolah"
+                className="absolute left-1/2 -translate-x-14 -top-2 max-h-16 max-w-[85px] object-contain pointer-events-none opacity-85 z-0"
+                onError={(e) => {
+                  (e.currentTarget as HTMLElement).style.display = "none";
+                }}
+              />
             ) : null}
-            <p className="font-bold underline">{headmasterName}</p>
+
+            {/* Gambar Tanda Tangan Kepala Sekolah (Opsional) */}
+            {headmasterSignatureUrl ? (
+              <img
+                src={headmasterSignatureUrl}
+                alt="Tanda Tangan Kepala Sekolah"
+                className="relative z-10 max-h-16 max-w-[130px] object-contain"
+                onError={(e) => {
+                  (e.currentTarget as HTMLElement).style.display = "none";
+                }}
+              />
+            ) : null}
+          </div>
+
+          <div>
+            <p className="font-bold underline relative z-10">{headmasterName}</p>
             <p className="text-[10px] text-slate-500">{principalNipNiy}</p>
           </div>
         </div>

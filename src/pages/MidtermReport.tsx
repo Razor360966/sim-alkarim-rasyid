@@ -12,13 +12,16 @@ import {
   MidtermReportContext,
   MidtermReportSubject,
   MidtermReportStudent,
-  MidtermReportScore
+  MidtermReportScore,
+  MidtermPrintSettings
 } from "../types/midtermReport.types";
 import { AcademicYear, Semester, Class } from "../types";
 import { ERaporSettingsConfig } from "../types/eRapor.types";
 import { AppConfig } from "../config/appConfig";
 import { homeroomService } from "../services/homeroom.service";
 import { MidtermStudentReportPrintable } from "../components/MidtermStudentReportPrintable";
+import { MidtermPrintSettingsModal } from "../components/MidtermPrintSettingsModal";
+import { midtermPrintSettingsService } from "../services/midtermPrintSettings.service";
 import {
   FileText,
   Printer,
@@ -39,7 +42,8 @@ import {
   Users,
   ChevronLeft,
   ChevronRight,
-  Eye
+  Eye,
+  Sliders
 } from "lucide-react";
 
 export default function MidtermReport() {
@@ -64,22 +68,30 @@ export default function MidtermReport() {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
 
-  // Modal State for Per-Student Print Preview
+  // Modal State for Per-Student Print Preview & Settings Modal
   const [isPrintModalOpen, setIsPrintModalOpen] = useState<boolean>(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState<boolean>(false);
   const [selectedStudentForPrintId, setSelectedStudentForPrintId] = useState<string | null>(null);
   const [printMode, setPrintMode] = useState<"SINGLE" | "BATCH">("SINGLE");
   const [printConfig, setPrintConfig] = useState<ERaporSettingsConfig | undefined>(undefined);
+  const [midtermPrintConfig, setMidtermPrintConfig] = useState<MidtermPrintSettings | undefined>(undefined);
 
   // Concurrency & Stale Request Guard
   const requestIdRef = useRef<number>(0);
 
-  // Load eRapor print config once
+  // Load eRapor print config & dedicated Midterm print settings
   useEffect(() => {
     eRaporService
       .getSettings()
       .then((cfg) => setPrintConfig(cfg))
       .catch((e) => console.warn("Failed to load eRapor settings config for Midterm print:", e));
+
+    midtermPrintSettingsService
+      .getPrintSettings()
+      .then((cfg) => setMidtermPrintConfig(cfg))
+      .catch((e) => console.warn("Failed to load midterm print settings:", e));
   }, []);
+
 
   const handleOpenSingleStudentPrint = (studentId: string) => {
     setSelectedStudentForPrintId(studentId);
@@ -358,6 +370,15 @@ export default function MidtermReport() {
 
           {/* Action Buttons */}
           <div className="flex items-center gap-2 self-start md:self-auto flex-wrap">
+            <button
+              onClick={() => setIsSettingsModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-xl bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 transition-colors cursor-pointer"
+              title="Atur Tanda Tangan Kepala Sekolah, Cap Sekolah, dan Tanda Tangan Wali Kelas"
+            >
+              <Sliders className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Pengaturan Cetak RTS</span>
+            </button>
+
             <button
               onClick={fetchReportData}
               disabled={isLoading}
@@ -856,8 +877,24 @@ export default function MidtermReport() {
           className={activeClassObj?.name || "-"}
           homeroomTeacherName={activeClassObj?.homeroomTeacherName || "-"}
           printConfig={printConfig}
+          midtermPrintConfig={midtermPrintConfig}
           identity={identity}
+          onOpenSettings={() => setIsSettingsModalOpen(true)}
           onClose={() => setIsPrintModalOpen(false)}
+        />
+      )}
+
+      {/* 6. Modal Pengaturan Cetak RTS */}
+      {isSettingsModalOpen && (
+        <MidtermPrintSettingsModal
+          isOpen={isSettingsModalOpen}
+          onClose={() => setIsSettingsModalOpen(false)}
+          currentSettings={midtermPrintConfig}
+          classes={classes}
+          currentClassId={selectedClassId}
+          identity={identity}
+          printConfig={printConfig}
+          onSettingsSaved={(newSettings) => setMidtermPrintConfig(newSettings)}
         />
       )}
     </div>
@@ -879,7 +916,9 @@ interface MidtermPrintModalProps {
   className: string;
   homeroomTeacherName: string;
   printConfig?: ERaporSettingsConfig;
+  midtermPrintConfig?: MidtermPrintSettings;
   identity?: AppConfig;
+  onOpenSettings?: () => void;
   onClose: () => void;
 }
 
@@ -894,7 +933,9 @@ function MidtermPrintModal({
   className,
   homeroomTeacherName,
   printConfig,
+  midtermPrintConfig,
   identity,
+  onOpenSettings,
   onClose
 }: MidtermPrintModalProps) {
   const [mode, setMode] = useState<"SINGLE" | "BATCH">(initialMode);
@@ -1023,6 +1064,18 @@ function MidtermPrintModal({
             </div>
 
             <div className="flex items-center gap-2">
+              {onOpenSettings && (
+                <button
+                  type="button"
+                  onClick={onOpenSettings}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl bg-slate-200 hover:bg-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-800 dark:text-zinc-200 transition-colors cursor-pointer"
+                  title="Buka Pengaturan Cetak RTS"
+                >
+                  <Sliders className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Pengaturan Cetak</span>
+                </button>
+              )}
+
               <button
                 onClick={handlePrint}
                 className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition-colors cursor-pointer"
@@ -1207,6 +1260,7 @@ function MidtermPrintModal({
                   context={context}
                   reportType={reportType}
                   printConfig={printConfig}
+                  midtermPrintConfig={midtermPrintConfig}
                   identity={identity}
                   paperSize={paperSize}
                   printDate={printDateStr}
@@ -1227,6 +1281,7 @@ function MidtermPrintModal({
                     context={context}
                     reportType={reportType}
                     printConfig={printConfig}
+                    midtermPrintConfig={midtermPrintConfig}
                     identity={identity}
                     paperSize={paperSize}
                     printDate={printDateStr}

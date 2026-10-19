@@ -66,3 +66,26 @@ export interface GetMidtermReportParams {
   classId: string;
   reportType: MidtermReportType;
 }
+
+export interface MidtermReportHeaderConfig {
+  institutionName?: string;
+  subTitle?: string;
+  address?: string;
+  phone?: string;
+  email?: string;
+  website?: string;
+}
+
+export interface MidtermPrintSettings {
+  customHeader?: MidtermReportHeaderConfig;
+  headmasterName?: string;
+  headmasterTitle?: string; // e.g. "Kepala Sekolah / Kepala Madrasah"
+  headmasterNipNiy?: string;
+  headmasterSignatureUrl?: string; // Base64 dataUrl or image URL
+  schoolStampUrl?: string; // Base64 dataUrl or image URL
+  // Mapping tanda tangan wali kelas per kelas (key: classId atau homeroomTeacherId)
+  homeroomSignatures?: Record<string, string>;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
