@@ -51,6 +51,7 @@ export interface MidtermReportContext {
 
   homeroomTeacherId?: string;
   homeroomTeacherName?: string;
+  homeroomTeacherNiy?: string;
 
   subjects: MidtermReportSubject[];
   umumSubjects?: MidtermReportSubject[];
@@ -74,18 +75,27 @@ export interface MidtermReportHeaderConfig {
   phone?: string;
   email?: string;
   website?: string;
+  accreditationText?: string;
+  schoolLogoUrl?: string;
+  pesantrenLogoUrl?: string;
 }
 
 export interface MidtermPrintSettings {
   customHeader?: MidtermReportHeaderConfig;
+  reportCity?: string; // e.g. "Solok"
+  reportDate?: string; // e.g. "18 Oktober 2026"
+  schoolLogoUrl?: string; // Base64 dataUrl or image URL
+  pesantrenLogoUrl?: string; // Base64 dataUrl or image URL
+  accreditationText?: string; // e.g. "Terakreditasi A"
   headmasterName?: string;
   headmasterTitle?: string; // e.g. "Kepala Sekolah / Kepala Madrasah"
   headmasterNipNiy?: string;
   headmasterSignatureUrl?: string; // Base64 dataUrl or image URL
   schoolStampUrl?: string; // Base64 dataUrl or image URL
-  // Mapping tanda tangan wali kelas per kelas (key: classId atau homeroomTeacherId)
+  // Backward compatibility for previously saved data
   homeroomSignatures?: Record<string, string>;
   updatedAt?: string;
   updatedBy?: string;
 }
+
 

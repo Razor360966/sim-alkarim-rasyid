@@ -67,6 +67,37 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
   // For TERPADU or UMUM use genHeader; for PONDOK use pesHeader
   const activeHeader = isPondok ? pesHeader : genHeader;
 
+  // Resolve City & Date
+  const reportCity =
+    (midtermPrintConfig?.reportCity && midtermPrintConfig.reportCity.trim()) ||
+    identity?.regency ||
+    "Solok";
+
+  const formattedDate =
+    printDate ||
+    new Date().toLocaleDateString("id-ID", {
+      day: "numeric",
+      month: "long",
+      year: "numeric"
+    });
+
+  const reportDate =
+    (midtermPrintConfig?.reportDate && midtermPrintConfig.reportDate.trim()) ||
+    formattedDate;
+
+  // Resolve Logos & Accreditation
+  const schoolLogoUrl =
+    midtermPrintConfig?.schoolLogoUrl !== undefined
+      ? midtermPrintConfig.schoolLogoUrl
+      : (identity?.logoUrl || "");
+
+  const pesantrenLogoUrl = midtermPrintConfig?.pesantrenLogoUrl || "";
+
+  const accreditationText =
+    (midtermPrintConfig?.accreditationText && midtermPrintConfig.accreditationText.trim()) ||
+    (midtermPrintConfig?.customHeader?.accreditationText && midtermPrintConfig.customHeader.accreditationText.trim()) ||
+    "";
+
   // Resolve Headmaster & Signatures
   const headmasterName =
     midtermPrintConfig?.headmasterName ||
@@ -152,14 +183,6 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
     };
   }, [context.subjects, isPondok, isTerpadu, umumSubjectsList]);
 
-  const formattedDate =
-    printDate ||
-    new Date().toLocaleDateString("id-ID", {
-      day: "numeric",
-      month: "long",
-      year: "numeric"
-    });
-
   // Render Subject Table Row
   const renderSubjectRow = (subj: MidtermReportSubject, index: number) => {
     const sc = scoreMap.get(subj.subjectId);
@@ -211,18 +234,60 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
       style={{ minHeight: paperSize === "F4" ? "300mm" : "270mm" }}
     >
       {/* 1. KOP SURAT RESMI */}
-      <div className="border-b-4 border-double border-black pb-2.5 mb-4 text-center">
-        <h2 className="text-lg font-black uppercase tracking-wider text-slate-900">
-          {activeHeader.institutionName}
-        </h2>
-        <p className="text-xs font-sans text-slate-700 font-bold uppercase tracking-wide mt-0.5">
-          {activeHeader.subTitle}
-        </p>
-        <p className="text-[11px] font-sans text-slate-700 mt-0.5">{activeHeader.address}</p>
-        <p className="text-[10px] font-sans text-slate-500 italic mt-0.5">
-          Telp: {activeHeader.phone || "-"} | Email: {activeHeader.email || "-"} | Website:{" "}
-          {activeHeader.website || "-"}
-        </p>
+      <div className="border-b-4 border-double border-black pb-2.5 mb-4">
+        <div className="flex items-center justify-between gap-4">
+          {/* Logo Sekolah (Kiri) */}
+          <div className="w-20 shrink-0 flex items-center justify-center">
+            {schoolLogoUrl ? (
+              <img
+                src={schoolLogoUrl}
+                alt="Logo Sekolah"
+                className="max-h-20 max-w-[80px] object-contain"
+                onError={(e) => {
+                  (e.currentTarget as HTMLElement).style.display = "none";
+                }}
+              />
+            ) : pesantrenLogoUrl ? (
+              <div className="w-20" />
+            ) : null}
+          </div>
+
+          {/* Teks Identitas Sekolah (Tengah) */}
+          <div className="flex-1 text-center">
+            <h2 className="text-lg font-black uppercase tracking-wider text-slate-900">
+              {activeHeader.institutionName}
+            </h2>
+            <p className="text-xs font-sans text-slate-700 font-bold uppercase tracking-wide mt-0.5">
+              {activeHeader.subTitle}
+            </p>
+            {accreditationText ? (
+              <p className="text-[11px] font-sans font-semibold text-slate-800 tracking-wide mt-0.5">
+                {accreditationText}
+              </p>
+            ) : null}
+            <p className="text-[11px] font-sans text-slate-700 mt-0.5">{activeHeader.address}</p>
+            <p className="text-[10px] font-sans text-slate-500 italic mt-0.5">
+              Telp: {activeHeader.phone || "-"} | Email: {activeHeader.email || "-"} | Website:{" "}
+              {activeHeader.website || "-"}
+            </p>
+          </div>
+
+          {/* Logo Pondok Pesantren (Kanan) atau Spacer Seimbang */}
+          <div className="w-20 shrink-0 flex items-center justify-center">
+            {pesantrenLogoUrl ? (
+              <img
+                src={pesantrenLogoUrl}
+                alt="Logo Pondok Pesantren"
+                className="max-h-20 max-w-[80px] object-contain"
+                onError={(e) => {
+                  (e.currentTarget as HTMLElement).style.display = "none";
+                }}
+              />
+            ) : schoolLogoUrl ? (
+              <div className="w-20" />
+            ) : null}
+          </div>
+        </div>
       </div>
 
       {/* 2. JUDUL RAPOR */}
@@ -403,77 +468,93 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
         <p className="italic text-[10.5px] leading-relaxed text-slate-700">
           "Nilai yang tercantum dalam Rapor Bayangan ini merupakan hasil Penilaian Tengah Semester
           (UTS/STS) sebagai sarana evaluasi berkala capaian belajar peserta didik. Harap menjadi
-          perhatian bersama antara pihak madrasah/sekolah dan orang tua/wali santri untuk terus
+          perhatian bersama antara pihak madrasah/sekolah dan Orang Tua / Wali Santri untuk terus
           memotivasi dan memantau perkembangan belajar."
         </p>
       </div>
 
-      {/* 6. TANDA TANGAN RESMI (2 KOLOM: WALI KELAS & KEPALA SEKOLAH/KEPALA MADRASAH DENGAN CAP) */}
-      <div className="grid grid-cols-2 gap-8 text-center text-xs font-sans pt-2 print:break-inside-avoid">
-        {/* Kolom 1: Wali Kelas */}
-        <div className="flex flex-col justify-between h-36">
-          <div>
-            <p className="font-semibold">Wali Kelas {context.className}</p>
-          </div>
-
-          {/* Area Tanda Tangan Wali Kelas (Opsional, jika kosong tetap memberi ruang manual) */}
-          <div className="h-16 flex items-center justify-center my-0.5">
-            {homeroomSignatureUrl ? (
-              <img
-                src={homeroomSignatureUrl}
-                alt="Tanda Tangan Wali Kelas"
-                className="max-h-16 max-w-[130px] object-contain"
-                onError={(e) => {
-                  (e.currentTarget as HTMLElement).style.display = "none";
-                }}
-              />
-            ) : null}
-          </div>
-
-          <div>
-            <p className="font-bold underline">{context.homeroomTeacherName || "-"}</p>
-            <p className="text-[10px] text-slate-500">Wali Kelas</p>
+      {/* 6. TANDA TANGAN RESMI (2 KOLOM SEJAJAR: WALI KELAS & KEPALA SEKOLAH DENGAN CAP) */}
+      <div className="text-xs font-sans pt-2 print:break-inside-avoid">
+        {/* Baris Tempat, Tanggal & Mengetahui (Sejajar di atas kolom kanan) */}
+        <div className="grid grid-cols-2 gap-8 mb-1">
+          <div /> {/* Spacer kolom kiri */}
+          <div className="text-center">
+            <p className="text-xs text-slate-800">{reportCity}, {reportDate}</p>
+            <p className="text-xs text-slate-700 font-medium">Mengetahui,</p>
           </div>
         </div>
 
-        {/* Kolom 2: Kepala Sekolah / Kepala Madrasah (1 Nama, Cap Resmi & Tanda Tangan) */}
-        <div className="flex flex-col justify-between h-36">
-          <div>
-            <p>Solok, {formattedDate}</p>
-            <p>Mengetahui,</p>
-            <p className="font-semibold">{headmasterTitle}</p>
+        {/* Baris Dua Kolom Penandatangan yang SEJAJAR SECARA VERTIKAL */}
+        <div className="grid grid-cols-2 gap-8 text-center">
+          {/* Kolom 1: Wali Kelas */}
+          <div className="flex flex-col justify-between h-36">
+            <div>
+              <p className="font-semibold text-xs text-slate-900">
+                Wali Kelas {context.className}
+              </p>
+            </div>
+
+            {/* Area Tanda Tangan Wali Kelas */}
+            <div className="h-16 flex items-center justify-center my-0.5">
+              {homeroomSignatureUrl ? (
+                <img
+                  src={homeroomSignatureUrl}
+                  alt="Tanda Tangan Wali Kelas"
+                  className="max-h-16 max-w-[130px] object-contain"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLElement).style.display = "none";
+                  }}
+                />
+              ) : null}
+            </div>
+
+            <div>
+              <p className="font-bold underline text-slate-900">{context.homeroomTeacherName || "-"}</p>
+              <p className="text-[10px] text-slate-500">
+                {context.homeroomTeacherNiy ? `NIY. ${context.homeroomTeacherNiy}` : "Wali Kelas"}
+              </p>
+            </div>
           </div>
 
-          {/* Area Tanda Tangan & Cap Kepala Sekolah */}
-          <div className="h-16 relative flex items-center justify-center my-0.5">
-            {/* Cap Sekolah (Stempel Resmi, diletakkan menumpuk di sisi kiri atas tanda tangan) */}
-            {schoolStampUrl ? (
-              <img
-                src={schoolStampUrl}
-                alt="Cap Sekolah"
-                className="absolute left-1/2 -translate-x-14 -top-2 max-h-16 max-w-[85px] object-contain pointer-events-none opacity-85 z-0"
-                onError={(e) => {
-                  (e.currentTarget as HTMLElement).style.display = "none";
-                }}
-              />
-            ) : null}
+          {/* Kolom 2: Kepala Sekolah / Kepala Madrasah */}
+          <div className="flex flex-col justify-between h-36">
+            <div>
+              <p className="font-semibold text-xs text-slate-900">
+                {headmasterTitle}
+              </p>
+            </div>
 
-            {/* Gambar Tanda Tangan Kepala Sekolah (Opsional) */}
-            {headmasterSignatureUrl ? (
-              <img
-                src={headmasterSignatureUrl}
-                alt="Tanda Tangan Kepala Sekolah"
-                className="relative z-10 max-h-16 max-w-[130px] object-contain"
-                onError={(e) => {
-                  (e.currentTarget as HTMLElement).style.display = "none";
-                }}
-              />
-            ) : null}
-          </div>
+            {/* Area Tanda Tangan & Cap Kepala Sekolah */}
+            <div className="h-16 relative flex items-center justify-center my-0.5">
+              {/* Cap Sekolah (Stempel Resmi, diletakkan menumpuk di sisi kiri atas tanda tangan) */}
+              {schoolStampUrl ? (
+                <img
+                  src={schoolStampUrl}
+                  alt="Cap Sekolah"
+                  className="absolute left-1/2 -translate-x-14 -top-2 max-h-16 max-w-[85px] object-contain pointer-events-none opacity-85 z-0"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLElement).style.display = "none";
+                  }}
+                />
+              ) : null}
 
-          <div>
-            <p className="font-bold underline relative z-10">{headmasterName}</p>
-            <p className="text-[10px] text-slate-500">{principalNipNiy}</p>
+              {/* Gambar Tanda Tangan Kepala Sekolah (Opsional) */}
+              {headmasterSignatureUrl ? (
+                <img
+                  src={headmasterSignatureUrl}
+                  alt="Tanda Tangan Kepala Sekolah"
+                  className="relative z-10 max-h-16 max-w-[130px] object-contain"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLElement).style.display = "none";
+                  }}
+                />
+              ) : null}
+            </div>
+
+            <div>
+              <p className="font-bold underline text-slate-900 relative z-10">{headmasterName}</p>
+              <p className="text-[10px] text-slate-500">{principalNipNiy}</p>
+            </div>
           </div>
         </div>
       </div>

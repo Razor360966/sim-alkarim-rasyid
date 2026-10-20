@@ -20,7 +20,11 @@ import {
   AlertCircle,
   FileCheck,
   Building,
-  Users
+  Users,
+  Calendar,
+  MapPin,
+  Award,
+  Image as ImageIcon
 } from "lucide-react";
 
 export interface MidtermPrintSettingsModalProps {
@@ -32,6 +36,53 @@ export interface MidtermPrintSettingsModalProps {
   identity?: AppConfig;
   printConfig?: ERaporSettingsConfig;
   onSettingsSaved: (newSettings: MidtermPrintSettings) => void;
+}
+
+/**
+ * Kompresi dan resize gambar menggunakan HTMLCanvasElement
+ * Menghasilkan DataURL teroptimasi (< 50 KB) untuk menjaga batas 1 MiB dokumen Firestore.
+ */
+function compressImageToBase64(
+  file: File,
+  maxWidth: number = 400,
+  maxHeight: number = 240,
+  quality: number = 0.85
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxWidth || height > maxHeight) {
+          const ratio = Math.min(maxWidth / width, maxHeight / height);
+          width = Math.round(width * ratio);
+          height = Math.round(height * ratio);
+        }
+
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve(e.target?.result as string);
+          return;
+        }
+
+        ctx.drawImage(img, 0, 0, width, height);
+        // Pertahankan PNG jika transparan, atau JPEG untuk foto padat
+        const mimeType = file.type === "image/png" ? "image/png" : "image/jpeg";
+        const compressedDataUrl = canvas.toDataURL(mimeType, quality);
+        resolve(compressedDataUrl);
+      };
+      img.onerror = () => reject(new Error("Gagal membaca gambar"));
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = () => reject(new Error("Gagal membaca berkas"));
+    reader.readAsDataURL(file);
+  });
 }
 
 export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps> = ({
@@ -50,23 +101,51 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
   const [activeTab, setActiveTab] = useState<"SIGNATURES" | "STAMP" | "HOMEROOM" | "KOP">("SIGNATURES");
   const [isSaving, setIsSaving] = useState<boolean>(false);
 
-  // Form State
+  // Form State: Tempat & Tanggal Rapor
+  const [reportCity, setReportCity] = useState<string>("Solok");
+  const [reportDate, setReportDate] = useState<string>("");
+
+  // Form State: Kepala Sekolah
   const [headmasterName, setHeadmasterName] = useState<string>("");
   const [headmasterTitle, setHeadmasterTitle] = useState<string>("Kepala Sekolah / Kepala Madrasah");
   const [headmasterNipNiy, setHeadmasterNipNiy] = useState<string>("");
   const [headmasterSignatureUrl, setHeadmasterSignatureUrl] = useState<string>("");
   const [schoolStampUrl, setSchoolStampUrl] = useState<string>("");
 
+  // Form State: Logo & Akreditasi KOP
+  const [schoolLogoUrl, setSchoolLogoUrl] = useState<string>("");
+  const [pesantrenLogoUrl, setPesantrenLogoUrl] = useState<string>("");
+  const [accreditationText, setAccreditationText] = useState<string>("");
+
   // Homeroom signatures map
   const [homeroomSignatures, setHomeroomSignatures] = useState<Record<string, string>>({});
   const [selectedClassId, setSelectedClassId] = useState<string>(currentClassId || classes[0]?.id || "");
 
-  // Custom KOP
+  // Custom KOP text
   const [customHeader, setCustomHeader] = useState<MidtermReportHeaderConfig>({});
 
   // Sync state with currentSettings or defaults when opened
   useEffect(() => {
     if (isOpen) {
+      // 1. Tempat & Tanggal
+      const city =
+        currentSettings?.reportCity ||
+        identity?.regency ||
+        identity?.district ||
+        "Solok";
+
+      const defaultDateStr =
+        currentSettings?.reportDate ||
+        new Date().toLocaleDateString("id-ID", {
+          day: "numeric",
+          month: "long",
+          year: "numeric"
+        });
+
+      setReportCity(city);
+      setReportDate(currentSettings?.reportDate || defaultDateStr);
+
+      // 2. Kepala Sekolah
       const hName =
         currentSettings?.headmasterName ||
         printConfig?.headmasterName ||
@@ -100,12 +179,30 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
       setSchoolStampUrl(stamp);
       setHomeroomSignatures({ ...hSigs });
 
+      // 3. Logo Sekolah, Logo Pondok, & Akreditasi
+      const sLogo =
+        currentSettings?.schoolLogoUrl !== undefined
+          ? currentSettings.schoolLogoUrl
+          : (identity?.logoUrl || "");
+
+      const pLogo = currentSettings?.pesantrenLogoUrl || "";
+      const accred =
+        currentSettings?.accreditationText ||
+        currentSettings?.customHeader?.accreditationText ||
+        "";
+
+      setSchoolLogoUrl(sLogo);
+      setPesantrenLogoUrl(pLogo);
+      setAccreditationText(accred);
+
+      // 4. Class Selector
       if (currentClassId && classes.some((c) => c.id === currentClassId)) {
         setSelectedClassId(currentClassId);
       } else if (classes.length > 0) {
         setSelectedClassId(classes[0].id);
       }
 
+      // 5. Header info
       setCustomHeader(
         currentSettings?.customHeader || {
           institutionName: identity?.schoolName || "SMP ALKARIM RASYID",
@@ -128,11 +225,13 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
     (selectedClassObj?.homeroomTeacherId && homeroomSignatures[selectedClassObj.homeroomTeacherId]) ||
     "";
 
-  // Generic File Upload Validator & Converter to Base64 DataURL
-  const handleFileUpload = (
+  // Generic File Upload Validator & Compressor
+  const handleFileUpload = async (
     e: React.ChangeEvent<HTMLInputElement>,
     onSuccess: (dataUrl: string) => void,
-    label: string
+    label: string,
+    maxWidth = 400,
+    maxHeight = 240
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -143,36 +242,53 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
     }
 
     if (file.size > 2 * 1024 * 1024) {
-      toast("Ukuran file maksimal 2MB.", "error");
+      toast("Ukuran file sebelum kompresi maksimal 2MB.", "error");
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
-      onSuccess(dataUrl);
-      toast(`${label} berhasil diunggah!`, "success");
-    };
-    reader.onerror = () => {
-      toast(`Gagal membaca file ${label}.`, "error");
-    };
-    reader.readAsDataURL(file);
-    // Reset file input value so same file can be selected again
-    e.target.value = "";
+    try {
+      const compressedDataUrl = await compressImageToBase64(file, maxWidth, maxHeight);
+      onSuccess(compressedDataUrl);
+      toast(`${label} berhasil diproses dan disimpan!`, "success");
+    } catch (err) {
+      console.error(`Error processing image ${label}:`, err);
+      toast(`Gagal memproses file ${label}.`, "error");
+    } finally {
+      e.target.value = "";
+    }
   };
 
   const handleSaveAll = async () => {
     setIsSaving(true);
     try {
       const payload: MidtermPrintSettings = {
+        reportCity: reportCity.trim(),
+        reportDate: reportDate.trim(),
+        schoolLogoUrl: schoolLogoUrl,
+        pesantrenLogoUrl: pesantrenLogoUrl,
+        accreditationText: accreditationText.trim(),
         headmasterName: headmasterName.trim(),
         headmasterTitle: headmasterTitle.trim(),
         headmasterNipNiy: headmasterNipNiy.trim(),
         headmasterSignatureUrl: headmasterSignatureUrl,
         schoolStampUrl: schoolStampUrl,
         homeroomSignatures: homeroomSignatures,
-        customHeader: customHeader
+        customHeader: {
+          ...customHeader,
+          accreditationText: accreditationText.trim(),
+          schoolLogoUrl: schoolLogoUrl,
+          pesantrenLogoUrl: pesantrenLogoUrl
+        }
       };
+
+      // Validasi batas dokumen Firestore 1 MiB (1,048,576 bytes) dengan batas aman konservatif 800 KB
+      const payloadString = JSON.stringify(payload);
+      const estimatedBytes = new Blob([payloadString]).size;
+      if (estimatedBytes > 800 * 1024) {
+        toast("Total ukuran berkas gambar melebihi batas aman Firestore (maks 800 KB). Harap hapus atau perkecil beberapa gambar.", "error");
+        setIsSaving(false);
+        return;
+      }
 
       const saved = await midtermPrintSettingsService.savePrintSettings(
         payload,
@@ -204,7 +320,7 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                 Pengaturan Cetak Rapor Tengah Semester (RTS)
               </h3>
               <p className="text-xs text-slate-500 dark:text-zinc-400">
-                Atur tanda tangan Kepala Sekolah, Cap Sekolah, dan Tanda Tangan Wali Kelas.
+                Atur Tempat & Tanggal Rapor, KOP (Logo & Akreditasi), TTD Kepala Sekolah, Cap, dan Wali Kelas.
               </p>
             </div>
           </div>
@@ -229,7 +345,7 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
             }`}
           >
             <User className="w-4 h-4" />
-            <span>TTD Kepala Sekolah</span>
+            <span>TTD Kepala Sekolah & Tanggal</span>
             {headmasterSignatureUrl ? (
               <span className="w-2 h-2 rounded-full bg-emerald-500" />
             ) : null}
@@ -279,27 +395,60 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
             }`}
           >
             <School className="w-4 h-4" />
-            <span>KOP Sekolah</span>
+            <span>KOP, Logo & Akreditasi</span>
+            {(schoolLogoUrl || pesantrenLogoUrl) && (
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            )}
           </button>
         </div>
 
         {/* Modal Body */}
         <div className="p-4 sm:p-6 overflow-y-auto space-y-6 flex-1">
-          {/* TAB 1: TANDA TANGAN KEPALA SEKOLAH */}
+          {/* TAB 1: TANDA TANGAN KEPALA SEKOLAH & TANGGAL */}
           {activeTab === "SIGNATURES" && (
-            <div className="space-y-4">
-              <div className="p-3 rounded-xl bg-slate-50 dark:bg-zinc-800/60 border border-slate-200 dark:border-zinc-700/80 flex items-start gap-2.5">
-                <AlertCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-                <div className="text-xs text-slate-600 dark:text-zinc-300">
-                  <p className="font-semibold text-slate-800 dark:text-zinc-100">
-                    Gambar Tanda Tangan Bersifat Opsional
-                  </p>
-                  <p className="text-[11px] mt-0.5 text-slate-500 dark:text-zinc-400">
-                    Jika tidak diunggah, rapor tetap dapat dicetak dan area tanda tangan akan dikosongkan secara rapi untuk tanda tangan basah (manual).
-                  </p>
+            <div className="space-y-5">
+              {/* Bagian A: Kota/Kabupaten dan Tanggal Rapor */}
+              <div className="p-4 rounded-xl bg-slate-50 dark:bg-zinc-800/60 border border-slate-200 dark:border-zinc-700 space-y-3">
+                <div className="flex items-center gap-2">
+                  <MapPin className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <h4 className="text-xs font-bold text-slate-800 dark:text-zinc-100 uppercase tracking-wide">
+                    Tempat dan Tanggal Pengesahan Rapor
+                  </h4>
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-zinc-400">
+                  Tanggal ini dicetak pada bagian penandatangan Kepala Sekolah (contoh: <em>Solok, 18 Oktober 2026</em>). Tersimpan persisten dan tidak berubah otomatis setiap kali rapor dibuka.
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-zinc-300 block mb-1">
+                      Kota / Kabupaten Penandatanganan
+                    </label>
+                    <input
+                      type="text"
+                      value={reportCity}
+                      onChange={(e) => setReportCity(e.target.value)}
+                      className="w-full text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-2.5 font-medium text-slate-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                      placeholder="e.g. Solok"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-zinc-300 block mb-1">
+                      Tanggal Rapor
+                    </label>
+                    <input
+                      type="text"
+                      value={reportDate}
+                      onChange={(e) => setReportDate(e.target.value)}
+                      className="w-full text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-2.5 font-medium text-slate-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                      placeholder="e.g. 18 Oktober 2026"
+                    />
+                  </div>
                 </div>
               </div>
 
+              {/* Bagian B: Identitas Kepala Sekolah */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs font-bold text-slate-700 dark:text-zinc-300 block mb-1">
@@ -341,7 +490,7 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                 </div>
               </div>
 
-              {/* Upload & Preview TTD Kepala Sekolah */}
+              {/* Bagian C: Upload & Preview TTD Kepala Sekolah */}
               <div className="pt-2">
                 <label className="text-xs font-bold text-slate-700 dark:text-zinc-300 block mb-2">
                   Berkas Gambar Tanda Tangan Hasil Scan
@@ -376,7 +525,7 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                           type="file"
                           accept="image/png, image/jpeg, image/jpg"
                           onChange={(e) =>
-                            handleFileUpload(e, setHeadmasterSignatureUrl, "Tanda tangan Kepala Sekolah")
+                            handleFileUpload(e, setHeadmasterSignatureUrl, "Tanda tangan Kepala Sekolah", 400, 200)
                           }
                           className="hidden"
                         />
@@ -413,7 +562,7 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                         type="file"
                         accept="image/png, image/jpeg, image/jpg"
                         onChange={(e) =>
-                          handleFileUpload(e, setHeadmasterSignatureUrl, "Tanda tangan Kepala Sekolah")
+                          handleFileUpload(e, setHeadmasterSignatureUrl, "Tanda tangan Kepala Sekolah", 400, 200)
                         }
                         className="hidden"
                       />
@@ -448,7 +597,7 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                 {schoolStampUrl ? (
                   <div className="p-4 rounded-xl border border-slate-200 dark:border-zinc-700 bg-slate-50 dark:bg-zinc-800/40 flex flex-col sm:flex-row items-center justify-between gap-4">
                     <div className="flex items-center gap-4">
-                      <div className="w-24 h-24 bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg p-2 flex items-center justify-center shadow-inner overflow-hidden">
+                      <div className="w-24 h-24 bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg p-1.5 flex items-center justify-center shadow-inner overflow-hidden">
                         <img
                           src={schoolStampUrl}
                           alt="Cap Sekolah"
@@ -461,7 +610,7 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                           <span>Cap Sekolah Terunggah</span>
                         </div>
                         <p className="text-[11px] text-slate-400 mt-0.5">
-                          Cap resmi tersimpan dan otomatis muncul saat mencetak rapor.
+                          Disarankan PNG transparan agar stempel terlihat menyatu dengan dokumen resmi.
                         </p>
                       </div>
                     </div>
@@ -473,7 +622,9 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                         <input
                           type="file"
                           accept="image/png, image/jpeg, image/jpg"
-                          onChange={(e) => handleFileUpload(e, setSchoolStampUrl, "Cap Sekolah")}
+                          onChange={(e) =>
+                            handleFileUpload(e, setSchoolStampUrl, "Cap Sekolah", 260, 260)
+                          }
                           className="hidden"
                         />
                       </label>
@@ -497,10 +648,10 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                       <Shield className="w-6 h-6" />
                     </div>
                     <p className="text-xs font-bold text-slate-800 dark:text-zinc-200">
-                      Pilih Gambar Cap / Stempel Sekolah
+                      Pilih Berkas Cap / Stempel Sekolah
                     </p>
                     <p className="text-[11px] text-slate-400 mt-1 max-w-sm mx-auto">
-                      Format PNG transparan sangat direkomendasikan agar latar belakang cap tidak menutupi garis teks atau tanda tangan. (Maks. 2MB).
+                      Format PNG atau JPEG (Maks. 2MB). Disarankan PNG dengan latar belakang transparan.
                     </p>
                     <label className="mt-3.5 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 cursor-pointer shadow-sm transition-all">
                       <Upload className="w-3.5 h-3.5" />
@@ -508,7 +659,9 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                       <input
                         type="file"
                         accept="image/png, image/jpeg, image/jpg"
-                        onChange={(e) => handleFileUpload(e, setSchoolStampUrl, "Cap Sekolah")}
+                        onChange={(e) =>
+                          handleFileUpload(e, setSchoolStampUrl, "Cap Sekolah", 260, 260)
+                        }
                         className="hidden"
                       />
                     </label>
@@ -525,18 +678,18 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                 <Users className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
                 <div className="text-xs text-slate-600 dark:text-zinc-300">
                   <p className="font-semibold text-slate-800 dark:text-zinc-100">
-                    Tanda Tangan Spesifik Per Wali Kelas
+                    Tanda Tangan Wali Kelas Berdasarkan Kelas
                   </p>
                   <p className="text-[11px] mt-0.5 text-slate-500 dark:text-zinc-400">
-                    Setiap kelas dapat memiliki tanda tangan wali kelas masing-masing. Nama wali kelas otomatis dicetak sesuai data kelas meskipun gambar tanda tangan tidak diunggah.
+                    Pilih kelas untuk mengunggah tanda tangan wali kelas. Tanda tangan disimpan terpisah untuk tiap kelas sehingga tidak tertukar. Jika kosong, ruang manual tetap disediakan rapi.
                   </p>
                 </div>
               </div>
 
-              {/* Selector Kelas */}
+              {/* Pilih Kelas */}
               <div>
                 <label className="text-xs font-bold text-slate-700 dark:text-zinc-300 block mb-1">
-                  Pilih Kelas / Rombel
+                  Pilih Rombongan Belajar (Kelas)
                 </label>
                 <select
                   value={selectedClassId}
@@ -546,7 +699,7 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                   {classes.map((cls) => {
                     const hasSig = Boolean(
                       homeroomSignatures[cls.id] ||
-                      (cls.homeroomTeacherId && homeroomSignatures[cls.homeroomTeacherId])
+                        (cls.homeroomTeacherId && homeroomSignatures[cls.homeroomTeacherId])
                     );
                     return (
                       <option key={cls.id} value={cls.id}>
@@ -574,7 +727,7 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
               {/* Upload & Preview TTD Wali Kelas Terpilih */}
               <div>
                 <label className="text-xs font-bold text-slate-700 dark:text-zinc-300 block mb-2">
-                  Berkas Gambar Tanda Tangan Wali Kelas
+                  Berkas Gambar Tanda Tangan Wali Kelas ({selectedClassObj?.name || ""})
                 </label>
 
                 {selectedClassHomeroomSig ? (
@@ -606,15 +759,21 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                           type="file"
                           accept="image/png, image/jpeg, image/jpg"
                           onChange={(e) =>
-                            handleFileUpload(e, (dataUrl) => {
-                              setHomeroomSignatures((prev) => ({
-                                ...prev,
-                                [selectedClassId]: dataUrl,
-                                ...(selectedClassObj?.homeroomTeacherId
-                                  ? { [selectedClassObj.homeroomTeacherId]: dataUrl }
-                                  : {})
-                              }));
-                            }, `Tanda tangan Wali Kelas ${selectedClassObj?.name || ""}`)
+                            handleFileUpload(
+                              e,
+                              (dataUrl) => {
+                                setHomeroomSignatures((prev) => ({
+                                  ...prev,
+                                  [selectedClassId]: dataUrl,
+                                  ...(selectedClassObj?.homeroomTeacherId
+                                    ? { [selectedClassObj.homeroomTeacherId]: dataUrl }
+                                    : {})
+                                }));
+                              },
+                              `Tanda tangan Wali Kelas ${selectedClassObj?.name || ""}`,
+                              400,
+                              200
+                            )
                           }
                           className="hidden"
                         />
@@ -658,15 +817,21 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                         type="file"
                         accept="image/png, image/jpeg, image/jpg"
                         onChange={(e) =>
-                          handleFileUpload(e, (dataUrl) => {
-                            setHomeroomSignatures((prev) => ({
-                              ...prev,
-                              [selectedClassId]: dataUrl,
-                              ...(selectedClassObj?.homeroomTeacherId
-                                ? { [selectedClassObj.homeroomTeacherId]: dataUrl }
-                                : {})
-                            }));
-                          }, `Tanda tangan Wali Kelas ${selectedClassObj?.name || ""}`)
+                          handleFileUpload(
+                            e,
+                            (dataUrl) => {
+                              setHomeroomSignatures((prev) => ({
+                                ...prev,
+                                [selectedClassId]: dataUrl,
+                                ...(selectedClassObj?.homeroomTeacherId
+                                  ? { [selectedClassObj.homeroomTeacherId]: dataUrl }
+                                  : {})
+                              }));
+                            },
+                            `Tanda tangan Wali Kelas ${selectedClassObj?.name || ""}`,
+                            400,
+                            200
+                          )
                         }
                         className="hidden"
                       />
@@ -677,22 +842,192 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
             </div>
           )}
 
-          {/* TAB 4: KOP RAPOR */}
+          {/* TAB 4: KOP RAPOR, LOGO & AKREDITASI */}
           {activeTab === "KOP" && (
-            <div className="space-y-4">
+            <div className="space-y-5">
               <div className="p-3 rounded-xl bg-slate-50 dark:bg-zinc-800/60 border border-slate-200 dark:border-zinc-700/80 flex items-start gap-2.5">
                 <School className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
                 <div className="text-xs text-slate-600 dark:text-zinc-300">
                   <p className="font-semibold text-slate-800 dark:text-zinc-100">
-                    Identitas KOP Rapor Tengah Semester
+                    Pengaturan Logo & KOP Rapor Tengah Semester
                   </p>
                   <p className="text-[11px] mt-0.5 text-slate-500 dark:text-zinc-400">
-                    Secara bawaan, KOP menggunakan sumber identitas sekolah utama agar konsisten. Anda dapat menyesuaikan teks khusus RTS di bawah ini tanpa mengubah identitas global.
+                    Kedua logo (sekolah dan pondok) bersifat opsional. KOP akan menata logo secara seimbang di sisi kiri dan kanan. Anda juga dapat menentukan keterangan akreditasi yang dicetak di bawah nama sekolah.
                   </p>
                 </div>
               </div>
 
-              <div className="space-y-3">
+              {/* Upload Logo Sekolah & Logo Pondok (2 Kolom Sejajar) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* 1. Logo Sekolah (Kiri KOP) */}
+                <div className="p-4 rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800/70 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-800 dark:text-zinc-100 flex items-center gap-1.5">
+                      <Building className="w-3.5 h-3.5 text-emerald-600" />
+                      Logo Sekolah (Kiri KOP)
+                    </span>
+                    {schoolLogoUrl && (
+                      <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" /> Ada
+                      </span>
+                    )}
+                  </div>
+
+                  {schoolLogoUrl ? (
+                    <div className="flex items-center gap-3">
+                      <div className="w-20 h-20 bg-slate-50 dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-lg p-1.5 flex items-center justify-center overflow-hidden">
+                        <img
+                          src={schoolLogoUrl}
+                          alt="Logo Sekolah"
+                          className="max-h-full max-w-full object-contain"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-slate-200 hover:bg-slate-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-slate-800 dark:text-zinc-100 cursor-pointer inline-flex items-center gap-1">
+                          <Upload className="w-3 h-3" />
+                          <span>Ganti Logo</span>
+                          <input
+                            type="file"
+                            accept="image/png, image/jpeg, image/jpg"
+                            onChange={(e) =>
+                              handleFileUpload(e, setSchoolLogoUrl, "Logo Sekolah", 240, 240)
+                            }
+                            className="hidden"
+                          />
+                        </label>
+                        <div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSchoolLogoUrl("");
+                              toast("Logo sekolah dihapus.", "info");
+                            }}
+                            className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-900 inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            <span>Hapus</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="border border-dashed border-slate-300 dark:border-zinc-700 rounded-xl p-4 text-center">
+                      <ImageIcon className="w-7 h-7 text-slate-400 mx-auto mb-1" />
+                      <p className="text-[11px] text-slate-500 dark:text-zinc-400">
+                        Belum ada logo sekolah
+                      </p>
+                      <label className="mt-2 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 cursor-pointer shadow-xs">
+                        <Upload className="w-3 h-3" />
+                        <span>Unggah Logo</span>
+                        <input
+                          type="file"
+                          accept="image/png, image/jpeg, image/jpg"
+                          onChange={(e) =>
+                            handleFileUpload(e, setSchoolLogoUrl, "Logo Sekolah", 240, 240)
+                          }
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                  )}
+                </div>
+
+                {/* 2. Logo Pondok / Pesantren (Kanan KOP) */}
+                <div className="p-4 rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800/70 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-800 dark:text-zinc-100 flex items-center gap-1.5">
+                      <School className="w-3.5 h-3.5 text-emerald-600" />
+                      Logo Pondok Pesantren (Kanan KOP)
+                    </span>
+                    {pesantrenLogoUrl && (
+                      <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" /> Ada
+                      </span>
+                    )}
+                  </div>
+
+                  {pesantrenLogoUrl ? (
+                    <div className="flex items-center gap-3">
+                      <div className="w-20 h-20 bg-slate-50 dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-lg p-1.5 flex items-center justify-center overflow-hidden">
+                        <img
+                          src={pesantrenLogoUrl}
+                          alt="Logo Pondok Pesantren"
+                          className="max-h-full max-w-full object-contain"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-slate-200 hover:bg-slate-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-slate-800 dark:text-zinc-100 cursor-pointer inline-flex items-center gap-1">
+                          <Upload className="w-3 h-3" />
+                          <span>Ganti Logo</span>
+                          <input
+                            type="file"
+                            accept="image/png, image/jpeg, image/jpg"
+                            onChange={(e) =>
+                              handleFileUpload(e, setPesantrenLogoUrl, "Logo Pondok Pesantren", 240, 240)
+                            }
+                            className="hidden"
+                          />
+                        </label>
+                        <div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPesantrenLogoUrl("");
+                              toast("Logo pondok pesantren dihapus.", "info");
+                            }}
+                            className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-900 inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            <span>Hapus</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="border border-dashed border-slate-300 dark:border-zinc-700 rounded-xl p-4 text-center">
+                      <ImageIcon className="w-7 h-7 text-slate-400 mx-auto mb-1" />
+                      <p className="text-[11px] text-slate-500 dark:text-zinc-400">
+                        Belum ada logo pondok
+                      </p>
+                      <label className="mt-2 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 cursor-pointer shadow-xs">
+                        <Upload className="w-3 h-3" />
+                        <span>Unggah Logo</span>
+                        <input
+                          type="file"
+                          accept="image/png, image/jpeg, image/jpg"
+                          onChange={(e) =>
+                            handleFileUpload(e, setPesantrenLogoUrl, "Logo Pondok Pesantren", 240, 240)
+                          }
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Keterangan Akreditasi */}
+              <div className="p-4 rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800/70 space-y-2">
+                <div className="flex items-center gap-1.5">
+                  <Award className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <label className="text-xs font-bold text-slate-800 dark:text-zinc-100">
+                    Keterangan Akreditasi Sekolah (KOP)
+                  </label>
+                </div>
+                <input
+                  type="text"
+                  value={accreditationText}
+                  onChange={(e) => setAccreditationText(e.target.value)}
+                  className="w-full text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-2.5 font-medium text-slate-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                  placeholder="e.g. Terakreditasi A (atau kosongkan jika tidak dicantumkan)"
+                />
+                <p className="text-[11px] text-slate-400">
+                  Teks akreditasi ini opsional dan akan dicetak tepat di bawah sub-judul lembaga pada KOP surat rapor.
+                </p>
+              </div>
+
+              {/* Teks Identitas Sekolah */}
+              <div className="space-y-3 pt-1">
                 <div>
                   <label className="text-xs font-semibold text-slate-700 dark:text-zinc-300 block mb-1">
                     Nama Lembaga / Sekolah
@@ -770,79 +1105,139 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
             </div>
           )}
 
-          {/* LIVE MINI PREVIEW OF SIGNATURE BLOCK */}
+          {/* LIVE MINI PREVIEW OF KOP & SIGNATURE BLOCK */}
           <div className="pt-4 border-t border-slate-200 dark:border-zinc-800">
             <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-zinc-300 mb-2">
               <Eye className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Pratinjau Langsung Blok Pengesahan Rapor</span>
+              <span>Pratinjau Langsung Tata Letak KOP & Pengesahan Rapor</span>
             </div>
 
-            <div className="p-4 bg-slate-50 dark:bg-zinc-800/60 border border-slate-200 dark:border-zinc-700 rounded-xl">
-              <div className="bg-white text-black p-5 border border-slate-300 rounded-lg shadow-inner max-w-lg mx-auto font-sans text-xs">
-                <div className="grid grid-cols-2 gap-6 text-center">
-                  {/* Preview Kolom Wali Kelas */}
-                  <div className="flex flex-col justify-between h-32 border-r border-slate-100 pr-2">
-                    <div>
-                      <p className="font-semibold text-[11px]">
-                        Wali Kelas {selectedClassObj?.name || "VII-A"}
-                      </p>
-                    </div>
-
-                    <div className="h-14 flex items-center justify-center my-0.5">
-                      {selectedClassHomeroomSig ? (
+            <div className="p-4 bg-slate-50 dark:bg-zinc-800/60 border border-slate-200 dark:border-zinc-700 rounded-xl space-y-4">
+              <div className="bg-white text-black p-5 border border-slate-300 rounded-lg shadow-inner max-w-xl mx-auto font-sans text-xs space-y-4">
+                {/* 1. Mini KOP Preview */}
+                <div className="border-b-2 border-double border-black pb-2">
+                  <div className="flex items-center justify-between gap-2">
+                    {/* Logo Kiri */}
+                    <div className="w-12 shrink-0 flex items-center justify-center">
+                      {schoolLogoUrl ? (
                         <img
-                          src={selectedClassHomeroomSig}
-                          alt="Tanda Tangan Wali Kelas"
-                          className="max-h-14 max-w-[100px] object-contain"
+                          src={schoolLogoUrl}
+                          alt="Logo Sekolah"
+                          className="max-h-12 max-w-[48px] object-contain"
                         />
-                      ) : (
-                        <span className="text-[10px] text-slate-300 italic border border-dashed border-slate-200 px-2 py-1 rounded">
-                          (Tanda Tangan Manual)
-                        </span>
-                      )}
+                      ) : pesantrenLogoUrl ? (
+                        <div className="w-12" />
+                      ) : null}
                     </div>
 
-                    <div>
-                      <p className="font-bold underline text-[11px]">
-                        {selectedClassObj?.homeroomTeacherName || "Nama Wali Kelas"}
+                    {/* Teks KOP */}
+                    <div className="flex-1 text-center">
+                      <p className="font-extrabold text-[12px] uppercase tracking-wide">
+                        {customHeader.institutionName || identity?.schoolName || "SMP ALKARIM RASYID"}
                       </p>
-                      <p className="text-[9px] text-slate-500">Wali Kelas</p>
+                      <p className="text-[9px] font-bold uppercase text-slate-700">
+                        {customHeader.subTitle || "Sekolah Menengah Pertama Berbasis Pesantren"}
+                      </p>
+                      {accreditationText ? (
+                        <p className="text-[8.5px] font-semibold text-slate-800">
+                          {accreditationText}
+                        </p>
+                      ) : null}
+                      <p className="text-[8px] text-slate-600">
+                        {customHeader.address || identity?.address || "Jl. Pendidikan No. 1, Kota Solok"}
+                      </p>
+                    </div>
+
+                    {/* Logo Kanan */}
+                    <div className="w-12 shrink-0 flex items-center justify-center">
+                      {pesantrenLogoUrl ? (
+                        <img
+                          src={pesantrenLogoUrl}
+                          alt="Logo Pondok Pesantren"
+                          className="max-h-12 max-w-[48px] object-contain"
+                        />
+                      ) : schoolLogoUrl ? (
+                        <div className="w-12" />
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Mini Signature Block Preview (2 Kolom Vertikal Sejajar) */}
+                <div>
+                  {/* Tanggal & Mengetahui Sejajar di Kolom Kanan */}
+                  <div className="grid grid-cols-2 gap-4 mb-1">
+                    <div />
+                    <div className="text-center text-[10px]">
+                      <p className="text-slate-700 font-medium">{reportCity || "Solok"}, {reportDate || "18 Oktober 2026"}</p>
+                      <p className="text-slate-600">Mengetahui,</p>
                     </div>
                   </div>
 
-                  {/* Preview Kolom Kepala Sekolah & Cap */}
-                  <div className="flex flex-col justify-between h-32 pl-2">
-                    <div>
-                      <p className="text-[10px] text-slate-600">Solok, 18 Oktober 2026</p>
-                      <p className="text-[10px] text-slate-600">Mengetahui,</p>
-                      <p className="font-semibold text-[11px] leading-tight">{headmasterTitle}</p>
+                  {/* Dua Kolom Sejajar */}
+                  <div className="grid grid-cols-2 gap-4 text-center">
+                    {/* Preview Kolom Wali Kelas */}
+                    <div className="flex flex-col justify-between h-32 border-r border-slate-100 pr-2">
+                      <div>
+                        <p className="font-semibold text-[11px]">
+                          Wali Kelas {selectedClassObj?.name || "VII-A"}
+                        </p>
+                      </div>
+
+                      <div className="h-14 flex items-center justify-center my-0.5">
+                        {selectedClassHomeroomSig ? (
+                          <img
+                            src={selectedClassHomeroomSig}
+                            alt="Tanda Tangan Wali Kelas"
+                            className="max-h-14 max-w-[100px] object-contain"
+                          />
+                        ) : (
+                          <span className="text-[9px] text-slate-300 italic border border-dashed border-slate-200 px-2 py-1 rounded">
+                            (Tanda Tangan Manual)
+                          </span>
+                        )}
+                      </div>
+
+                      <div>
+                        <p className="font-bold underline text-[11px]">
+                          {selectedClassObj?.homeroomTeacherName || "Nama Wali Kelas"}
+                        </p>
+                        <p className="text-[9px] text-slate-500">Wali Kelas</p>
+                      </div>
                     </div>
 
-                    <div className="h-14 relative flex items-center justify-center my-0.5">
-                      {schoolStampUrl && (
-                        <img
-                          src={schoolStampUrl}
-                          alt="Cap Sekolah"
-                          className="absolute left-1/2 -translate-x-12 -top-1 max-h-14 max-w-[65px] object-contain pointer-events-none opacity-85 z-0"
-                        />
-                      )}
+                    {/* Preview Kolom Kepala Sekolah & Cap */}
+                    <div className="flex flex-col justify-between h-32 pl-2">
+                      <div>
+                        <p className="font-semibold text-[11px] leading-tight">{headmasterTitle}</p>
+                      </div>
 
-                      {headmasterSignatureUrl ? (
-                        <img
-                          src={headmasterSignatureUrl}
-                          alt="Tanda Tangan Kepala Sekolah"
-                          className="relative z-10 max-h-14 max-w-[100px] object-contain"
-                        />
-                      ) : (
-                        <span className="relative z-10 text-[10px] text-slate-300 italic border border-dashed border-slate-200 px-2 py-1 rounded">
-                          (Tanda Tangan Manual)
-                        </span>
-                      )}
-                    </div>
+                      <div className="h-14 relative flex items-center justify-center my-0.5">
+                        {schoolStampUrl && (
+                          <img
+                            src={schoolStampUrl}
+                            alt="Cap Sekolah"
+                            className="absolute left-1/2 -translate-x-12 -top-1 max-h-14 max-w-[65px] object-contain pointer-events-none opacity-85 z-0"
+                          />
+                        )}
 
-                    <div>
-                      <p className="font-bold underline text-[11px] relative z-10">{headmasterName}</p>
-                      <p className="text-[9px] text-slate-500">{headmasterNipNiy}</p>
+                        {headmasterSignatureUrl ? (
+                          <img
+                            src={headmasterSignatureUrl}
+                            alt="Tanda Tangan Kepala Sekolah"
+                            className="relative z-10 max-h-14 max-w-[100px] object-contain"
+                          />
+                        ) : (
+                          <span className="relative z-10 text-[9px] text-slate-300 italic border border-dashed border-slate-200 px-2 py-1 rounded">
+                            (Tanda Tangan Manual)
+                          </span>
+                        )}
+                      </div>
+
+                      <div>
+                        <p className="font-bold underline text-[11px] relative z-10">{headmasterName}</p>
+                        <p className="text-[9px] text-slate-500">{headmasterNipNiy}</p>
+                      </div>
                     </div>
                   </div>
                 </div>

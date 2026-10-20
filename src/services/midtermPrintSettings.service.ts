@@ -44,6 +44,11 @@ export const midtermPrintSettingsService = {
       if (snap.exists()) {
         const data = snap.data();
         return {
+          reportCity: data.reportCity !== undefined ? data.reportCity : (APP_CONFIG.regency || "Solok"),
+          reportDate: data.reportDate !== undefined ? data.reportDate : "",
+          schoolLogoUrl: data.schoolLogoUrl !== undefined ? data.schoolLogoUrl : (APP_CONFIG.logoUrl || ""),
+          pesantrenLogoUrl: data.pesantrenLogoUrl || "",
+          accreditationText: data.accreditationText || "",
           headmasterName: data.headmasterName || ssotPrincipalName,
           headmasterTitle: data.headmasterTitle || "Kepala Sekolah / Kepala Madrasah",
           headmasterNipNiy: data.headmasterNipNiy || ssotPrincipalNipNiy,
@@ -58,6 +63,11 @@ export const midtermPrintSettingsService = {
 
       // Default baseline jika dokumen belum pernah dibuat
       return {
+        reportCity: APP_CONFIG.regency || "Solok",
+        reportDate: "",
+        schoolLogoUrl: APP_CONFIG.logoUrl || "",
+        pesantrenLogoUrl: "",
+        accreditationText: "",
         headmasterName: ssotPrincipalName,
         headmasterTitle: "Kepala Sekolah / Kepala Madrasah",
         headmasterNipNiy: ssotPrincipalNipNiy,
@@ -68,6 +78,11 @@ export const midtermPrintSettingsService = {
     } catch (error) {
       console.error("Error reading midterm print settings:", error);
       return {
+        reportCity: APP_CONFIG.regency || "Solok",
+        reportDate: "",
+        schoolLogoUrl: APP_CONFIG.logoUrl || "",
+        pesantrenLogoUrl: "",
+        accreditationText: "",
         headmasterName: APP_CONFIG.principalName || "H. Abdullah",
         headmasterTitle: "Kepala Sekolah / Kepala Madrasah",
         headmasterNipNiy: APP_CONFIG.principalNipNiy || "NIY. 202001001",
@@ -110,7 +125,7 @@ export const midtermPrintSettingsService = {
    * Menghapus aset gambar tertentu secara terisolasi tanpa mempengaruhi data lainnya.
    */
   async deleteAsset(
-    assetType: "headmasterSignature" | "schoolStamp" | "homeroomSignature",
+    assetType: "headmasterSignature" | "schoolStamp" | "homeroomSignature" | "schoolLogo" | "pesantrenLogo",
     classOrTeacherId?: string,
     updatedBy: string = "Admin"
   ): Promise<MidtermPrintSettings> {
@@ -120,6 +135,10 @@ export const midtermPrintSettingsService = {
       return await this.savePrintSettings({ headmasterSignatureUrl: "" }, updatedBy);
     } else if (assetType === "schoolStamp") {
       return await this.savePrintSettings({ schoolStampUrl: "" }, updatedBy);
+    } else if (assetType === "schoolLogo") {
+      return await this.savePrintSettings({ schoolLogoUrl: "" }, updatedBy);
+    } else if (assetType === "pesantrenLogo") {
+      return await this.savePrintSettings({ pesantrenLogoUrl: "" }, updatedBy);
     } else if (assetType === "homeroomSignature" && classOrTeacherId) {
       const updatedSigs = { ...(current.homeroomSignatures || {}) };
       delete updatedSigs[classOrTeacherId];

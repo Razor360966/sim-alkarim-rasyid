@@ -980,12 +980,15 @@ function MidtermPrintModal({
   };
 
   const printDateStr = useMemo(() => {
+    if (midtermPrintConfig?.reportDate && midtermPrintConfig.reportDate.trim()) {
+      return midtermPrintConfig.reportDate.trim();
+    }
     return new Date().toLocaleDateString("id-ID", {
       day: "numeric",
       month: "long",
       year: "numeric"
     });
-  }, []);
+  }, [midtermPrintConfig?.reportDate]);
 
   const handlePrint = () => {
     window.print();
