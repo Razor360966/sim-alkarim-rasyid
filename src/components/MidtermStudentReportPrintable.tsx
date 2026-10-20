@@ -36,36 +36,52 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
   const isPondok = reportType === "PONDOK";
   const isTerpadu = reportType === "TERPADU";
 
-  // Resolve Headers: Prioritize RTS customHeader if provided, else fallback to printConfig or identity
-  const genHeader = midtermPrintConfig?.customHeader?.institutionName
-    ? {
-        institutionName: midtermPrintConfig.customHeader.institutionName,
-        subTitle: midtermPrintConfig.customHeader.subTitle || "Sekolah Menengah Pertama Berbasis Pesantren",
-        address: midtermPrintConfig.customHeader.address || identity?.address || "Jl. Pendidikan No. 1, Kota Solok, Sumatera Barat",
-        phone: midtermPrintConfig.customHeader.phone || identity?.phone || "(021) 1234567",
-        email: midtermPrintConfig.customHeader.email || identity?.email || "info@alkarimrasyid.sch.id",
-        website: midtermPrintConfig.customHeader.website || identity?.website || "www.alkarimrasyid.sch.id"
-      }
-    : printConfig?.generalReportHeader || {
-        institutionName: identity?.schoolName || "SMP ALKARIM RASYID",
-        subTitle: "Sekolah Menengah Pertama Berbasis Pesantren",
-        address: identity?.address || "Jl. Pendidikan No. 1, Kota Solok, Sumatera Barat",
-        phone: identity?.phone || "(021) 1234567",
-        email: identity?.email || "info@alkarimrasyid.sch.id",
-        website: identity?.website || "www.alkarimrasyid.sch.id"
-      };
+  // Resolve Headers & Text elements according to target design (Image 2):
+  // 1. Nama Pondok Pesantren (Paling atas, tebal, ~17-19 pt, warna hijau gelap)
+  const pondokName =
+    midtermPrintConfig?.customHeader?.subTitle ||
+    "PONDOK PESANTREN QUR'AN DAN DAKWAH ALKARIM RASYID INDONESIA";
 
-  const pesHeader = printConfig?.pesantrenReportHeader || {
-    institutionName: "PONDOK PESANTREN ALKARIM RASYID",
-    subTitle: "Madrasah Diniyah & Pengasuhan Kepesantrenan",
-    address: identity?.address || "Jl. Pendidikan No. 1, Kota Solok, Sumatera Barat",
-    phone: "081234567890",
-    email: "pesantren@alkarimrasyid.sch.id",
-    website: identity?.website || "www.alkarimrasyid.sch.id"
+  // 2. Nama Sekolah (Di bawah nama pondok, tebal, ~15-17 pt, warna hijau gelap)
+  const schoolName =
+    midtermPrintConfig?.customHeader?.institutionName ||
+    identity?.schoolName ||
+    "SMP ALKARIM RASYID";
+
+  // 3. Keterangan Akreditasi (Di bawah nama sekolah, tebal, ~10-11 pt, warna hijau gelap)
+  const accreditationText =
+    (midtermPrintConfig?.accreditationText && midtermPrintConfig.accreditationText.trim()) ||
+    (midtermPrintConfig?.customHeader?.accreditationText && midtermPrintConfig.customHeader.accreditationText.trim()) ||
+    "";
+
+  // 4. Alamat Lengkap (~9-10 pt)
+  const kopAddress =
+    midtermPrintConfig?.customHeader?.address ||
+    (identity?.address && !identity.address.includes("Cibinong") && !identity.address.includes("Jl. Pendidikan No. 1")
+      ? identity.address
+      : "Ds. Sukabanjar Kec. Gedong Tataan Kab. Pesawaran - Lampung 35366");
+
+  // 5. Call Center dan E-mail (~9-10 pt)
+  const kopPhone =
+    midtermPrintConfig?.customHeader?.phone ||
+    (identity?.phone && !identity.phone.includes("(021)")
+      ? identity.phone
+      : "0822 8000 3961");
+
+  const kopEmail =
+    midtermPrintConfig?.customHeader?.email ||
+    (identity?.email && !identity.email.includes("info@alkarimrasyid.sch.id")
+      ? identity.email
+      : "ponpesalkarimrasyidindonesia@gmail.com");
+
+  const activeHeader = {
+    institutionName: schoolName,
+    subTitle: pondokName,
+    address: kopAddress,
+    phone: kopPhone,
+    email: kopEmail,
+    website: midtermPrintConfig?.customHeader?.website || identity?.website || "www.alkarimrasyid.sch.id"
   };
-
-  // For TERPADU or UMUM use genHeader; for PONDOK use pesHeader
-  const activeHeader = isPondok ? pesHeader : genHeader;
 
   // Resolve City & Date
   const reportCity =
@@ -85,18 +101,13 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
     (midtermPrintConfig?.reportDate && midtermPrintConfig.reportDate.trim()) ||
     formattedDate;
 
-  // Resolve Logos & Accreditation
+  // Resolve Logos: Pondok Logo (KIRI) & School Logo (KANAN)
   const schoolLogoUrl =
     midtermPrintConfig?.schoolLogoUrl !== undefined
       ? midtermPrintConfig.schoolLogoUrl
       : (identity?.logoUrl || "");
 
   const pesantrenLogoUrl = midtermPrintConfig?.pesantrenLogoUrl || "";
-
-  const accreditationText =
-    (midtermPrintConfig?.accreditationText && midtermPrintConfig.accreditationText.trim()) ||
-    (midtermPrintConfig?.customHeader?.accreditationText && midtermPrintConfig.customHeader.accreditationText.trim()) ||
-    "";
 
   // Resolve Headmaster & Signatures
   const headmasterName =
@@ -233,60 +244,92 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
       }`}
       style={{ minHeight: paperSize === "F4" ? "300mm" : "270mm" }}
     >
-      {/* 1. KOP SURAT RESMI */}
-      <div className="border-b-4 border-double border-black pb-2.5 mb-4">
-        <div className="flex items-center justify-between gap-4">
-          {/* Logo Sekolah (Kiri) */}
-          <div className="w-20 shrink-0 flex items-center justify-center">
-            {schoolLogoUrl ? (
-              <img
-                src={schoolLogoUrl}
-                alt="Logo Sekolah"
-                className="max-h-20 max-w-[80px] object-contain"
-                onError={(e) => {
-                  (e.currentTarget as HTMLElement).style.display = "none";
-                }}
-              />
-            ) : pesantrenLogoUrl ? (
-              <div className="w-20" />
-            ) : null}
-          </div>
-
-          {/* Teks Identitas Sekolah (Tengah) */}
-          <div className="flex-1 text-center">
-            <h2 className="text-lg font-black uppercase tracking-wider text-slate-900">
-              {activeHeader.institutionName}
-            </h2>
-            <p className="text-xs font-sans text-slate-700 font-bold uppercase tracking-wide mt-0.5">
-              {activeHeader.subTitle}
-            </p>
-            {accreditationText ? (
-              <p className="text-[11px] font-sans font-semibold text-slate-800 tracking-wide mt-0.5">
-                {accreditationText}
-              </p>
-            ) : null}
-            <p className="text-[11px] font-sans text-slate-700 mt-0.5">{activeHeader.address}</p>
-            <p className="text-[10px] font-sans text-slate-500 italic mt-0.5">
-              Telp: {activeHeader.phone || "-"} | Email: {activeHeader.email || "-"} | Website:{" "}
-              {activeHeader.website || "-"}
-            </p>
-          </div>
-
-          {/* Logo Pondok Pesantren (Kanan) atau Spacer Seimbang */}
-          <div className="w-20 shrink-0 flex items-center justify-center">
+      {/* 1. KOP SURAT RESMI (MENGIKUTI DESAIN GAMBAR ACUAN KEDUA) */}
+      <div className="pb-2 mb-4">
+        <div className="flex items-center justify-between gap-3 sm:gap-4">
+          {/* Logo Pondok Pesantren (KIRI) */}
+          <div className="w-24 sm:w-28 shrink-0 flex items-center justify-center">
             {pesantrenLogoUrl ? (
               <img
                 src={pesantrenLogoUrl}
                 alt="Logo Pondok Pesantren"
-                className="max-h-20 max-w-[80px] object-contain"
+                className="max-h-24 sm:max-h-28 max-w-[95px] sm:max-w-[110px] w-auto h-auto object-contain"
                 onError={(e) => {
                   (e.currentTarget as HTMLElement).style.display = "none";
                 }}
               />
             ) : schoolLogoUrl ? (
-              <div className="w-20" />
+              <div className="w-24 sm:w-28 shrink-0" />
             ) : null}
           </div>
+
+          {/* Teks Identitas KOP (TENGAH) */}
+          <div className="flex-1 text-center px-1 font-sans">
+            {/* 1. Nama Pondok Pesantren (Paling Besar, Huruf Kapital, Tebal, ~17-19 pt, Hijau Gelap) */}
+            <h1 className="text-[16pt] sm:text-[18pt] font-black uppercase tracking-wide text-[#064e3b] leading-snug">
+              {pondokName === "PONDOK PESANTREN QUR'AN DAN DAKWAH ALKARIM RASYID INDONESIA" ? (
+                <>
+                  <span>PONDOK PESANTREN QUR’AN DAN DAKWAH</span>
+                  <br />
+                  <span>ALKARIM RASYID INDONESIA</span>
+                </>
+              ) : (
+                pondokName
+              )}
+            </h1>
+
+            {/* 2. Nama Sekolah (Sedikit lebih kecil dari nama pondok, ~15-17 pt, Huruf Kapital, Tebal) */}
+            <h2 className="text-[13.5pt] sm:text-[15.5pt] font-black uppercase tracking-wide text-[#064e3b] mt-0.5 leading-snug">
+              {schoolName}
+            </h2>
+
+            {/* 3. Keterangan Akreditasi (Tepat di bawah nama sekolah, Tebal, ~10-11 pt, Hijau Gelap) */}
+            {accreditationText ? (
+              <p className="text-[10pt] sm:text-[10.5pt] font-bold uppercase tracking-wider text-[#064e3b] mt-0.5 leading-snug">
+                {accreditationText}
+              </p>
+            ) : null}
+
+            {/* 4. Alamat Lengkap (~9-10 pt, Regular) */}
+            <p className="text-[9pt] sm:text-[9.5pt] font-normal text-slate-800 mt-1 leading-normal">
+              {kopAddress}
+            </p>
+
+            {/* 5. Call Center dan E-mail (~9-10 pt, Regular) */}
+            {(kopPhone || kopEmail) ? (
+              <p className="text-[8.5pt] sm:text-[9pt] font-normal text-slate-800 mt-0.5 leading-normal">
+                {kopPhone ? (
+                  <span>
+                    Call Center : {kopPhone}
+                    {kopEmail ? ", " : ""}
+                  </span>
+                ) : null}
+                {kopEmail ? <span>E-mail : {kopEmail}</span> : null}
+              </p>
+            ) : null}
+          </div>
+
+          {/* Logo Sekolah (KANAN) */}
+          <div className="w-24 sm:w-28 shrink-0 flex items-center justify-center">
+            {schoolLogoUrl ? (
+              <img
+                src={schoolLogoUrl}
+                alt="Logo Sekolah"
+                className="max-h-24 sm:max-h-28 max-w-[95px] sm:max-w-[110px] w-auto h-auto object-contain"
+                onError={(e) => {
+                  (e.currentTarget as HTMLElement).style.display = "none";
+                }}
+              />
+            ) : pesantrenLogoUrl ? (
+              <div className="w-24 sm:w-28 shrink-0" />
+            ) : null}
+          </div>
+        </div>
+
+        {/* 6. Garis Pembatas KOP (Dua Lapis Warna Hijau Gelap Sesuai Gambar Acuan) */}
+        <div className="mt-2.5 w-full">
+          <div className="border-b-[3.5px] border-[#064e3b]" />
+          <div className="border-b-[1.5px] border-[#064e3b] mt-[2.5px]" />
         </div>
       </div>
 

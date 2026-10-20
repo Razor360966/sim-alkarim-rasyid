@@ -206,10 +206,19 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
       setCustomHeader(
         currentSettings?.customHeader || {
           institutionName: identity?.schoolName || "SMP ALKARIM RASYID",
-          subTitle: "Sekolah Menengah Pertama Berbasis Pesantren",
-          address: identity?.address || "Jl. Pendidikan No. 1, Kota Solok, Sumatera Barat",
-          phone: identity?.phone || "(021) 1234567",
-          email: identity?.email || "info@alkarimrasyid.sch.id",
+          subTitle: "PONDOK PESANTREN QUR'AN DAN DAKWAH ALKARIM RASYID INDONESIA",
+          address:
+            identity?.address && !identity.address.includes("Cibinong") && !identity.address.includes("Jl. Pendidikan No. 1")
+              ? identity.address
+              : "Ds. Sukabanjar Kec. Gedong Tataan Kab. Pesawaran - Lampung 35366",
+          phone:
+            identity?.phone && !identity.phone.includes("(021)")
+              ? identity.phone
+              : "0822 8000 3961",
+          email:
+            identity?.email && !identity.email.includes("info@alkarimrasyid.sch.id")
+              ? identity.email
+              : "ponpesalkarimrasyidindonesia@gmail.com",
           website: identity?.website || "www.alkarimrasyid.sch.id"
         }
       );
@@ -857,87 +866,14 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                 </div>
               </div>
 
-              {/* Upload Logo Sekolah & Logo Pondok (2 Kolom Sejajar) */}
+              {/* Upload Logo Pondok & Logo Sekolah (2 Kolom Sejajar: Pondok Kiri, Sekolah Kanan) */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* 1. Logo Sekolah (Kiri KOP) */}
-                <div className="p-4 rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800/70 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-800 dark:text-zinc-100 flex items-center gap-1.5">
-                      <Building className="w-3.5 h-3.5 text-emerald-600" />
-                      Logo Sekolah (Kiri KOP)
-                    </span>
-                    {schoolLogoUrl && (
-                      <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
-                        <CheckCircle2 className="w-3 h-3" /> Ada
-                      </span>
-                    )}
-                  </div>
-
-                  {schoolLogoUrl ? (
-                    <div className="flex items-center gap-3">
-                      <div className="w-20 h-20 bg-slate-50 dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-lg p-1.5 flex items-center justify-center overflow-hidden">
-                        <img
-                          src={schoolLogoUrl}
-                          alt="Logo Sekolah"
-                          className="max-h-full max-w-full object-contain"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-slate-200 hover:bg-slate-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-slate-800 dark:text-zinc-100 cursor-pointer inline-flex items-center gap-1">
-                          <Upload className="w-3 h-3" />
-                          <span>Ganti Logo</span>
-                          <input
-                            type="file"
-                            accept="image/png, image/jpeg, image/jpg"
-                            onChange={(e) =>
-                              handleFileUpload(e, setSchoolLogoUrl, "Logo Sekolah", 240, 240)
-                            }
-                            className="hidden"
-                          />
-                        </label>
-                        <div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSchoolLogoUrl("");
-                              toast("Logo sekolah dihapus.", "info");
-                            }}
-                            className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-900 inline-flex items-center gap-1 cursor-pointer"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                            <span>Hapus</span>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="border border-dashed border-slate-300 dark:border-zinc-700 rounded-xl p-4 text-center">
-                      <ImageIcon className="w-7 h-7 text-slate-400 mx-auto mb-1" />
-                      <p className="text-[11px] text-slate-500 dark:text-zinc-400">
-                        Belum ada logo sekolah
-                      </p>
-                      <label className="mt-2 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 cursor-pointer shadow-xs">
-                        <Upload className="w-3 h-3" />
-                        <span>Unggah Logo</span>
-                        <input
-                          type="file"
-                          accept="image/png, image/jpeg, image/jpg"
-                          onChange={(e) =>
-                            handleFileUpload(e, setSchoolLogoUrl, "Logo Sekolah", 240, 240)
-                          }
-                          className="hidden"
-                        />
-                      </label>
-                    </div>
-                  )}
-                </div>
-
-                {/* 2. Logo Pondok / Pesantren (Kanan KOP) */}
+                {/* 1. Logo Pondok Pesantren (Kiri KOP) */}
                 <div className="p-4 rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800/70 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-slate-800 dark:text-zinc-100 flex items-center gap-1.5">
                       <School className="w-3.5 h-3.5 text-emerald-600" />
-                      Logo Pondok Pesantren (Kanan KOP)
+                      Logo Pondok Pesantren (Kiri KOP)
                     </span>
                     {pesantrenLogoUrl && (
                       <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
@@ -1004,6 +940,79 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                     </div>
                   )}
                 </div>
+
+                {/* 2. Logo Sekolah (Kanan KOP) */}
+                <div className="p-4 rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800/70 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-800 dark:text-zinc-100 flex items-center gap-1.5">
+                      <Building className="w-3.5 h-3.5 text-emerald-600" />
+                      Logo Sekolah (Kanan KOP)
+                    </span>
+                    {schoolLogoUrl && (
+                      <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" /> Ada
+                      </span>
+                    )}
+                  </div>
+
+                  {schoolLogoUrl ? (
+                    <div className="flex items-center gap-3">
+                      <div className="w-20 h-20 bg-slate-50 dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-lg p-1.5 flex items-center justify-center overflow-hidden">
+                        <img
+                          src={schoolLogoUrl}
+                          alt="Logo Sekolah"
+                          className="max-h-full max-w-full object-contain"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-slate-200 hover:bg-slate-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-slate-800 dark:text-zinc-100 cursor-pointer inline-flex items-center gap-1">
+                          <Upload className="w-3 h-3" />
+                          <span>Ganti Logo</span>
+                          <input
+                            type="file"
+                            accept="image/png, image/jpeg, image/jpg"
+                            onChange={(e) =>
+                              handleFileUpload(e, setSchoolLogoUrl, "Logo Sekolah", 240, 240)
+                            }
+                            className="hidden"
+                          />
+                        </label>
+                        <div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSchoolLogoUrl("");
+                              toast("Logo sekolah dihapus.", "info");
+                            }}
+                            className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-900 inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            <span>Hapus</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="border border-dashed border-slate-300 dark:border-zinc-700 rounded-xl p-4 text-center">
+                      <ImageIcon className="w-7 h-7 text-slate-400 mx-auto mb-1" />
+                      <p className="text-[11px] text-slate-500 dark:text-zinc-400">
+                        Belum ada logo sekolah
+                      </p>
+                      <label className="mt-2 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 cursor-pointer shadow-xs">
+                        <Upload className="w-3 h-3" />
+                        <span>Unggah Logo</span>
+                        <input
+                          type="file"
+                          accept="image/png, image/jpeg, image/jpg"
+                          onChange={(e) =>
+                            handleFileUpload(e, setSchoolLogoUrl, "Logo Sekolah", 240, 240)
+                          }
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Keterangan Akreditasi */}
@@ -1018,19 +1027,34 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                   type="text"
                   value={accreditationText}
                   onChange={(e) => setAccreditationText(e.target.value)}
-                  className="w-full text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-2.5 font-medium text-slate-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-                  placeholder="e.g. Terakreditasi A (atau kosongkan jika tidak dicantumkan)"
+                  className="w-full text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-2.5 font-bold text-emerald-800 dark:text-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                  placeholder='e.g. TERAKREDITASI "B"'
                 />
                 <p className="text-[11px] text-slate-400">
-                  Teks akreditasi ini opsional dan akan dicetak tepat di bawah sub-judul lembaga pada KOP surat rapor.
+                  Teks akreditasi ini dicetak tepat di bawah nama sekolah pada KOP surat rapor (opsional, disembunyikan jika kosong).
                 </p>
               </div>
 
-              {/* Teks Identitas Sekolah */}
+              {/* Teks Identitas Lembaga */}
               <div className="space-y-3 pt-1">
                 <div>
                   <label className="text-xs font-semibold text-slate-700 dark:text-zinc-300 block mb-1">
-                    Nama Lembaga / Sekolah
+                    Nama Pondok Pesantren (Baris Atas KOP)
+                  </label>
+                  <input
+                    type="text"
+                    value={customHeader.subTitle || ""}
+                    onChange={(e) =>
+                      setCustomHeader((prev) => ({ ...prev, subTitle: e.target.value }))
+                    }
+                    className="w-full text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-2.5 font-bold text-slate-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                    placeholder="e.g. PONDOK PESANTREN QUR'AN DAN DAKWAH ALKARIM RASYID INDONESIA"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 dark:text-zinc-300 block mb-1">
+                    Nama Sekolah (Baris Kedua KOP)
                   </label>
                   <input
                     type="text"
@@ -1045,21 +1069,6 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
 
                 <div>
                   <label className="text-xs font-semibold text-slate-700 dark:text-zinc-300 block mb-1">
-                    Sub-Judul Lembaga
-                  </label>
-                  <input
-                    type="text"
-                    value={customHeader.subTitle || ""}
-                    onChange={(e) =>
-                      setCustomHeader((prev) => ({ ...prev, subTitle: e.target.value }))
-                    }
-                    className="w-full text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-2.5 font-medium text-slate-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-                    placeholder="e.g. Sekolah Menengah Pertama Berbasis Pesantren"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs font-semibold text-slate-700 dark:text-zinc-300 block mb-1">
                     Alamat Lengkap
                   </label>
                   <input
@@ -1069,13 +1078,14 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                       setCustomHeader((prev) => ({ ...prev, address: e.target.value }))
                     }
                     className="w-full text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-2.5 text-slate-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                    placeholder="e.g. Ds. Sukabanjar Kec. Gedong Tataan Kab. Pesawaran - Lampung 35366"
                   />
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs font-semibold text-slate-700 dark:text-zinc-300 block mb-1">
-                      Nomor Telepon
+                      Call Center / Nomor Telepon
                     </label>
                     <input
                       type="text"
@@ -1084,12 +1094,13 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                         setCustomHeader((prev) => ({ ...prev, phone: e.target.value }))
                       }
                       className="w-full text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-2.5 text-slate-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                      placeholder="e.g. 0822 8000 3961"
                     />
                   </div>
 
                   <div>
                     <label className="text-xs font-semibold text-slate-700 dark:text-zinc-300 block mb-1">
-                      Email / Website
+                      Email
                     </label>
                     <input
                       type="text"
@@ -1098,6 +1109,7 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                         setCustomHeader((prev) => ({ ...prev, email: e.target.value }))
                       }
                       className="w-full text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-2.5 text-slate-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                      placeholder="e.g. ponpesalkarimrasyidindonesia@gmail.com"
                     />
                   </div>
                 </div>
@@ -1114,41 +1126,10 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
 
             <div className="p-4 bg-slate-50 dark:bg-zinc-800/60 border border-slate-200 dark:border-zinc-700 rounded-xl space-y-4">
               <div className="bg-white text-black p-5 border border-slate-300 rounded-lg shadow-inner max-w-xl mx-auto font-sans text-xs space-y-4">
-                {/* 1. Mini KOP Preview */}
-                <div className="border-b-2 border-double border-black pb-2">
+                {/* 1. Mini KOP Preview (Pondok Kiri, Sekolah Kanan, Double Green Line) */}
+                <div className="pb-1.5">
                   <div className="flex items-center justify-between gap-2">
-                    {/* Logo Kiri */}
-                    <div className="w-12 shrink-0 flex items-center justify-center">
-                      {schoolLogoUrl ? (
-                        <img
-                          src={schoolLogoUrl}
-                          alt="Logo Sekolah"
-                          className="max-h-12 max-w-[48px] object-contain"
-                        />
-                      ) : pesantrenLogoUrl ? (
-                        <div className="w-12" />
-                      ) : null}
-                    </div>
-
-                    {/* Teks KOP */}
-                    <div className="flex-1 text-center">
-                      <p className="font-extrabold text-[12px] uppercase tracking-wide">
-                        {customHeader.institutionName || identity?.schoolName || "SMP ALKARIM RASYID"}
-                      </p>
-                      <p className="text-[9px] font-bold uppercase text-slate-700">
-                        {customHeader.subTitle || "Sekolah Menengah Pertama Berbasis Pesantren"}
-                      </p>
-                      {accreditationText ? (
-                        <p className="text-[8.5px] font-semibold text-slate-800">
-                          {accreditationText}
-                        </p>
-                      ) : null}
-                      <p className="text-[8px] text-slate-600">
-                        {customHeader.address || identity?.address || "Jl. Pendidikan No. 1, Kota Solok"}
-                      </p>
-                    </div>
-
-                    {/* Logo Kanan */}
+                    {/* Logo Pondok Pesantren (KIRI) */}
                     <div className="w-12 shrink-0 flex items-center justify-center">
                       {pesantrenLogoUrl ? (
                         <img
@@ -1160,6 +1141,46 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                         <div className="w-12" />
                       ) : null}
                     </div>
+
+                    {/* Teks KOP */}
+                    <div className="flex-1 text-center font-sans">
+                      <p className="font-black text-[10.5px] uppercase tracking-wide text-[#064e3b] leading-tight">
+                        {customHeader.subTitle || "PONDOK PESANTREN QUR'AN DAN DAKWAH ALKARIM RASYID INDONESIA"}
+                      </p>
+                      <p className="font-extrabold text-[9.5px] uppercase tracking-wide text-[#064e3b] mt-0.5 leading-tight">
+                        {customHeader.institutionName || identity?.schoolName || "SMP ALKARIM RASYID"}
+                      </p>
+                      {accreditationText ? (
+                        <p className="font-bold text-[8.5px] uppercase tracking-wider text-[#064e3b] mt-0.5 leading-tight">
+                          {accreditationText}
+                        </p>
+                      ) : null}
+                      <p className="text-[7.5px] text-slate-700 mt-0.5">
+                        {customHeader.address || "Ds. Sukabanjar Kec. Gedong Tataan Kab. Pesawaran - Lampung 35366"}
+                      </p>
+                      <p className="text-[7px] text-slate-600 mt-0.5">
+                        Call Center : {customHeader.phone || "0822 8000 3961"}, E-mail : {customHeader.email || "ponpesalkarimrasyidindonesia@gmail.com"}
+                      </p>
+                    </div>
+
+                    {/* Logo Sekolah (KANAN) */}
+                    <div className="w-12 shrink-0 flex items-center justify-center">
+                      {schoolLogoUrl ? (
+                        <img
+                          src={schoolLogoUrl}
+                          alt="Logo Sekolah"
+                          className="max-h-12 max-w-[48px] object-contain"
+                        />
+                      ) : pesantrenLogoUrl ? (
+                        <div className="w-12" />
+                      ) : null}
+                    </div>
+                  </div>
+
+                  {/* Garis Pembatas KOP Mini */}
+                  <div className="mt-2 w-full">
+                    <div className="border-b-[2px] border-[#064e3b]" />
+                    <div className="border-b-[1px] border-[#064e3b] mt-[1.5px]" />
                   </div>
                 </div>
 
