@@ -44,6 +44,7 @@ export const midtermPrintSettingsService = {
       if (snap.exists()) {
         const data = snap.data();
         return {
+          paperSize: data.paperSize || "A4",
           reportCity: data.reportCity !== undefined ? data.reportCity : (APP_CONFIG.regency || "Solok"),
           reportDate: data.reportDate !== undefined ? data.reportDate : "",
           schoolLogoUrl: data.schoolLogoUrl !== undefined ? data.schoolLogoUrl : (APP_CONFIG.logoUrl || ""),
@@ -65,6 +66,7 @@ export const midtermPrintSettingsService = {
 
       // Default baseline jika dokumen belum pernah dibuat
       return {
+        paperSize: "A4",
         reportCity: APP_CONFIG.regency || "Solok",
         reportDate: "",
         schoolLogoUrl: APP_CONFIG.logoUrl || "",
@@ -82,6 +84,7 @@ export const midtermPrintSettingsService = {
     } catch (error) {
       console.error("Error reading midterm print settings:", error);
       return {
+        paperSize: "A4",
         reportCity: APP_CONFIG.regency || "Solok",
         reportDate: "",
         schoolLogoUrl: APP_CONFIG.logoUrl || "",

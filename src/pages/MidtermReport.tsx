@@ -217,9 +217,14 @@ export default function MidtermReport() {
     setError(null);
 
     try {
+      const activeYear = academicYears.find((y) => y.id === selectedAcademicYearId);
+      const activeSem = semesters.find((s) => s.id === selectedSemesterId);
+
       const result = await midtermReportService.getMidtermReportData({
         academicYearId: selectedAcademicYearId,
+        academicYearName: activeYear?.name || activeYear?.year,
         semesterId: selectedSemesterId,
+        semesterName: activeSem?.name,
         classId: selectedClassId,
         reportType
       });
@@ -1090,9 +1095,16 @@ function MidtermPrintModal({
     initialStudentId || (context.students[0]?.studentId ?? "")
   );
   const [paperSize, setPaperSize] = useState<"A4" | "F4">(
-    reportType === "PONDOK" ? "F4" : "A4"
+    midtermPrintConfig?.paperSize || (reportType === "PONDOK" ? "F4" : "A4")
   );
   const [searchStudent, setSearchStudent] = useState<string>("");
+
+  // Sync paperSize if midtermPrintConfig updates
+  useEffect(() => {
+    if (midtermPrintConfig?.paperSize) {
+      setPaperSize(midtermPrintConfig.paperSize);
+    }
+  }, [midtermPrintConfig?.paperSize]);
 
   // Ensure selectedStudentId exists in current context
   useEffect(() => {
@@ -1221,7 +1233,7 @@ function MidtermPrintModal({
       <style>{`
         @media print {
           @page {
-            size: ${paperSize === "F4" ? "215mm 330mm" : "A4"} portrait;
+            size: ${paperSize === "F4" ? "215mm 330mm" : "210mm 297mm"} portrait;
             margin: 10mm 15mm;
           }
 
@@ -1280,6 +1292,8 @@ function MidtermPrintModal({
             max-height: none !important;
             overflow: visible !important;
             border-radius: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
           }
 
           body.rts-print-active #rts-print-document-container,
@@ -1289,8 +1303,11 @@ function MidtermPrintModal({
             background: transparent !important;
             overflow: visible !important;
             width: 100% !important;
+            max-width: 100% !important;
           }
 
+          body.rts-print-active .print-batch-wrapper,
+          .print-batch-wrapper,
           body.rts-print-active .print-paper-sheet,
           .print-paper-sheet {
             box-shadow: none !important;
@@ -1313,6 +1330,7 @@ function MidtermPrintModal({
             border: none !important;
             box-shadow: none !important;
             width: 100% !important;
+            max-width: 100% !important;
             box-sizing: border-box !important;
           }
 
@@ -1525,7 +1543,13 @@ function MidtermPrintModal({
           className="p-4 sm:p-8 overflow-y-auto flex-1 bg-slate-100 dark:bg-zinc-950/70 print:p-0 print:bg-white print:overflow-visible"
         >
           {mode === "BATCH" && (
-            <div className="mb-4 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 text-amber-800 dark:text-amber-300 text-xs flex items-center justify-between no-print rts-no-print max-w-4xl mx-auto">
+            <div
+              className="mb-4 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 text-amber-800 dark:text-amber-300 text-xs flex items-center justify-between no-print rts-no-print mx-auto"
+              style={{
+                maxWidth: paperSize === "F4" ? "215mm" : "210mm",
+                width: "100%"
+              }}
+            >
               <div className="flex items-center gap-2">
                 <Printer className="w-4 h-4 shrink-0" />
                 <span>
@@ -1541,7 +1565,13 @@ function MidtermPrintModal({
             </div>
           ) : mode === "SINGLE" ? (
             selectedStudent && (
-              <div className="print-paper-sheet max-w-4xl mx-auto shadow-md rounded-lg overflow-hidden">
+              <div
+                className="print-paper-sheet mx-auto shadow-md rounded-lg overflow-hidden transition-all"
+                style={{
+                  maxWidth: paperSize === "F4" ? "215mm" : "210mm",
+                  width: "100%"
+                }}
+              >
                 <MidtermStudentReportPrintable
                   student={selectedStudent}
                   context={context}
@@ -1556,9 +1586,22 @@ function MidtermPrintModal({
               </div>
             )
           ) : (
-            <div className="space-y-8 print:space-y-0 max-w-4xl mx-auto">
+            <div
+              className="print-batch-wrapper space-y-8 print:space-y-0 mx-auto transition-all"
+              style={{
+                maxWidth: paperSize === "F4" ? "215mm" : "210mm",
+                width: "100%"
+              }}
+            >
               {context.students.map((st, idx) => (
-                <div key={st.studentId} className="print-paper-sheet shadow-md rounded-lg overflow-hidden">
+                <div
+                  key={st.studentId}
+                  className="print-paper-sheet shadow-md rounded-lg overflow-hidden"
+                  style={{
+                    maxWidth: paperSize === "F4" ? "215mm" : "210mm",
+                    width: "100%"
+                  }}
+                >
                   <div className="bg-slate-200 dark:bg-zinc-800 p-1.5 px-3 text-[11px] font-bold text-slate-600 dark:text-zinc-300 flex justify-between items-center no-print rts-no-print border-b">
                     <span>Rapor Siswa #{idx + 1}: {st.studentName}</span>
                     <span className="font-mono text-[10px]">NIS: {st.nis || "-"}</span>

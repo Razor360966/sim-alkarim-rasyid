@@ -102,6 +102,37 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
     (midtermPrintConfig?.reportDate && midtermPrintConfig.reportDate.trim()) ||
     formattedDate;
 
+  // Resolve Academic Year cleanly: prefer name from context, or formatted academicYearId
+  const displayAcademicYear = React.useMemo(() => {
+    if (context.academicYearName && context.academicYearName.trim()) {
+      return context.academicYearName.trim();
+    }
+    const rawId = (context.academicYearId || "").trim();
+    if (/^\d{4}\/\d{4}$/.test(rawId)) {
+      return rawId;
+    }
+    const cleaned = rawId.replace(/^ay[-_]/i, "").replace(/[-_]/g, "/");
+    if (/^\d{4}\/\d{4}$/.test(cleaned)) {
+      return cleaned;
+    }
+    return rawId || "2024/2025";
+  }, [context.academicYearName, context.academicYearId]);
+
+  // Resolve Semester cleanly: prefer semesterName, or clean up semesterId
+  const displaySemester = React.useMemo(() => {
+    const raw = (context.semesterName || context.semesterId || "").trim();
+    if (/^semester\s+/i.test(raw)) {
+      return raw;
+    }
+    if (/^(1|ganjil|sem-1|sem_1)$/i.test(raw)) {
+      return "Semester Ganjil";
+    }
+    if (/^(2|genap|sem-2|sem_2)$/i.test(raw)) {
+      return "Semester Genap";
+    }
+    return raw ? `Semester ${raw}` : "Semester Ganjil";
+  }, [context.semesterName, context.semesterId]);
+
   // Resolve Logos: Pondok Logo (KIRI) & School Logo (KANAN)
   const schoolLogoUrl =
     midtermPrintConfig?.schoolLogoUrl !== undefined
@@ -263,34 +294,40 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
 
   return (
     <div
-      className={`student-report-card bg-white text-black font-serif p-6 sm:p-8 max-w-4xl mx-auto border border-slate-300 print:border-none print:p-0 print:shadow-none print:min-h-0 print:w-full print:max-w-none ${
+      className={`student-report-card bg-white text-black font-serif mx-auto border border-slate-300 print:border-none print:p-0 print:shadow-none print:min-h-0 print:w-full print:max-w-none ${
         isSinglePage ? "print:break-after-page" : ""
       }`}
-      style={{ minHeight: paperSize === "F4" ? "300mm" : "270mm" }}
+      style={{
+        width: "100%",
+        maxWidth: paperSize === "F4" ? "215mm" : "210mm",
+        minHeight: paperSize === "F4" ? "330mm" : "297mm",
+        padding: "10mm 15mm",
+        boxSizing: "border-box"
+      }}
     >
       {/* 1. KOP SURAT RESMI (MENGIKUTI DESAIN GAMBAR ACUAN KEDUA) */}
-      <div className="pb-2 mb-4">
-        <div className="flex items-center justify-between gap-3 sm:gap-4">
+      <div className="w-full pb-2 mb-3">
+        <div className="flex items-center justify-between gap-3 w-full">
           {/* Logo Pondok Pesantren (KIRI) */}
-          <div className="w-24 sm:w-28 shrink-0 flex items-center justify-center">
+          <div className="w-[22mm] sm:w-[24mm] shrink-0 flex items-center justify-center">
             {pesantrenLogoUrl ? (
               <img
                 src={pesantrenLogoUrl}
                 alt="Logo Pondok Pesantren"
-                className="max-h-24 sm:max-h-28 max-w-[95px] sm:max-w-[110px] w-auto h-auto object-contain"
+                className="max-h-20 sm:max-h-24 max-w-[22mm] sm:max-w-[24mm] w-auto h-auto object-contain"
                 onError={(e) => {
                   (e.currentTarget as HTMLElement).style.display = "none";
                 }}
               />
             ) : schoolLogoUrl ? (
-              <div className="w-24 sm:w-28 shrink-0" />
+              <div className="w-[22mm] sm:w-[24mm] shrink-0" />
             ) : null}
           </div>
 
           {/* Teks Identitas KOP (TENGAH) */}
-          <div className="flex-1 text-center px-1 font-sans">
+          <div className="flex-1 text-center font-sans">
             {/* 1. Nama Pondok Pesantren (Paling Besar, Huruf Kapital, Tebal, ~17-19 pt, Hijau Gelap) */}
-            <h1 className="text-[16pt] sm:text-[18pt] font-black uppercase tracking-wide text-[#064e3b] leading-snug">
+            <h1 className="text-[15pt] sm:text-[17pt] font-black uppercase tracking-wide text-[#064e3b] leading-tight">
               {pondokName === "PONDOK PESANTREN QUR'AN DAN DAKWAH ALKARIM RASYID INDONESIA" ? (
                 <>
                   <span>PONDOK PESANTREN QUR’AN DAN DAKWAH</span>
@@ -303,25 +340,25 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
             </h1>
 
             {/* 2. Nama Sekolah (Sedikit lebih kecil dari nama pondok, ~15-17 pt, Huruf Kapital, Tebal) */}
-            <h2 className="text-[13.5pt] sm:text-[15.5pt] font-black uppercase tracking-wide text-[#064e3b] mt-0.5 leading-snug">
+            <h2 className="text-[13pt] sm:text-[14.5pt] font-black uppercase tracking-wide text-[#064e3b] mt-0.5 leading-tight">
               {schoolName}
             </h2>
 
             {/* 3. Keterangan Akreditasi (Tepat di bawah nama sekolah, Tebal, ~10-11 pt, Hijau Gelap) */}
             {accreditationText ? (
-              <p className="text-[10pt] sm:text-[10.5pt] font-bold uppercase tracking-wider text-[#064e3b] mt-0.5 leading-snug">
+              <p className="text-[9.5pt] sm:text-[10pt] font-bold uppercase tracking-wider text-[#064e3b] mt-0.5 leading-tight">
                 {accreditationText}
               </p>
             ) : null}
 
             {/* 4. Alamat Lengkap (~9-10 pt, Regular) */}
-            <p className="text-[9pt] sm:text-[9.5pt] font-normal text-slate-800 mt-1 leading-normal">
+            <p className="text-[8.5pt] sm:text-[9pt] font-normal text-slate-800 mt-1 leading-tight">
               {kopAddress}
             </p>
 
             {/* 5. Call Center dan E-mail (~9-10 pt, Regular) */}
             {(kopPhone || kopEmail) ? (
-              <p className="text-[8.5pt] sm:text-[9pt] font-normal text-slate-800 mt-0.5 leading-normal">
+              <p className="text-[8pt] sm:text-[8.5pt] font-normal text-slate-800 mt-0.5 leading-tight">
                 {kopPhone ? (
                   <span>
                     Call Center : {kopPhone}
@@ -334,31 +371,31 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
           </div>
 
           {/* Logo Sekolah (KANAN) */}
-          <div className="w-24 sm:w-28 shrink-0 flex items-center justify-center">
+          <div className="w-[22mm] sm:w-[24mm] shrink-0 flex items-center justify-center">
             {schoolLogoUrl ? (
               <img
                 src={schoolLogoUrl}
                 alt="Logo Sekolah"
-                className="max-h-24 sm:max-h-28 max-w-[95px] sm:max-w-[110px] w-auto h-auto object-contain"
+                className="max-h-20 sm:max-h-24 max-w-[22mm] sm:max-w-[24mm] w-auto h-auto object-contain"
                 onError={(e) => {
                   (e.currentTarget as HTMLElement).style.display = "none";
                 }}
               />
             ) : pesantrenLogoUrl ? (
-              <div className="w-24 sm:w-28 shrink-0" />
+              <div className="w-[22mm] sm:w-[24mm] shrink-0" />
             ) : null}
           </div>
         </div>
 
         {/* 6. Garis Pembatas KOP (Dua Lapis Warna Hijau Gelap Sesuai Gambar Acuan) */}
-        <div className="mt-2.5 w-full">
-          <div className="border-b-[3.5px] border-[#064e3b]" />
-          <div className="border-b-[1.5px] border-[#064e3b] mt-[2.5px]" />
+        <div className="mt-2 w-full">
+          <div className="border-b-[3px] border-[#064e3b] w-full" />
+          <div className="border-b-[1.5px] border-[#064e3b] mt-[2px] w-full" />
         </div>
       </div>
 
       {/* 2. JUDUL RAPOR */}
-      <div className="text-center mb-4">
+      <div className="w-full text-center mb-3">
         <h1 className="text-sm sm:text-base font-extrabold tracking-wider uppercase underline">
           LAPORAN HASIL BELAJAR TENGAH SEMESTER (RAPOR BAYANGAN)
         </h1>
@@ -370,30 +407,29 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
             : "Mata Pelajaran Umum (Kurikulum Merdeka)"}
         </p>
         <p className="text-[11px] font-sans text-slate-600 mt-0.5">
-          Tahun Ajaran {context.academicYearId || "2024/2025"} — Semester{" "}
-          {context.semesterId || "Ganjil"}
+          Tahun Pelajaran {displayAcademicYear} — {displaySemester}
         </p>
       </div>
 
       {/* 3. METADATA IDENTITAS SISWA (Hanya ditampilkan SATU kali) */}
-      <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs font-sans mb-4 border border-black p-2.5 rounded-xs bg-slate-50/40">
-        <div className="flex">
-          <span className="w-36 text-slate-600 font-medium">Nama Peserta Didik</span>
-          <span className="font-bold">: {student.studentName}</span>
+      <div className="w-full grid grid-cols-2 gap-x-6 gap-y-1 text-xs font-sans mb-3 border border-black p-2.5 rounded-xs bg-slate-50/40">
+        <div className="flex items-baseline">
+          <span className="w-32 sm:w-36 text-slate-600 font-medium shrink-0">Nama Peserta Didik</span>
+          <span className="font-bold truncate">: {student.studentName}</span>
         </div>
-        <div className="flex">
-          <span className="w-32 text-slate-600 font-medium">Kelas / Rombel</span>
-          <span className="font-bold">: {context.className}</span>
+        <div className="flex items-baseline">
+          <span className="w-28 sm:w-32 text-slate-600 font-medium shrink-0">Kelas / Rombel</span>
+          <span className="font-bold truncate">: {context.className}</span>
         </div>
-        <div className="flex">
-          <span className="w-36 text-slate-600 font-medium">NIS / NISN</span>
-          <span>
+        <div className="flex items-baseline">
+          <span className="w-32 sm:w-36 text-slate-600 font-medium shrink-0">NIS / NISN</span>
+          <span className="truncate">
             : {student.nis || "-"} / {student.nisn || "-"}
           </span>
         </div>
-        <div className="flex">
-          <span className="w-32 text-slate-600 font-medium">Wali Kelas</span>
-          <span className="font-semibold">: {homeroomTeacherName}</span>
+        <div className="flex items-baseline">
+          <span className="w-28 sm:w-32 text-slate-600 font-medium shrink-0">Wali Kelas</span>
+          <span className="font-semibold truncate">: {homeroomTeacherName}</span>
         </div>
       </div>
 
@@ -483,15 +519,15 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
         </div>
       ) : (
         /* FORMAT TUNGGAL: RAPOR UMUM ATAU RAPOR PONDOK */
-        <div className="mb-4 print:break-inside-avoid">
-          <table className="w-full text-xs border-collapse border border-black font-sans">
+        <div className="border border-black overflow-hidden print:break-inside-avoid mb-3">
+          <table className="w-full text-xs border-collapse font-sans">
             <thead>
               <tr className="bg-slate-100 border-b border-black text-center font-bold">
                 <th className="p-1.5 border-r border-black w-10">No</th>
-                <th className="p-1.5 border-r border-black text-left min-w-[220px]">Mata Pelajaran</th>
+                <th className="p-1.5 border-r border-black text-left min-w-[200px]">Mata Pelajaran</th>
                 <th className="p-1.5 border-r border-black w-16">KKM</th>
                 <th className="p-1.5 border-r border-black w-24">Nilai UTS</th>
-                <th className="p-1.5 w-36">Keterangan</th>
+                <th className="p-1.5 w-32">Keterangan</th>
               </tr>
             </thead>
             <tbody>
@@ -528,7 +564,7 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
       )}
 
       {/* 5. CATATAN PERKEMBANGAN TENGAH SEMESTER */}
-      <div className="border border-black p-2.5 rounded-xs font-sans text-xs mb-6 bg-slate-50/20 print:break-inside-avoid">
+      <div className="w-full border border-black p-2.5 rounded-xs font-sans text-xs mb-4 bg-slate-50/20 print:break-inside-avoid">
         <h4 className="font-bold border-b border-black/30 pb-0.5 mb-1 text-slate-900">
           Catatan Evaluasi Tengah Semester:
         </h4>
@@ -541,9 +577,9 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
       </div>
 
       {/* 6. TANDA TANGAN RESMI (2 KOLOM SEJAJAR: WALI KELAS & KEPALA SEKOLAH DENGAN CAP) */}
-      <div className="text-xs font-sans pt-2 print:break-inside-avoid">
+      <div className="w-full text-xs font-sans pt-1 print:break-inside-avoid">
         {/* Baris Tempat, Tanggal & Mengetahui (Sejajar di atas kolom kanan) */}
-        <div className="grid grid-cols-2 gap-8 mb-1">
+        <div className="grid grid-cols-2 gap-8 mb-1 w-full">
           <div /> {/* Spacer kolom kiri */}
           <div className="text-center">
             <p className="text-xs text-slate-800">{reportCity}, {reportDate}</p>
@@ -552,7 +588,7 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
         </div>
 
         {/* Baris Dua Kolom Penandatangan yang SEJAJAR SECARA VERTIKAL */}
-        <div className="grid grid-cols-2 gap-8 text-center">
+        <div className="grid grid-cols-2 gap-8 text-center w-full">
           {/* Kolom 1: Wali Kelas */}
           <div className="flex flex-col justify-between h-36">
             <div>

@@ -134,7 +134,9 @@ export function filterMidtermSubjects(
  */
 export function assembleMidtermReportContext(params: {
   academicYearId: string;
+  academicYearName?: string;
   semesterId: string;
+  semesterName?: string;
   classId: string;
   className: string;
   gradeLevel?: string;
@@ -151,7 +153,9 @@ export function assembleMidtermReportContext(params: {
 }): MidtermReportContext {
   const {
     academicYearId,
+    academicYearName,
     semesterId,
+    semesterName,
     classId,
     className,
     gradeLevel,
@@ -205,7 +209,9 @@ export function assembleMidtermReportContext(params: {
 
   return {
     academicYearId,
+    academicYearName,
     semesterId,
+    semesterName,
     classId,
     className,
     gradeLevel,
@@ -228,6 +234,34 @@ export const midtermReportService = {
    */
   async getMidtermReportData(params: GetMidtermReportParams): Promise<MidtermReportContext> {
     const { academicYearId, semesterId, classId, reportType } = params;
+    let academicYearName = params.academicYearName;
+    let semesterName = params.semesterName;
+
+    // Resolve academicYearName if not supplied
+    if (!academicYearName && academicYearId) {
+      try {
+        const aySnap = await getDoc(doc(db, "academic_years", academicYearId));
+        if (aySnap.exists()) {
+          const ayData = aySnap.data();
+          academicYearName = ayData.name || ayData.year;
+        }
+      } catch (e) {
+        console.warn("Could not fetch academic_year in getMidtermReportData:", e);
+      }
+    }
+
+    // Resolve semesterName if not supplied
+    if (!semesterName && semesterId) {
+      try {
+        const semSnap = await getDoc(doc(db, "semesters", semesterId));
+        if (semSnap.exists()) {
+          const semData = semSnap.data();
+          semesterName = semData.name;
+        }
+      } catch (e) {
+        console.warn("Could not fetch semester in getMidtermReportData:", e);
+      }
+    }
 
     // 1. Fetch Class document
     const classDocRef = doc(db, "classes", classId);
@@ -424,7 +458,9 @@ export const midtermReportService = {
     // Assemble and return final context
     return assembleMidtermReportContext({
       academicYearId,
+      academicYearName,
       semesterId,
+      semesterName,
       classId,
       className,
       gradeLevel,

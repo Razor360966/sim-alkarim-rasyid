@@ -43,7 +43,9 @@ export interface MidtermReportStudent {
 
 export interface MidtermReportContext {
   academicYearId: string;
+  academicYearName?: string;
   semesterId: string;
+  semesterName?: string;
   classId: string;
   className: string;
   gradeLevel?: string;
@@ -63,7 +65,9 @@ export interface MidtermReportContext {
 
 export interface GetMidtermReportParams {
   academicYearId: string;
+  academicYearName?: string;
   semesterId: string;
+  semesterName?: string;
   classId: string;
   reportType: MidtermReportType;
   excludedSubjectIds?: string[];
@@ -89,6 +93,7 @@ export interface MidtermHomeroomTeacherIdentity {
 
 export interface MidtermPrintSettings {
   customHeader?: MidtermReportHeaderConfig;
+  paperSize?: "A4" | "F4";
   reportCity?: string; // e.g. "Solok"
   reportDate?: string; // e.g. "18 Oktober 2026"
   schoolLogoUrl?: string; // Base64 dataUrl or image URL

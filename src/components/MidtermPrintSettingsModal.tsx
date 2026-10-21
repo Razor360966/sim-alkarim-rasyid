@@ -112,6 +112,7 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
   // Form State: Tempat & Tanggal Rapor
   const [reportCity, setReportCity] = useState<string>("Solok");
   const [reportDate, setReportDate] = useState<string>("");
+  const [paperSize, setPaperSize] = useState<"A4" | "F4">("A4");
 
   // Form State: Kepala Sekolah
   const [headmasterName, setHeadmasterName] = useState<string>("");
@@ -168,6 +169,7 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
 
       setReportCity(city);
       setReportDate(currentSettings?.reportDate || defaultDateStr);
+      setPaperSize(currentSettings?.paperSize || "A4");
 
       // 2. Kepala Sekolah
       const hName =
@@ -423,6 +425,7 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
     setIsSaving(true);
     try {
       const payload: MidtermPrintSettings = {
+        paperSize: paperSize || "A4",
         reportCity: reportCity.trim(),
         reportDate: reportDate.trim(),
         schoolLogoUrl: schoolLogoUrl,
@@ -581,7 +584,7 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                   Tanggal ini dicetak pada bagian penandatangan Kepala Sekolah (contoh: <em>Solok, 18 Oktober 2026</em>). Tersimpan persisten dan tidak berubah otomatis setiap kali rapor dibuka.
                 </p>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
                   <div>
                     <label className="text-xs font-bold text-slate-700 dark:text-zinc-300 block mb-1">
                       Kota / Kabupaten Penandatanganan
@@ -606,6 +609,20 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                       className="w-full text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-2.5 font-medium text-slate-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                       placeholder="e.g. 18 Oktober 2026"
                     />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-zinc-300 block mb-1">
+                      Ukuran Kertas Standar
+                    </label>
+                    <select
+                      value={paperSize}
+                      onChange={(e) => setPaperSize(e.target.value as "A4" | "F4")}
+                      className="w-full text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-2.5 font-medium text-slate-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                    >
+                      <option value="A4">A4 (210 × 297 mm)</option>
+                      <option value="F4">F4 / Folio (215 × 330 mm)</option>
+                    </select>
                   </div>
                 </div>
               </div>
