@@ -66,6 +66,7 @@ export interface GetMidtermReportParams {
   semesterId: string;
   classId: string;
   reportType: MidtermReportType;
+  excludedSubjectIds?: string[];
 }
 
 export interface MidtermReportHeaderConfig {
@@ -80,6 +81,12 @@ export interface MidtermReportHeaderConfig {
   pesantrenLogoUrl?: string;
 }
 
+export interface MidtermHomeroomTeacherIdentity {
+  name?: string; // Nama lengkap beserta gelar
+  niy?: string;  // NIY wali kelas (string, preserving leading zeros)
+  signatureUrl?: string; // Tanda tangan wali kelas per rombel (Base64 DataURL)
+}
+
 export interface MidtermPrintSettings {
   customHeader?: MidtermReportHeaderConfig;
   reportCity?: string; // e.g. "Solok"
@@ -92,8 +99,12 @@ export interface MidtermPrintSettings {
   headmasterNipNiy?: string;
   headmasterSignatureUrl?: string; // Base64 dataUrl or image URL
   schoolStampUrl?: string; // Base64 dataUrl or image URL
+  // Pengaturan identitas & tanda tangan wali kelas per rombel (dikelola berdasarkan ID rombel kanonis)
+  homeroomTeachers?: Record<string, MidtermHomeroomTeacherIdentity>;
   // Backward compatibility for previously saved data
   homeroomSignatures?: Record<string, string>;
+  // Daftar ID mapel yang dinonaktifkan khusus dari lingkup Rapor Tengah Semester (RTS)
+  excludedSubjectIds?: string[];
   updatedAt?: string;
   updatedBy?: string;
 }

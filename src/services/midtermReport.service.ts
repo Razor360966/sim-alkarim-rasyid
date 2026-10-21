@@ -31,10 +31,11 @@ import {
   MidtermReportContext,
   GetMidtermReportParams
 } from "../types/midtermReport.types";
-import { Student, Subject, Class } from "../types";
+import { Student, Subject, Class, Teacher } from "../types";
 import { getActiveStudents } from "../utils/studentHelper";
 import { isSubjectReportVisible } from "../utils/subjectHelper";
 import { classifySubjectType } from "./eRapor.service";
+import { formatTeacherFullNameWithTitles } from "../utils/teacherFilterHelper";
 
 /**
  * Pure function to resolve Midterm score and its status.
@@ -79,12 +80,18 @@ export function filterMidtermSubjects(
   scheduleSubjectIds: string[],
   subjectsMap: Map<string, Subject>,
   reportType: MidtermReportType,
-  pondokSchemesMap?: Map<string, { hasUts?: boolean }>
+  pondokSchemesMap?: Map<string, { hasUts?: boolean }>,
+  excludedSubjectIds?: string[]
 ): MidtermReportSubject[] {
   const uniqueSubjectIds = Array.from(new Set(scheduleSubjectIds));
   const results: MidtermReportSubject[] = [];
 
   for (const subjId of uniqueSubjectIds) {
+    // Filter out subjects explicitly excluded from RTS scope by Admin
+    if (excludedSubjectIds && excludedSubjectIds.includes(subjId)) {
+      continue;
+    }
+
     const subj = subjectsMap.get(subjId);
     if (!subj) continue;
 
@@ -133,6 +140,7 @@ export function assembleMidtermReportContext(params: {
   gradeLevel?: string;
   homeroomTeacherId?: string;
   homeroomTeacherName?: string;
+  homeroomTeacherNiy?: string;
   reportType: MidtermReportType;
   students: Student[];
   subjects: MidtermReportSubject[];
@@ -149,6 +157,7 @@ export function assembleMidtermReportContext(params: {
     gradeLevel,
     homeroomTeacherId,
     homeroomTeacherName,
+    homeroomTeacherNiy,
     reportType,
     students,
     subjects,
@@ -203,6 +212,7 @@ export function assembleMidtermReportContext(params: {
     reportType,
     homeroomTeacherId,
     homeroomTeacherName,
+    homeroomTeacherNiy,
     subjects,
     umumSubjects,
     pondokSubjects,
@@ -225,8 +235,41 @@ export const midtermReportService = {
     const classData = classSnap.exists() ? (classSnap.data() as Class) : null;
     const className = classData?.name || "Kelas";
     const gradeLevel = classData?.gradeLevel || undefined;
-    const homeroomTeacherId = classData?.homeroomTeacherId || undefined;
-    const homeroomTeacherName = classData?.homeroomTeacherName || undefined;
+    const homeroomTeacherId = classData?.homeroomTeacherId || (classData as any)?.waliKelasId || undefined;
+    let homeroomTeacherName = classData?.homeroomTeacherName || undefined;
+    let homeroomTeacherNiy = (classData as any)?.homeroomTeacherNiy || undefined;
+
+    // Resolve homeroom teacher full name with academic titles (gelar) & NIY from master teachers
+    if (homeroomTeacherId) {
+      try {
+        const teacherDoc = await getDoc(doc(db, "teachers", homeroomTeacherId));
+        let tData: Teacher | null = teacherDoc.exists() ? (teacherDoc.data() as Teacher) : null;
+
+        if (!tData) {
+          const tQuery = query(
+            collection(db, "teachers"),
+            where("teacherId", "==", homeroomTeacherId),
+            where("isDeleted", "==", false)
+          );
+          const tSnap = await getDocs(tQuery);
+          if (!tSnap.empty) {
+            tData = tSnap.docs[0].data() as Teacher;
+          }
+        }
+
+        if (tData) {
+          const formatted = formatTeacherFullNameWithTitles(tData);
+          if (formatted) {
+            homeroomTeacherName = formatted;
+          }
+          if (tData.niy) {
+            homeroomTeacherNiy = tData.niy;
+          }
+        }
+      } catch (err) {
+        console.warn("Could not fetch homeroom teacher data in getMidtermReportData:", err);
+      }
+    }
 
     // 2. Fetch all students for the class in a single batch query
     const studentsCol = collection(db, "students");
@@ -326,17 +369,33 @@ export const midtermReportService = {
       });
     }
 
+    // 0. Resolve excludedSubjectIds from params or from school_settings/midterm_print
+    let excludedSubjectIds = params.excludedSubjectIds;
+    if (!excludedSubjectIds) {
+      try {
+        const printSnap = await getDoc(doc(db, "school_settings", "midterm_print"));
+        if (printSnap.exists()) {
+          const pData = printSnap.data();
+          if (Array.isArray(pData.excludedSubjectIds)) {
+            excludedSubjectIds = pData.excludedSubjectIds;
+          }
+        }
+      } catch (e) {
+        console.warn("Could not fetch school_settings/midterm_print in getMidtermReportData:", e);
+      }
+    }
+
     // Filter Subjects based on reportType
     let subjects: MidtermReportSubject[] = [];
     let umumSubjects: MidtermReportSubject[] | undefined = undefined;
     let pondokSubjects: MidtermReportSubject[] | undefined = undefined;
 
     if (reportType === "TERPADU") {
-      umumSubjects = filterMidtermSubjects(scheduleSubjectIds, subjectsMap, "UMUM", pondokSchemesMap);
-      pondokSubjects = filterMidtermSubjects(scheduleSubjectIds, subjectsMap, "PONDOK", pondokSchemesMap);
+      umumSubjects = filterMidtermSubjects(scheduleSubjectIds, subjectsMap, "UMUM", pondokSchemesMap, excludedSubjectIds);
+      pondokSubjects = filterMidtermSubjects(scheduleSubjectIds, subjectsMap, "PONDOK", pondokSchemesMap, excludedSubjectIds);
       subjects = [...umumSubjects, ...pondokSubjects];
     } else {
-      subjects = filterMidtermSubjects(scheduleSubjectIds, subjectsMap, reportType, pondokSchemesMap);
+      subjects = filterMidtermSubjects(scheduleSubjectIds, subjectsMap, reportType, pondokSchemesMap, excludedSubjectIds);
       if (reportType === "UMUM") umumSubjects = subjects;
       if (reportType === "PONDOK") pondokSubjects = subjects;
     }
@@ -371,6 +430,7 @@ export const midtermReportService = {
       gradeLevel,
       homeroomTeacherId,
       homeroomTeacherName,
+      homeroomTeacherNiy,
       reportType,
       students,
       subjects,

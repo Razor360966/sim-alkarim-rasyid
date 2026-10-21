@@ -38,6 +38,7 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
 
   // Resolve Headers & Text elements according to target design (Image 2):
   // 1. Nama Pondok Pesantren (Paling atas, tebal, ~17-19 pt, warna hijau gelap)
+  // Fallback: PONDOK PESANTREN ALKARIM RASYID (PONDOK PESANTREN QUR'AN DAN DAKWAH ALKARIM RASYID INDONESIA)
   const pondokName =
     midtermPrintConfig?.customHeader?.subTitle ||
     "PONDOK PESANTREN QUR'AN DAN DAKWAH ALKARIM RASYID INDONESIA";
@@ -133,10 +134,33 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
     identity?.principalNipNiy ||
     "NIY. 202001001";
 
-  // Resolve School Stamp & Homeroom Teacher Signature
+  // Resolve School Stamp
   const schoolStampUrl = midtermPrintConfig?.schoolStampUrl || "";
 
+  // Resolve Homeroom Teacher Identity per rombel (khusus rombel yang sedang dicetak)
+  const configuredHomeroom = context.classId
+    ? midtermPrintConfig?.homeroomTeachers?.[context.classId]
+    : undefined;
+
+  const homeroomTeacherName =
+    (configuredHomeroom?.name && configuredHomeroom.name.trim()) ||
+    context.homeroomTeacherName ||
+    "-";
+
+  const rawHomeroomNiy =
+    configuredHomeroom?.niy !== undefined
+      ? configuredHomeroom.niy.trim()
+      : (context.homeroomTeacherNiy?.trim() || "");
+
+  const homeroomTeacherNiyFormatted = rawHomeroomNiy
+    ? (/^(NIY|NIP|NUPTK)\b/i.test(rawHomeroomNiy)
+        ? rawHomeroomNiy
+        : `NIY. ${rawHomeroomNiy}`)
+    : "";
+
+  // Resolve Homeroom Signature per rombel (isolated by classId, with backward compatibility)
   const homeroomSignatureUrl =
+    (configuredHomeroom?.signatureUrl && configuredHomeroom.signatureUrl.trim()) ||
     (context.classId && midtermPrintConfig?.homeroomSignatures?.[context.classId]) ||
     (context.homeroomTeacherId && midtermPrintConfig?.homeroomSignatures?.[context.homeroomTeacherId]) ||
     "";
@@ -239,7 +263,7 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
 
   return (
     <div
-      className={`student-report-card bg-white text-black font-serif p-6 sm:p-8 max-w-4xl mx-auto border border-slate-300 print:border-none print:p-0 print:shadow-none ${
+      className={`student-report-card bg-white text-black font-serif p-6 sm:p-8 max-w-4xl mx-auto border border-slate-300 print:border-none print:p-0 print:shadow-none print:min-h-0 print:w-full print:max-w-none ${
         isSinglePage ? "print:break-after-page" : ""
       }`}
       style={{ minHeight: paperSize === "F4" ? "300mm" : "270mm" }}
@@ -369,7 +393,7 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
         </div>
         <div className="flex">
           <span className="w-32 text-slate-600 font-medium">Wali Kelas</span>
-          <span className="font-semibold">: {context.homeroomTeacherName || "-"}</span>
+          <span className="font-semibold">: {homeroomTeacherName}</span>
         </div>
       </div>
 
@@ -533,29 +557,31 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
           <div className="flex flex-col justify-between h-36">
             <div>
               <p className="font-semibold text-xs text-slate-900">
-                Wali Kelas {context.className}
+                Wali Kelas {context.className.replace(/^Kelas\s+/i, "")}
               </p>
             </div>
 
             {/* Area Tanda Tangan Wali Kelas */}
-            <div className="h-16 flex items-center justify-center my-0.5">
+            <div className="h-16 relative flex items-center justify-center my-0.5">
               {homeroomSignatureUrl ? (
                 <img
                   src={homeroomSignatureUrl}
-                  alt="Tanda Tangan Wali Kelas"
-                  className="max-h-16 max-w-[130px] object-contain"
-                  onError={(e) => {
-                    (e.currentTarget as HTMLElement).style.display = "none";
-                  }}
+                  alt={`Tanda Tangan Wali Kelas ${context.className}`}
+                  className="max-h-16 max-w-[140px] object-contain relative z-10"
                 />
-              ) : null}
+              ) : (
+                /* Ruang kosong yang cukup untuk tanda tangan manual setelah rapor dicetak */
+                <div className="h-full w-full" />
+              )}
             </div>
 
             <div>
-              <p className="font-bold underline text-slate-900">{context.homeroomTeacherName || "-"}</p>
-              <p className="text-[10px] text-slate-500">
-                {context.homeroomTeacherNiy ? `NIY. ${context.homeroomTeacherNiy}` : "Wali Kelas"}
-              </p>
+              <p className="font-bold underline text-slate-900">{homeroomTeacherName}</p>
+              {homeroomTeacherNiyFormatted ? (
+                <p className="text-[10px] text-slate-500">{homeroomTeacherNiyFormatted}</p>
+              ) : (
+                <p className="text-[10px] text-slate-500 min-h-[15px]">&nbsp;</p>
+              )}
             </div>
           </div>
 

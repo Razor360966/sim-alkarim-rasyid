@@ -190,3 +190,46 @@ export function getCanonicalActiveTeachers(
 
   return canonicalTeachers;
 }
+
+/**
+ * Formats a teacher's full name with academic titles (frontTitle and backTitle / gelar)
+ * exactly matching the canonical pattern used in Guru & Staff (Teachers.tsx) and Manajemen Akun (Users.tsx).
+ * Format: `${frontTitle ? frontTitle + " " : ""}${name}${backTitle ? ", " + backTitle : ""}`
+ */
+export function formatTeacherFullNameWithTitles(teacher?: {
+  name?: string;
+  frontTitle?: string;
+  backTitle?: string;
+} | null): string {
+  if (!teacher) return "";
+  const cleanFront = teacher.frontTitle ? teacher.frontTitle.trim() : "";
+  const rawName = teacher.name ? teacher.name.trim() : "";
+  const cleanBack = teacher.backTitle ? teacher.backTitle.trim() : "";
+
+  if (!rawName) {
+    if (cleanFront && cleanBack) return `${cleanFront} ${cleanBack}`;
+    return cleanFront || cleanBack;
+  }
+
+  let result = rawName;
+
+  // Prepend front title if not already present at the start of name
+  if (cleanFront) {
+    const startsWithFront =
+      result.toLowerCase().startsWith(cleanFront.toLowerCase() + " ") ||
+      result.toLowerCase() === cleanFront.toLowerCase();
+    if (!startsWithFront) {
+      result = `${cleanFront} ${result}`;
+    }
+  }
+
+  // Append back title if not already present in the name
+  if (cleanBack) {
+    const hasBack = result.toLowerCase().includes(cleanBack.toLowerCase());
+    if (!hasBack) {
+      result = `${result}, ${cleanBack}`;
+    }
+  }
+
+  return result.trim();
+}

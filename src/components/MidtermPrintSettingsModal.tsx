@@ -1,9 +1,15 @@
 import React, { useState, useEffect } from "react";
-import { MidtermPrintSettings, MidtermReportHeaderConfig } from "../types/midtermReport.types";
-import { Class } from "../types";
+import {
+  MidtermPrintSettings,
+  MidtermReportHeaderConfig,
+  MidtermHomeroomTeacherIdentity
+} from "../types/midtermReport.types";
+import { Class, Teacher } from "../types";
 import { AppConfig } from "../config/appConfig";
 import { ERaporSettingsConfig } from "../types/eRapor.types";
 import { midtermPrintSettingsService } from "../services/midtermPrintSettings.service";
+import { teacherService } from "../services/teacherService";
+import { formatTeacherFullNameWithTitles } from "../utils/teacherFilterHelper";
 import { useToast } from "../contexts/ToastContext";
 import { useAuth } from "../contexts/AuthContext";
 import {
@@ -35,6 +41,7 @@ export interface MidtermPrintSettingsModalProps {
   currentClassId?: string;
   identity?: AppConfig;
   printConfig?: ERaporSettingsConfig;
+  teachers?: Teacher[];
   onSettingsSaved: (newSettings: MidtermPrintSettings) => void;
 }
 
@@ -93,6 +100,7 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
   currentClassId,
   identity,
   printConfig,
+  teachers: propTeachers,
   onSettingsSaved
 }) => {
   const { user } = useAuth();
@@ -117,7 +125,23 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
   const [pesantrenLogoUrl, setPesantrenLogoUrl] = useState<string>("");
   const [accreditationText, setAccreditationText] = useState<string>("");
 
-  // Homeroom signatures map
+  // Master teachers for canonical homeroom title and NIY resolution
+  const [internalTeachers, setInternalTeachers] = useState<Teacher[]>(propTeachers || []);
+
+  useEffect(() => {
+    if (propTeachers && propTeachers.length > 0) {
+      setInternalTeachers(propTeachers);
+    } else if (isOpen) {
+      teacherService
+        .getTeachers()
+        .then((tList) => setInternalTeachers(tList))
+        .catch((e) => console.warn("Could not load teachers in MidtermPrintSettingsModal:", e));
+    }
+  }, [isOpen, propTeachers]);
+
+  // Homeroom identities per rombel (classId -> { name, niy })
+  const [homeroomTeachers, setHomeroomTeachers] = useState<Record<string, MidtermHomeroomTeacherIdentity>>({});
+  // Homeroom signatures map (backward compatibility)
   const [homeroomSignatures, setHomeroomSignatures] = useState<Record<string, string>>({});
   const [selectedClassId, setSelectedClassId] = useState<string>(currentClassId || classes[0]?.id || "");
 
@@ -171,6 +195,7 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
 
       const stamp = currentSettings?.schoolStampUrl || "";
       const hSigs = currentSettings?.homeroomSignatures || {};
+      const hTeachers = currentSettings?.homeroomTeachers || {};
 
       setHeadmasterName(hName);
       setHeadmasterTitle(hTitle);
@@ -178,6 +203,7 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
       setHeadmasterSignatureUrl(hSig);
       setSchoolStampUrl(stamp);
       setHomeroomSignatures({ ...hSigs });
+      setHomeroomTeachers({ ...hTeachers });
 
       // 3. Logo Sekolah, Logo Pondok, & Akreditasi
       const sLogo =
@@ -227,12 +253,138 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
 
   if (!isOpen) return null;
 
-  // Selected Class details
+  // Helper to resolve canonical assignment name (with academic titles) and NIY from master teachers
+  const resolveClassCanonicalAssignment = (cls?: Class | null) => {
+    if (!cls) return { name: "", niy: "" };
+    const teacherId = cls.homeroomTeacherId || (cls as any).waliKelasId;
+    let matched = internalTeachers.find(
+      (t) => (t.id && t.id === teacherId) || (t.teacherId && t.teacherId === teacherId)
+    );
+    if (!matched && cls.homeroomTeacherName) {
+      matched = internalTeachers.find(
+        (t) => t.name?.trim().toLowerCase() === cls.homeroomTeacherName?.trim().toLowerCase()
+      );
+    }
+    const formattedName = matched
+      ? formatTeacherFullNameWithTitles(matched)
+      : (cls.homeroomTeacherName || "");
+    const niy = matched?.niy || (cls as any).homeroomTeacherNiy || "";
+    return { name: formattedName, niy };
+  };
+
+  // Selected Class details & homeroom identity resolution
   const selectedClassObj = classes.find((c) => c.id === selectedClassId);
+  const selectedClassCanonical = resolveClassCanonicalAssignment(selectedClassObj);
+  const currentClassHomeroomConfig = selectedClassId ? homeroomTeachers[selectedClassId] : undefined;
+
+  const currentClassHomeroomName =
+    currentClassHomeroomConfig?.name !== undefined && currentClassHomeroomConfig.name !== ""
+      ? currentClassHomeroomConfig.name
+      : selectedClassCanonical.name;
+
+  const currentClassHomeroomNiy =
+    currentClassHomeroomConfig?.niy !== undefined
+      ? currentClassHomeroomConfig.niy
+      : selectedClassCanonical.niy;
+
+  const handleHomeroomNameChange = (val: string) => {
+    if (!selectedClassId) return;
+    setHomeroomTeachers((prev) => ({
+      ...prev,
+      [selectedClassId]: {
+        ...(prev[selectedClassId] || {}),
+        name: val,
+        niy: prev[selectedClassId]?.niy !== undefined
+          ? prev[selectedClassId].niy
+          : selectedClassCanonical.niy
+      }
+    }));
+  };
+
+  const handleHomeroomNiyChange = (val: string) => {
+    if (!selectedClassId) return;
+    setHomeroomTeachers((prev) => ({
+      ...prev,
+      [selectedClassId]: {
+        ...(prev[selectedClassId] || {}),
+        name: prev[selectedClassId]?.name !== undefined && prev[selectedClassId].name !== ""
+          ? prev[selectedClassId].name
+          : selectedClassCanonical.name,
+        niy: val
+      }
+    }));
+  };
+
+  const handleResetToAssignment = () => {
+    if (!selectedClassId) return;
+    setHomeroomTeachers((prev) => ({
+      ...prev,
+      [selectedClassId]: {
+        name: selectedClassCanonical.name,
+        niy: selectedClassCanonical.niy
+      }
+    }));
+    toast(`Identitas dikembalikan ke data penugasan untuk ${selectedClassObj?.name || "kelas"}.`, "info");
+  };
+
+  const handleClearHomeroomNiy = () => {
+    if (!selectedClassId) return;
+    setHomeroomTeachers((prev) => ({
+      ...prev,
+      [selectedClassId]: {
+        ...(prev[selectedClassId] || {}),
+        name: prev[selectedClassId]?.name !== undefined && prev[selectedClassId].name !== ""
+          ? prev[selectedClassId].name
+          : selectedClassCanonical.name,
+        niy: ""
+      }
+    }));
+    toast(`NIY dikosongkan untuk ${selectedClassObj?.name || "kelas"}.`, "info");
+  };
+
   const selectedClassHomeroomSig =
+    (selectedClassId && homeroomTeachers[selectedClassId]?.signatureUrl) ||
     (selectedClassId && homeroomSignatures[selectedClassId]) ||
     (selectedClassObj?.homeroomTeacherId && homeroomSignatures[selectedClassObj.homeroomTeacherId]) ||
     "";
+
+  const handleHomeroomSignatureChange = (dataUrl: string) => {
+    if (!selectedClassId) return;
+    setHomeroomTeachers((prev) => ({
+      ...prev,
+      [selectedClassId]: {
+        ...(prev[selectedClassId] || {}),
+        name: prev[selectedClassId]?.name !== undefined && prev[selectedClassId].name !== ""
+          ? prev[selectedClassId].name
+          : selectedClassCanonical.name,
+        niy: prev[selectedClassId]?.niy !== undefined
+          ? prev[selectedClassId].niy
+          : selectedClassCanonical.niy,
+        signatureUrl: dataUrl
+      }
+    }));
+    setHomeroomSignatures((prev) => ({
+      ...prev,
+      [selectedClassId]: dataUrl
+    }));
+  };
+
+  const handleDeleteHomeroomSignature = () => {
+    if (!selectedClassId) return;
+    setHomeroomTeachers((prev) => ({
+      ...prev,
+      [selectedClassId]: {
+        ...(prev[selectedClassId] || {}),
+        signatureUrl: ""
+      }
+    }));
+    setHomeroomSignatures((prev) => {
+      const next = { ...prev };
+      delete next[selectedClassId];
+      return next;
+    });
+    toast(`Tanda tangan Wali Kelas ${selectedClassObj?.name || ""} berhasil dihapus.`, "info");
+  };
 
   // Generic File Upload Validator & Compressor
   const handleFileUpload = async (
@@ -281,6 +433,7 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
         headmasterNipNiy: headmasterNipNiy.trim(),
         headmasterSignatureUrl: headmasterSignatureUrl,
         schoolStampUrl: schoolStampUrl,
+        homeroomTeachers: homeroomTeachers,
         homeroomSignatures: homeroomSignatures,
         customHeader: {
           ...customHeader,
@@ -386,10 +539,10 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
             }`}
           >
             <Users className="w-4 h-4" />
-            <span>TTD Wali Kelas</span>
-            {Object.keys(homeroomSignatures).length > 0 ? (
+            <span>Identitas Wali Kelas</span>
+            {Object.keys(homeroomTeachers).length > 0 ? (
               <span className="px-1.5 py-0.2 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 text-[10px]">
-                {Object.keys(homeroomSignatures).length}
+                {Object.keys(homeroomTeachers).length} Rombel
               </span>
             ) : null}
           </button>
@@ -680,22 +833,22 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
             </div>
           )}
 
-          {/* TAB 3: TANDA TANGAN WALI KELAS */}
+          {/* TAB 3: IDENTITAS WALI KELAS PER ROMBEL */}
           {activeTab === "HOMEROOM" && (
             <div className="space-y-4">
-              <div className="p-3 rounded-xl bg-slate-50 dark:bg-zinc-800/60 border border-slate-200 dark:border-zinc-700/80 flex items-start gap-2.5">
+              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-zinc-800/60 border border-slate-200 dark:border-zinc-700/80 flex items-start gap-2.5">
                 <Users className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
                 <div className="text-xs text-slate-600 dark:text-zinc-300">
                   <p className="font-semibold text-slate-800 dark:text-zinc-100">
-                    Tanda Tangan Wali Kelas Berdasarkan Kelas
+                    Pengaturan Identitas Wali Kelas per Rombongan Belajar (Kelas)
                   </p>
                   <p className="text-[11px] mt-0.5 text-slate-500 dark:text-zinc-400">
-                    Pilih kelas untuk mengunggah tanda tangan wali kelas. Tanda tangan disimpan terpisah untuk tiap kelas sehingga tidak tertukar. Jika kosong, ruang manual tetap disediakan rapi.
+                    Tanda tangan wali kelas dilakukan secara manual (tanda tangan basah) setelah rapor dicetak. Atur nama lengkap beserta gelar dan nomor NIY khusus untuk masing-masing rombel di bawah ini. Pengaturan disimpan per ID rombel kanonis dan tidak saling mempengaruhi antar rombel.
                   </p>
                 </div>
               </div>
 
-              {/* Pilih Kelas */}
+              {/* 1. Pilih Kelas / Rombel */}
               <div>
                 <label className="text-xs font-bold text-slate-700 dark:text-zinc-300 block mb-1">
                   Pilih Rombongan Belajar (Kelas)
@@ -703,150 +856,191 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                 <select
                   value={selectedClassId}
                   onChange={(e) => setSelectedClassId(e.target.value)}
-                  className="w-full text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-2.5 font-semibold text-slate-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                  className="w-full text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-2.5 font-semibold text-slate-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 cursor-pointer"
                 >
                   {classes.map((cls) => {
-                    const hasSig = Boolean(
-                      homeroomSignatures[cls.id] ||
-                        (cls.homeroomTeacherId && homeroomSignatures[cls.homeroomTeacherId])
-                    );
+                    const customConfig = homeroomTeachers[cls.id];
+                    const isCustomized = Boolean(customConfig?.name || customConfig?.niy);
+                    const canon = resolveClassCanonicalAssignment(cls);
                     return (
                       <option key={cls.id} value={cls.id}>
-                        {cls.name} — Wali Kelas: {cls.homeroomTeacherName || "-"} {hasSig ? "✓ (Ada TTD)" : ""}
+                        {cls.name} — Penugasan: {canon.name || "-"} {isCustomized ? "★ (Pengaturan Khusus)" : ""}
                       </option>
                     );
                   })}
                 </select>
               </div>
 
+              {/* 2. Informasi Penugasan Sistem Rombel Terpilih */}
               {selectedClassObj && (
-                <div className="p-3 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/50 text-xs flex items-center justify-between">
+                <div className="p-3 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/50 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-1">
                   <div>
-                    <span className="text-slate-500 dark:text-zinc-400">Nama Wali Kelas:</span>
+                    <span className="text-slate-500 dark:text-zinc-400">Penugasan Sistem:</span>
                     <span className="font-bold text-slate-800 dark:text-zinc-100 ml-1.5">
-                      {selectedClassObj.homeroomTeacherName || "-"}
+                      {selectedClassCanonical.name || "(Belum ditugaskan)"}
                     </span>
+                    {selectedClassCanonical.niy && (
+                      <span className="text-slate-500 ml-2">
+                        (NIY: {selectedClassCanonical.niy})
+                      </span>
+                    )}
                   </div>
                   <span className="text-[11px] text-emerald-700 dark:text-emerald-400 font-semibold">
-                    {selectedClassObj.name}
+                    ID Rombel: {selectedClassObj.id}
                   </span>
                 </div>
               )}
 
-              {/* Upload & Preview TTD Wali Kelas Terpilih */}
-              <div>
-                <label className="text-xs font-bold text-slate-700 dark:text-zinc-300 block mb-2">
-                  Berkas Gambar Tanda Tangan Wali Kelas ({selectedClassObj?.name || ""})
-                </label>
+              {/* 3. Form Input Identitas Wali Kelas (Sejajar Konsep Kepala Sekolah) */}
+              <div className="p-4 rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800/70 space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 dark:border-zinc-700/60 pb-2">
+                  <span className="text-xs font-bold text-slate-800 dark:text-zinc-100 flex items-center gap-1.5">
+                    <User className="w-3.5 h-3.5 text-emerald-600" />
+                    Identitas Wali Kelas: {selectedClassObj?.name || "Kelas"}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleResetToAssignment}
+                      className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer"
+                    >
+                      Gunakan Penugasan Asli
+                    </button>
+                    <span className="text-slate-300">•</span>
+                    <button
+                      type="button"
+                      onClick={handleClearHomeroomNiy}
+                      className="text-[11px] font-semibold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
+                    >
+                      Kosongkan NIY
+                    </button>
+                  </div>
+                </div>
 
-                {selectedClassHomeroomSig ? (
-                  <div className="p-4 rounded-xl border border-slate-200 dark:border-zinc-700 bg-slate-50 dark:bg-zinc-800/40 flex flex-col sm:flex-row items-center justify-between gap-4">
-                    <div className="flex items-center gap-4">
-                      <div className="w-32 h-20 bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg p-1.5 flex items-center justify-center shadow-inner overflow-hidden">
-                        <img
-                          src={selectedClassHomeroomSig}
-                          alt="Tanda Tangan Wali Kelas"
-                          className="max-h-full max-w-full object-contain"
-                        />
-                      </div>
-                      <div>
-                        <div className="inline-flex items-center gap-1 text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          <span>Tanda Tangan Tersedia</span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Kolom 1: Nama Lengkap Beserta Gelar */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-zinc-300 block mb-1">
+                      Nama Lengkap Beserta Gelar
+                    </label>
+                    <input
+                      type="text"
+                      value={currentClassHomeroomName}
+                      onChange={(e) => handleHomeroomNameChange(e.target.value)}
+                      className="w-full text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-2.5 font-bold text-slate-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                      placeholder="e.g. Ust. M. Ridwan, S.Pd.I."
+                    />
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      Dicetak di bawah garis tanda tangan wali kelas pada rapor kelas {selectedClassObj?.name || ""}.
+                    </p>
+                  </div>
+
+                  {/* Kolom 2: NIY Wali Kelas */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-zinc-300 block mb-1">
+                      NIY Wali Kelas
+                    </label>
+                    <input
+                      type="text"
+                      value={currentClassHomeroomNiy}
+                      onChange={(e) => handleHomeroomNiyChange(e.target.value)}
+                      className="w-full text-xs rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-2.5 font-medium text-slate-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                      placeholder="e.g. 01234567 atau NIY. 202107015"
+                    />
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      Mendukung format angka dengan awalan nol (0). Jika dikosongkan, nomor identitas tidak akan dicetak.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Kolom Unggah Tanda Tangan Wali Kelas Per Rombel */}
+                <div className="pt-2 border-t border-slate-100 dark:border-zinc-700/60">
+                  <label className="text-xs font-bold text-slate-700 dark:text-zinc-300 block mb-2">
+                    Gambar Tanda Tangan Digital Wali Kelas ({selectedClassObj?.name || "Rombel Terpilih"})
+                  </label>
+
+                  {selectedClassHomeroomSig ? (
+                    <div className="p-3.5 rounded-xl border border-slate-200 dark:border-zinc-700 bg-slate-50 dark:bg-zinc-800/40 flex flex-col sm:flex-row items-center justify-between gap-4">
+                      <div className="flex items-center gap-3.5">
+                        <div className="w-24 h-16 bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg p-1 flex items-center justify-center shadow-inner overflow-hidden">
+                          <img
+                            src={selectedClassHomeroomSig}
+                            alt={`Tanda Tangan Wali Kelas ${selectedClassObj?.name || ""}`}
+                            className="max-h-full max-w-full object-contain"
+                          />
                         </div>
-                        <p className="text-[11px] text-slate-400 mt-0.5">
-                          Tanda tangan untuk {selectedClassObj?.name || "Kelas"} ({selectedClassObj?.homeroomTeacherName || "Wali Kelas"}).
-                        </p>
+                        <div>
+                          <div className="inline-flex items-center gap-1 text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>Tanda Tangan Wali Kelas Terunggah</span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 mt-0.5">
+                            Hanya berlaku untuk rapor {selectedClassObj?.name || "kelas ini"}. Format PNG transparan direkomendasikan.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <label className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-slate-200 hover:bg-slate-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-slate-800 dark:text-zinc-100 cursor-pointer transition-colors inline-flex items-center gap-1.5">
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>Ganti Tanda Tangan</span>
+                          <input
+                            type="file"
+                            accept="image/png, image/jpeg, image/jpg"
+                            onChange={(e) =>
+                              handleFileUpload(e, handleHomeroomSignatureChange, `Tanda tangan Wali Kelas ${selectedClassObj?.name || ""}`, 400, 200)
+                            }
+                            className="hidden"
+                          />
+                        </label>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (window.confirm(`Hapus berkas gambar tanda tangan wali kelas untuk ${selectedClassObj?.name || "kelas ini"}?`)) {
+                              handleDeleteHomeroomSignature();
+                            }
+                          }}
+                          className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-900 transition-colors inline-flex items-center gap-1.5"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Hapus</span>
+                        </button>
                       </div>
                     </div>
-
-                    <div className="flex items-center gap-2">
-                      <label className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-slate-200 hover:bg-slate-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-slate-800 dark:text-zinc-100 cursor-pointer transition-colors inline-flex items-center gap-1.5">
+                  ) : (
+                    <div className="border-2 border-dashed border-slate-300 dark:border-zinc-700 rounded-2xl p-5 text-center hover:border-emerald-500 dark:hover:border-emerald-500 transition-colors">
+                      <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-zinc-800 text-slate-500 flex items-center justify-center mx-auto mb-1.5">
+                        <Upload className="w-5 h-5" />
+                      </div>
+                      <p className="text-xs font-bold text-slate-800 dark:text-zinc-200">
+                        Unggah Tanda Tangan Digital Wali Kelas
+                      </p>
+                      <p className="text-[11px] text-slate-400 mt-0.5 max-w-sm mx-auto">
+                        Format PNG transparan atau JPEG (Maks. 2MB). Jika tidak diunggah, dokumen cetak akan otomatis menyediakan ruang kosong untuk tanda tangan manual (tanda tangan basah).
+                      </p>
+                      <label className="mt-3 inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 cursor-pointer shadow-sm transition-all">
                         <Upload className="w-3.5 h-3.5" />
-                        <span>Ganti Gambar</span>
+                        <span>Pilih Berkas Tanda Tangan</span>
                         <input
                           type="file"
                           accept="image/png, image/jpeg, image/jpg"
                           onChange={(e) =>
-                            handleFileUpload(
-                              e,
-                              (dataUrl) => {
-                                setHomeroomSignatures((prev) => ({
-                                  ...prev,
-                                  [selectedClassId]: dataUrl,
-                                  ...(selectedClassObj?.homeroomTeacherId
-                                    ? { [selectedClassObj.homeroomTeacherId]: dataUrl }
-                                    : {})
-                                }));
-                              },
-                              `Tanda tangan Wali Kelas ${selectedClassObj?.name || ""}`,
-                              400,
-                              200
-                            )
+                            handleFileUpload(e, handleHomeroomSignatureChange, `Tanda tangan Wali Kelas ${selectedClassObj?.name || ""}`, 400, 200)
                           }
                           className="hidden"
                         />
                       </label>
+                    </div>
+                  )}
+                </div>
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setHomeroomSignatures((prev) => {
-                            const updated = { ...prev };
-                            delete updated[selectedClassId];
-                            if (selectedClassObj?.homeroomTeacherId) {
-                              delete updated[selectedClassObj.homeroomTeacherId];
-                            }
-                            return updated;
-                          });
-                          toast(`Tanda tangan Wali Kelas ${selectedClassObj?.name || ""} dihapus.`, "info");
-                        }}
-                        className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-900 transition-colors inline-flex items-center gap-1.5"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>Hapus</span>
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="border-2 border-dashed border-slate-300 dark:border-zinc-700 rounded-2xl p-6 text-center hover:border-emerald-500 dark:hover:border-emerald-500 transition-colors">
-                    <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-zinc-800 text-slate-500 flex items-center justify-center mx-auto mb-2">
-                      <Upload className="w-6 h-6" />
-                    </div>
-                    <p className="text-xs font-bold text-slate-800 dark:text-zinc-200">
-                      Pilih Tanda Tangan Wali Kelas {selectedClassObj?.name || ""}
-                    </p>
-                    <p className="text-[11px] text-slate-400 mt-1 max-w-sm mx-auto">
-                      Format PNG/JPEG (Maks. 2MB). Disarankan PNG transparan.
-                    </p>
-                    <label className="mt-3.5 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 cursor-pointer shadow-sm transition-all">
-                      <Upload className="w-3.5 h-3.5" />
-                      <span>Unggah Tanda Tangan Wali Kelas</span>
-                      <input
-                        type="file"
-                        accept="image/png, image/jpeg, image/jpg"
-                        onChange={(e) =>
-                          handleFileUpload(
-                            e,
-                            (dataUrl) => {
-                              setHomeroomSignatures((prev) => ({
-                                ...prev,
-                                [selectedClassId]: dataUrl,
-                                ...(selectedClassObj?.homeroomTeacherId
-                                  ? { [selectedClassObj.homeroomTeacherId]: dataUrl }
-                                  : {})
-                              }));
-                            },
-                            `Tanda tangan Wali Kelas ${selectedClassObj?.name || ""}`,
-                            400,
-                            200
-                          )
-                        }
-                        className="hidden"
-                      />
-                    </label>
-                  </div>
-                )}
+                <div className="p-3 rounded-lg bg-slate-50 dark:bg-zinc-900/60 border border-slate-200 dark:border-zinc-800 text-[11px] text-slate-600 dark:text-zinc-400 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>
+                    Jika gambar tanda tangan diunggah, tanda tangan digital akan dicetak rapi di atas nama bergelar. Jika belum diunggah, dokumen tetap menyediakan ruang tanda tangan basah tanpa gambar rusak.
+                  </span>
+                </div>
               </div>
             </div>
           )}
@@ -1201,7 +1395,7 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                     <div className="flex flex-col justify-between h-32 border-r border-slate-100 pr-2">
                       <div>
                         <p className="font-semibold text-[11px]">
-                          Wali Kelas {selectedClassObj?.name || "VII-A"}
+                          Wali Kelas {(selectedClassObj?.name || "VII-A").replace(/^Kelas\s+/i, "")}
                         </p>
                       </div>
 
@@ -1213,7 +1407,7 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
                             className="max-h-14 max-w-[100px] object-contain"
                           />
                         ) : (
-                          <span className="text-[9px] text-slate-300 italic border border-dashed border-slate-200 px-2 py-1 rounded">
+                          <span className="text-[9px] text-slate-400 italic border border-dashed border-slate-200 px-2 py-1 rounded">
                             (Tanda Tangan Manual)
                           </span>
                         )}
@@ -1221,9 +1415,17 @@ export const MidtermPrintSettingsModal: React.FC<MidtermPrintSettingsModalProps>
 
                       <div>
                         <p className="font-bold underline text-[11px]">
-                          {selectedClassObj?.homeroomTeacherName || "Nama Wali Kelas"}
+                          {currentClassHomeroomName || "Nama Wali Kelas"}
                         </p>
-                        <p className="text-[9px] text-slate-500">Wali Kelas</p>
+                        {currentClassHomeroomNiy ? (
+                          <p className="text-[9px] text-slate-500">
+                            {/^(NIY|NIP|NUPTK)\b/i.test(currentClassHomeroomNiy)
+                              ? currentClassHomeroomNiy
+                              : `NIY. ${currentClassHomeroomNiy}`}
+                          </p>
+                        ) : (
+                          <p className="text-[9px] text-slate-400 min-h-[14px]">&nbsp;</p>
+                        )}
                       </div>
                     </div>
 

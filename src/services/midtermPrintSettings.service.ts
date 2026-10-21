@@ -54,7 +54,9 @@ export const midtermPrintSettingsService = {
           headmasterNipNiy: data.headmasterNipNiy || ssotPrincipalNipNiy,
           headmasterSignatureUrl: data.headmasterSignatureUrl !== undefined ? data.headmasterSignatureUrl : ssotSignatureUrl,
           schoolStampUrl: data.schoolStampUrl || "",
+          homeroomTeachers: data.homeroomTeachers || {},
           homeroomSignatures: data.homeroomSignatures || {},
+          excludedSubjectIds: data.excludedSubjectIds || [],
           customHeader: data.customHeader || undefined,
           updatedAt: data.updatedAt,
           updatedBy: data.updatedBy
@@ -73,7 +75,9 @@ export const midtermPrintSettingsService = {
         headmasterNipNiy: ssotPrincipalNipNiy,
         headmasterSignatureUrl: ssotSignatureUrl,
         schoolStampUrl: "",
-        homeroomSignatures: {}
+        homeroomTeachers: {},
+        homeroomSignatures: {},
+        excludedSubjectIds: []
       };
     } catch (error) {
       console.error("Error reading midterm print settings:", error);
@@ -88,7 +92,9 @@ export const midtermPrintSettingsService = {
         headmasterNipNiy: APP_CONFIG.principalNipNiy || "NIY. 202001001",
         headmasterSignatureUrl: "",
         schoolStampUrl: "",
-        homeroomSignatures: {}
+        homeroomTeachers: {},
+        homeroomSignatures: {},
+        excludedSubjectIds: []
       };
     }
   },
@@ -108,9 +114,19 @@ export const midtermPrintSettingsService = {
         updatedBy
       };
 
+      // Pastikan homeroomTeachers di-merge secara aman
+      if (settings.homeroomTeachers) {
+        payload.homeroomTeachers = settings.homeroomTeachers;
+      }
+
       // Pastikan homeroomSignatures di-merge secara aman
       if (settings.homeroomSignatures) {
         payload.homeroomSignatures = settings.homeroomSignatures;
+      }
+
+      // Pastikan excludedSubjectIds di-merge secara aman
+      if (settings.excludedSubjectIds !== undefined) {
+        payload.excludedSubjectIds = settings.excludedSubjectIds;
       }
 
       await setDoc(docRef, payload, { merge: true });
@@ -142,9 +158,65 @@ export const midtermPrintSettingsService = {
     } else if (assetType === "homeroomSignature" && classOrTeacherId) {
       const updatedSigs = { ...(current.homeroomSignatures || {}) };
       delete updatedSigs[classOrTeacherId];
-      return await this.savePrintSettings({ homeroomSignatures: updatedSigs }, updatedBy);
+      const updatedTeachers = { ...(current.homeroomTeachers || {}) };
+      if (updatedTeachers[classOrTeacherId]) {
+        updatedTeachers[classOrTeacherId] = {
+          ...updatedTeachers[classOrTeacherId],
+          signatureUrl: ""
+        };
+      }
+      return await this.savePrintSettings({
+        homeroomSignatures: updatedSigs,
+        homeroomTeachers: updatedTeachers
+      }, updatedBy);
     }
 
     return current;
+  },
+
+  /**
+   * Menonaktifkan / mengecualikan mata pelajaran dari Rapor Tengah Semester (KHUSUS ADMIN).
+   * Tidak mengubah master mapel, nilai, jadwal, atau rapor semester.
+   */
+  async excludeSubjectFromMidterm(
+    subjectId: string,
+    updatedBy: string = "Admin",
+    userRole?: string
+  ): Promise<MidtermPrintSettings> {
+    const roleNormalized = (userRole || "").toLowerCase().trim();
+    if (roleNormalized !== "admin") {
+      throw new Error("Akses Ditolak: Hanya pengguna dengan peran Admin yang berwenang menghapus / menonaktifkan mapel dari RTS.");
+    }
+
+    const current = await this.getPrintSettings();
+    const existing = new Set(current.excludedSubjectIds || []);
+    existing.add(subjectId);
+
+    return await this.savePrintSettings(
+      { excludedSubjectIds: Array.from(existing) },
+      updatedBy
+    );
+  },
+
+  /**
+   * Mengaktifkan kembali mata pelajaran yang sebelumnya dinonaktifkan di RTS (KHUSUS ADMIN).
+   */
+  async restoreSubjectToMidterm(
+    subjectId: string,
+    updatedBy: string = "Admin",
+    userRole?: string
+  ): Promise<MidtermPrintSettings> {
+    const roleNormalized = (userRole || "").toLowerCase().trim();
+    if (roleNormalized !== "admin") {
+      throw new Error("Akses Ditolak: Hanya pengguna dengan peran Admin yang berwenang mengaktifkan mapel di RTS.");
+    }
+
+    const current = await this.getPrintSettings();
+    const existing = (current.excludedSubjectIds || []).filter((id) => id !== subjectId);
+
+    return await this.savePrintSettings(
+      { excludedSubjectIds: existing },
+      updatedBy
+    );
   }
 };
