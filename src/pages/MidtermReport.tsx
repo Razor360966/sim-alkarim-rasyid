@@ -1374,6 +1374,40 @@ function MidtermPrintModal({
             break-after: avoid !important;
           }
 
+          /* Aturan Ukuran Adaptif & Proporsional Pengesahan RTS saat Cetak Fisik / Print Preview */
+          .rts-sig-area {
+            height: 22mm !important;
+            min-height: 22mm !important;
+            max-height: 25mm !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            position: relative !important;
+          }
+
+          .rts-homeroom-sig-img,
+          .rts-headmaster-sig-img {
+            max-height: 22mm !important;
+            max-width: 55mm !important;
+            width: auto !important;
+            height: auto !important;
+            object-fit: contain !important;
+          }
+
+          .rts-stamp-img {
+            max-height: 26mm !important;
+            max-width: 34mm !important;
+            width: auto !important;
+            height: auto !important;
+            object-fit: contain !important;
+            position: absolute !important;
+            left: 50% !important;
+            top: 50% !important;
+            transform: translate(-68%, -50%) !important;
+            opacity: 0.85 !important;
+            z-index: 0 !important;
+          }
+
           * {
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;

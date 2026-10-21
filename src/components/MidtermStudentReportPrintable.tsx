@@ -397,7 +397,9 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
       {/* 2. JUDUL RAPOR */}
       <div className="w-full text-center mb-2 rts-title-block print:break-inside-avoid">
         <h1 className="text-[12pt] sm:text-[13.5pt] font-extrabold tracking-wider uppercase underline leading-tight">
-          LAPORAN HASIL BELAJAR TENGAH SEMESTER (RAPOR BAYANGAN)
+          <span>LAPORAN HASIL BELAJAR TENGAH SEMESTER</span>
+          <br />
+          <span className="whitespace-nowrap">(RAPOR BAYANGAN)</span>
         </h1>
         <p className="text-[9.5pt] font-sans font-semibold text-slate-800 mt-0.5 uppercase leading-tight">
           {isTerpadu
@@ -590,52 +592,52 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
         {/* Baris Dua Kolom Penandatangan yang SEJAJAR SECARA VERTIKAL */}
         <div className="grid grid-cols-2 gap-8 text-center w-full">
           {/* Kolom 1: Wali Kelas */}
-          <div className="flex flex-col justify-between h-28">
+          <div className="flex flex-col justify-between h-28 sm:h-auto min-h-[116px] sm:min-h-[124px] rts-sign-col">
             <div>
-              <p className="font-semibold text-[11px] text-slate-900">
+              <p className="font-semibold text-[11px] text-slate-900 leading-tight">
                 Wali Kelas {context.className.replace(/^Kelas\s+/i, "")}
               </p>
             </div>
 
-            {/* Area Tanda Tangan Wali Kelas */}
-            <div className="h-14 relative flex items-center justify-center my-0.5">
+            {/* Area Tanda Tangan Wali Kelas (Ukuran Adaptif & Proporsional) */}
+            <div className="h-20 sm:h-22 min-h-[72px] sm:min-h-[80px] relative flex items-center justify-center my-0.5 rts-sig-area">
               {homeroomSignatureUrl ? (
                 <img
                   src={homeroomSignatureUrl}
                   alt={`Tanda Tangan Wali Kelas ${context.className}`}
-                  className="max-h-14 max-w-[130px] object-contain relative z-10"
+                  className="max-h-20 sm:max-h-22 max-w-[190px] sm:max-w-[210px] w-auto h-auto object-contain relative z-10 rts-homeroom-sig-img"
                 />
               ) : (
                 /* Ruang kosong yang cukup untuk tanda tangan manual setelah rapor dicetak */
-                <div className="h-full w-full" />
+                <div className="h-full w-full min-h-[68px]" />
               )}
             </div>
 
             <div>
-              <p className="font-bold underline text-[11px] text-slate-900">{homeroomTeacherName}</p>
+              <p className="font-bold underline text-[11px] text-slate-900 leading-tight">{homeroomTeacherName}</p>
               {homeroomTeacherNiyFormatted ? (
-                <p className="text-[9.5px] text-slate-500">{homeroomTeacherNiyFormatted}</p>
+                <p className="text-[9.5px] text-slate-500 leading-tight mt-0.5">{homeroomTeacherNiyFormatted}</p>
               ) : (
-                <p className="text-[9.5px] text-slate-500 min-h-[14px]">&nbsp;</p>
+                <p className="text-[9.5px] text-slate-500 min-h-[14px] leading-tight mt-0.5">&nbsp;</p>
               )}
             </div>
           </div>
 
           {/* Kolom 2: Kepala Sekolah / Kepala Madrasah */}
-          <div className="flex flex-col justify-between h-28">
+          <div className="flex flex-col justify-between h-28 sm:h-auto min-h-[116px] sm:min-h-[124px] rts-sign-col">
             <div>
-              <p className="font-semibold text-[11px] text-slate-900">
+              <p className="font-semibold text-[11px] text-slate-900 leading-tight">
                 {headmasterTitle}
               </p>
             </div>
 
-            {/* Area Tanda Tangan & Cap Kepala Sekolah */}
-            <div className="h-14 relative flex items-center justify-center my-0.5">
+            {/* Area Tanda Tangan & Cap Kepala Sekolah (Ukuran Adaptif & Proporsional) */}
+            <div className="h-20 sm:h-22 min-h-[72px] sm:min-h-[80px] relative flex items-center justify-center my-0.5 rts-sig-area">
               {schoolStampUrl ? (
                 <img
                   src={schoolStampUrl}
                   alt="Cap Sekolah"
-                  className="absolute left-1/2 -translate-x-12 -top-1.5 max-h-14 max-w-[80px] object-contain pointer-events-none opacity-85 z-0"
+                  className="absolute left-1/2 -translate-x-[68%] top-1/2 -translate-y-1/2 max-h-22 sm:max-h-24 max-w-[115px] sm:max-w-[125px] w-auto h-auto object-contain pointer-events-none opacity-85 z-0 rts-stamp-img"
                   onError={(e) => {
                     (e.currentTarget as HTMLElement).style.display = "none";
                   }}
@@ -647,17 +649,20 @@ export const MidtermStudentReportPrintable: React.FC<MidtermStudentReportPrintab
                 <img
                   src={headmasterSignatureUrl}
                   alt="Tanda Tangan Kepala Sekolah"
-                  className="relative z-10 max-h-14 max-w-[120px] object-contain"
+                  className="relative z-10 max-h-20 sm:max-h-22 max-w-[190px] sm:max-w-[210px] w-auto h-auto object-contain rts-headmaster-sig-img"
                   onError={(e) => {
                     (e.currentTarget as HTMLElement).style.display = "none";
                   }}
                 />
-              ) : null}
+              ) : (
+                /* Ruang tanda tangan manual jika berkas gambar kepsek belum diunggah */
+                <div className="h-full w-full min-h-[68px]" />
+              )}
             </div>
 
             <div>
-              <p className="font-bold underline text-[11px] text-slate-900 relative z-10">{headmasterName}</p>
-              <p className="text-[9.5px] text-slate-500">{principalNipNiy}</p>
+              <p className="font-bold underline text-[11px] text-slate-900 relative z-10 leading-tight">{headmasterName}</p>
+              <p className="text-[9.5px] text-slate-500 leading-tight mt-0.5">{principalNipNiy}</p>
             </div>
           </div>
         </div>
