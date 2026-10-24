@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { createPortal } from "react-dom";
+import { useQuery } from "@tanstack/react-query";
 import { 
   Printer, 
   X, 
@@ -25,10 +26,16 @@ import {
   Teacher, 
   LessonPeriod, 
   LessonPeriodType,
-  ScenarioConflict 
+  ScenarioConflict,
+  SchoolSettings,
+  SchoolAgenda,
+  RoutineActivity
 } from "../types";
 import { isClassMatch, normalizeGradeLevel } from "../utils/gradeLevelHelper";
 import { toValidGradeLevel } from "../services/scenario.service";
+import { schoolSettingsService } from "../services/schoolSettings.service";
+import { schoolAgendaService } from "../services/schoolAgenda.service";
+import { generateDailySchedule, getDefaultDailyStructures, timeToMinutes } from "../utils/scheduleCalculator";
 
 interface Props {
   scenario: ScheduleScenario;
@@ -39,6 +46,8 @@ interface Props {
   periods: LessonPeriod[];
   conflicts: ScenarioConflict[];
   subjects?: ScenarioSubject[];
+  schoolSettings?: SchoolSettings;
+  activeAgendas?: SchoolAgenda[];
   onClose: () => void;
 }
 
@@ -91,7 +100,174 @@ export interface ResolvedDaySlot {
   title: string;
   timeRange: string;
   isBreak: boolean;
+  isRoutine?: boolean;
+  jpDisplay?: string;
   schedule?: ScenarioSchedule;
+}
+
+/**
+ * Helper to dynamically resolve the complete, authentic daily period structure for any day.
+ * Ensures Apel Pagi, Halaqoh Qur'an, breaks, and KBM hours strictly match school operations.
+ */
+export function resolveCompleteDayPeriods(
+  dayName: string,
+  rawPeriods: LessonPeriod[],
+  settings?: SchoolSettings | null,
+  agendas: SchoolAgenda[] = []
+): LessonPeriod[] {
+  const normDay = normalizeDay(dayName).toLowerCase();
+
+  // 1. Check if rawPeriods already has routine activities and lesson periods specifically for this day
+  const existingForDay = rawPeriods.filter((p) => p.day && normalizeDay(p.day).toLowerCase() === normDay);
+  const hasExistingRoutine = existingForDay.some((p) => 
+    p.type === LessonPeriodType.ROUTINE || 
+    /apel|upacara|halaqah|halaqoh|tahfidz|senam|sholat|dhuha/i.test(p.title || "")
+  );
+
+  if (existingForDay.length > 0 && hasExistingRoutine) {
+    return [...existingForDay].sort((a, b) => {
+      const startDiff = timeToMinutes(a.startTime) - timeToMinutes(b.startTime);
+      if (startDiff !== 0) return startDiff;
+      return a.sequence - b.sequence;
+    });
+  }
+
+  // 2. Otherwise, use the core calculation engine generateDailySchedule with active settings and active agendas
+  const dayAgendas = (agendas || []).filter(
+    (a) => a.day && normalizeDay(a.day).toLowerCase() === normDay && a.active !== false
+  );
+  const mappedAgendas: RoutineActivity[] = dayAgendas.map((a) => ({
+    id: a.id || `agenda-${normDay}-${a.name}`,
+    name: a.name,
+    enabled: a.active !== false,
+    days: [a.day],
+    startTime: a.startTime,
+    duration: a.duration || (timeToMinutes(a.endTime) - timeToMinutes(a.startTime)) || 10,
+    autoEndTime: a.endTime,
+    priority: 3,
+    description: a.notes,
+    agendaType: a.agendaType
+  }));
+
+  // Build dailyStructures with dayAgendas overlaid
+  let baseStructures = settings?.dailyStructures ? [...settings.dailyStructures] : getDefaultDailyStructures(settings || undefined);
+  if (dayAgendas.length > 0) {
+    baseStructures = baseStructures.map((ds) => {
+      if (ds.day.toLowerCase() !== normDay) return ds;
+      const acts = [...(ds.activities || [])];
+      dayAgendas.forEach((da) => {
+        const daLower = da.name.toLowerCase();
+        const existingIdx = acts.findIndex(
+          (a) => a.name.toLowerCase() === daLower || (da.agendaType && a.type === da.agendaType)
+        );
+        if (existingIdx >= 0) {
+          acts[existingIdx] = {
+            ...acts[existingIdx],
+            name: da.name,
+            startTime: da.startTime,
+            endTime: da.endTime,
+            isActive: da.active !== false,
+            durationMinutes: timeToMinutes(da.endTime) - timeToMinutes(da.startTime)
+          };
+        } else {
+          acts.push({
+            id: da.id || `act-${normDay}-${da.name}`,
+            name: da.name,
+            type: da.agendaType || "KEGIATAN_SEKOLAH",
+            startTime: da.startTime,
+            endTime: da.endTime,
+            isActive: da.active !== false,
+            durationMinutes: timeToMinutes(da.endTime) - timeToMinutes(da.startTime),
+            order: acts.length + 1
+          });
+        }
+      });
+      return { ...ds, activities: acts };
+    });
+  }
+
+  const mergedSettings: SchoolSettings = {
+    ...(settings || {
+      settingId: "school_settings_doc",
+      startTime: "07:00",
+      endTime: "14:00",
+      activeDays: CANONICAL_DAYS,
+      jpDuration: 40,
+      lessonPeriod: 40,
+      dailyStructures: baseStructures,
+      routineActivities: [],
+      breakTimes: [],
+      morningAssembly: {
+        enabled: true,
+        start: "07:00",
+        duration: 10,
+        end: "07:10"
+      },
+      specialActivities: [],
+      jpStructure: [],
+      schoolHours: {
+        startTime: "07:00",
+        endTime: "14:00"
+      }
+    }),
+    dailyStructures: baseStructures,
+    routineActivities: [
+      ...(settings?.routineActivities || []),
+      ...mappedAgendas
+    ]
+  };
+
+  const blocks = generateDailySchedule(mergedSettings, dayName);
+  
+  let dailySeq = 1;
+  let jpSeq = 1;
+  const computedPeriods: LessonPeriod[] = [];
+
+  for (const block of blocks) {
+    if (block.type === "gap" || block.type === "end") continue;
+
+    let type: LessonPeriodType = LessonPeriodType.LESSON;
+    let instructional = false;
+    let jpNumber: number | undefined = undefined;
+
+    if (block.type === "assembly" || block.type === "special") {
+      type = LessonPeriodType.ROUTINE;
+    } else if (block.type === "break") {
+      type = LessonPeriodType.BREAK;
+    } else if (block.type === "jp") {
+      type = LessonPeriodType.LESSON;
+      instructional = true;
+      jpNumber = block.jpNumber || jpSeq++;
+    }
+
+    computedPeriods.push({
+      day: dayName,
+      sequence: dailySeq++,
+      periodCode: `${dayName.substring(0, 3).toUpperCase()}-${type}-${jpNumber || dailySeq}`,
+      type,
+      title: block.name,
+      startTime: block.start,
+      endTime: block.end,
+      duration: block.duration,
+      instructional,
+      generatedAt: new Date().toISOString(),
+      ...(jpNumber ? { jpNumber } : {})
+    } as any);
+  }
+
+  // Link existing database IDs if available for lesson periods
+  if (existingForDay.length > 0) {
+    const existingLessons = existingForDay.filter((p) => p.type === LessonPeriodType.LESSON || p.instructional);
+    let lIdx = 0;
+    computedPeriods.forEach((cp) => {
+      if (cp.instructional && existingLessons[lIdx]) {
+        cp.id = existingLessons[lIdx].id;
+        lIdx++;
+      }
+    });
+  }
+
+  return computedPeriods;
 }
 
 export const ScenarioPrintModal: React.FC<Props> = ({
@@ -103,8 +279,25 @@ export const ScenarioPrintModal: React.FC<Props> = ({
   periods,
   conflicts,
   subjects = [],
+  schoolSettings: propSchoolSettings,
+  activeAgendas: propActiveAgendas,
   onClose
 }) => {
+  // Query active school settings and active school agendas from Firestore
+  const { data: fetchedSettings } = useQuery({
+    queryKey: ["schoolSettings"],
+    queryFn: () => schoolSettingsService.getSettings(),
+    enabled: !propSchoolSettings
+  });
+
+  const { data: fetchedAgendas = [] } = useQuery({
+    queryKey: ["active_school_agendas"],
+    queryFn: () => schoolAgendaService.getActiveAgendas(),
+    enabled: !propActiveAgendas
+  });
+
+  const schoolSettings = propSchoolSettings || fetchedSettings;
+  const activeAgendas = propActiveAgendas || fetchedAgendas;
   // View mode switcher:
   // - "CLASS_SCHEDULE": Jadwal Per Rombel (Semua Hari KBM)
   // - "GENERAL_SCHEDULE": Jadwal Gabungan Umum (Matriks Seluruh Rombel VII–IX)
@@ -178,9 +371,12 @@ export const ScenarioPrintModal: React.FC<Props> = ({
     return sortedClasses.filter((c) => c.id === selectedClassId);
   }, [selectedClassId, sortedClasses]);
 
-  // All distinct operational days present in scenario schedules or periods (canonical order)
+  // All distinct operational days present in school settings, scenario schedules, or periods (canonical order)
   const availableDays = useMemo(() => {
     const daySet = new Set<string>();
+    if (schoolSettings?.activeDays && schoolSettings.activeDays.length > 0) {
+      schoolSettings.activeDays.forEach((d) => daySet.add(normalizeDay(d)));
+    }
     periods.forEach((p) => {
       if (p.day) daySet.add(normalizeDay(p.day));
     });
@@ -203,7 +399,7 @@ export const ScenarioPrintModal: React.FC<Props> = ({
     );
 
     return [...ordered, ...others];
-  }, [periods, schedules]);
+  }, [periods, schedules, schoolSettings?.activeDays]);
 
   // Target days for general matrix
   const targetDays = useMemo(() => {
@@ -213,72 +409,11 @@ export const ScenarioPrintModal: React.FC<Props> = ({
 
   // Distinct periods sorted by sequence
   const sortedPeriods = useMemo(() => {
-    const map = new Map<number, LessonPeriod>();
-    periods.forEach((p) => {
-      if (!map.has(p.sequence)) {
-        map.set(p.sequence, p);
-      }
-    });
-    return Array.from(map.values()).sort((a, b) => a.sequence - b.sequence);
-  }, [periods]);
-
-  // Helper to find schedule slot strictly from shadow schedules (case-insensitive day and sequence)
-  const findScheduleSlot = (cls: Class, day: string, sequence: number) => {
-    const normDay = normalizeDay(day).toLowerCase();
-    return schedules.find((s) => {
-      const matchesClass = s.classId === cls.id || isClassMatch(s.classId, cls, classes);
-      const matchesDay = normalizeDay(s.day).toLowerCase() === normDay;
-      const matchesSeq = s.sequence === sequence;
-      return matchesClass && matchesDay && matchesSeq;
-    });
-  };
-
-  // Resolve all slot rows for a specific class and day
-  const getResolvedDaySlots = (cls: Class, day: string): ResolvedDaySlot[] => {
-    const normDay = normalizeDay(day).toLowerCase();
-
-    // 1. Schedules belonging to this class on this day
-    const classDaySchedules = schedules.filter((s) => {
-      const matchClass = s.classId === cls.id || isClassMatch(s.classId, cls, classes);
-      const matchDay = normalizeDay(s.day).toLowerCase() === normDay;
-      return matchClass && matchDay;
-    });
-
-    // 2. Periods for this day (or general periods fallback)
-    let dayPeriods = periods.filter((p) => normalizeDay(p.day).toLowerCase() === normDay);
-    if (dayPeriods.length === 0 && periods.length > 0) {
-      dayPeriods = periods;
-    }
-
-    // 3. Collect sequence numbers
-    const seqSet = new Set<number>();
-    dayPeriods.forEach((p) => seqSet.add(p.sequence));
-    classDaySchedules.forEach((s) => seqSet.add(s.sequence));
-
-    // Fallback if no periods and no schedules exist: at least sequence 1..8
-    if (seqSet.size === 0) {
-      for (let i = 1; i <= 8; i++) seqSet.add(i);
-    }
-
-    const sortedSeq = Array.from(seqSet).sort((a, b) => a - b);
-
-    return sortedSeq.map((seq) => {
-      const period = dayPeriods.find((p) => p.sequence === seq) || periods.find((p) => p.sequence === seq);
-      const schedule = classDaySchedules.find((s) => s.sequence === seq);
-
-      const isBreak = period ? (period.type === LessonPeriodType.BREAK || Boolean((period as any).isBreak)) : false;
-      const title = period?.title || (schedule?.jp ? schedule.jp : `JP ${seq}`);
-      const timeRange = period?.startTime && period?.endTime ? `${period.startTime} - ${period.endTime}` : "-";
-
-      return {
-        sequence: seq,
-        title,
-        timeRange,
-        isBreak,
-        schedule
-      };
-    });
-  };
+    // Generate a reference day (Senin or first available) to get full chronological layout
+    const refDay = availableDays[0] || "Senin";
+    const refPeriods = resolveCompleteDayPeriods(refDay, periods, schoolSettings, activeAgendas);
+    return refPeriods;
+  }, [availableDays, periods, schoolSettings, activeAgendas]);
 
   // Grade columns for Master Timetable (JADWAL MATA PELAJARAN INDUK: KELAS VII, KELAS VIII, KELAS IX)
   const masterGradeColumns = useMemo(() => {
@@ -312,27 +447,99 @@ export const ScenarioPrintModal: React.FC<Props> = ({
     });
   }, [sortedClasses]);
 
+  // Helper to find schedule slot strictly from shadow schedules (case-insensitive day and sequence/jp)
+  const findScheduleSlot = (cls: Class, day: string, period: LessonPeriod, jpNumber?: number) => {
+    const normDay = normalizeDay(day).toLowerCase();
+    return schedules.find((s) => {
+      const matchesClass = s.classId === cls.id || isClassMatch(s.classId, cls, classes);
+      const matchesDay = normalizeDay(s.day).toLowerCase() === normDay;
+      if (!matchesClass || !matchesDay) return false;
+
+      // 1. Match by exact lessonPeriodId
+      if (period.id && s.lessonPeriodId === period.id) return true;
+      // 2. Match by exact period sequence
+      if (s.sequence === period.sequence) return true;
+      // 3. Match by instructional jpNumber (e.g. s.sequence === 1 for JP 1 or s.jp === 'JP 1')
+      if (jpNumber !== undefined) {
+        if (s.sequence === jpNumber) return true;
+        if (s.jp && (s.jp === `JP ${jpNumber}` || s.jp === String(jpNumber) || s.jp === `JP${jpNumber}`)) return true;
+      }
+      return false;
+    });
+  };
+
+  // Resolve all slot rows for a specific class and day
+  const getResolvedDaySlots = (cls: Class, day: string): ResolvedDaySlot[] => {
+    const dayPeriods = resolveCompleteDayPeriods(day, periods, schoolSettings, activeAgendas);
+
+    let jpCounter = 1;
+    return dayPeriods.map((period) => {
+      const periodTitle = period.title || (period as any)?.name || "";
+      const isRoutine = period.type === LessonPeriodType.ROUTINE || 
+        /apel|upacara|halaqah|halaqoh|tahfidz|senam|sholat|dhuha|dzuhur|snack|briefing/i.test(periodTitle);
+      const isExplicitBreak = period.type === LessonPeriodType.BREAK || 
+        Boolean((period as any).isBreak) || 
+        /istirahat|rehat|snack|break/i.test(periodTitle);
+      const isShared = isRoutine || isExplicitBreak;
+
+      let jpNumber: number | undefined = undefined;
+      let schedule: ScenarioSchedule | undefined = undefined;
+
+      if (!isShared) {
+        jpNumber = (period as any).jpNumber || jpCounter++;
+        schedule = findScheduleSlot(cls, day, period, jpNumber);
+      }
+
+      const timeRange = formatTimeSlot(period.startTime, period.endTime);
+      const title = periodTitle || (isExplicitBreak ? "ISTIRAHAT" : `JP ${jpNumber || period.sequence}`);
+      const jpDisplay = isShared ? "-" : String(jpNumber || period.sequence);
+
+      return {
+        sequence: period.sequence,
+        title,
+        timeRange,
+        isBreak: isExplicitBreak,
+        isRoutine,
+        jpDisplay,
+        schedule
+      };
+    });
+  };
+
   // Helper to find schedule slot for master table column
-  const findMasterSlot = (col: (typeof masterGradeColumns)[number], day: string, sequence: number) => {
+  const findMasterSlot = (
+    col: (typeof masterGradeColumns)[number],
+    day: string,
+    period: LessonPeriod,
+    jpNumber?: number
+  ) => {
     const normDay = normalizeDay(day).toLowerCase();
     if (col.classObj) {
-      const direct = findScheduleSlot(col.classObj, day, sequence);
+      const direct = findScheduleSlot(col.classObj, day, period, jpNumber);
       if (direct) return direct;
     }
     return schedules.find((s) => {
       if (!s.day || normalizeDay(s.day).toLowerCase() !== normDay) return false;
-      if (s.sequence !== sequence) return false;
-      if (col.classObj && (s.classId === col.classObj.id || isClassMatch(s.classId, col.classObj, classes))) {
-        return true;
+      if (col.classObj) {
+        if (!isClassMatch(s.classId, col.classObj, classes)) return false;
+      } else {
+        const schedGrade = normalizeGradeLevel(s.className || s.classId);
+        if (schedGrade !== col.grade) return false;
       }
-      const schedGrade = normalizeGradeLevel(s.className || s.classId);
-      return schedGrade === col.grade;
+
+      if (period.id && s.lessonPeriodId === period.id) return true;
+      if (s.sequence === period.sequence) return true;
+      if (jpNumber !== undefined) {
+        if (s.sequence === jpNumber) return true;
+        if (s.jp && (s.jp === `JP ${jpNumber}` || s.jp === String(jpNumber) || s.jp === `JP${jpNumber}`)) return true;
+      }
+      return false;
     });
   };
 
   const getSharedStyle = (title: string, isBreak: boolean) => {
     const t = title.toLowerCase();
-    if (isBreak || /istirahat|snack|makan/i.test(t)) {
+    if (isBreak || /istirahat|snack|makan|rehat/i.test(t)) {
       return {
         bg: "bg-amber-50/70",
         text: "text-amber-900"
@@ -344,7 +551,7 @@ export const ScenarioPrintModal: React.FC<Props> = ({
         text: "text-sky-900"
       };
     }
-    if (/halaqah|tahfidz|sholat|dhuha|dzuhur|ashar|doa/i.test(t)) {
+    if (/halaqah|halaqoh|tahfidz|qur'?an|sholat|dhuha|dzuhur|ashar|doa/i.test(t)) {
       return {
         bg: "bg-emerald-50/70",
         text: "text-emerald-900"
@@ -364,59 +571,36 @@ export const ScenarioPrintModal: React.FC<Props> = ({
 
   // Resolve all rows for a given day in the master timetable
   const getMasterDayRows = (dayName: string) => {
-    const normDay = normalizeDay(dayName).toLowerCase();
+    const dayPeriods = resolveCompleteDayPeriods(dayName, periods, schoolSettings, activeAgendas);
 
-    // 1. Periods for this day (or general periods fallback)
-    let dayPeriods = periods.filter((p) => p.day && normalizeDay(p.day).toLowerCase() === normDay);
-    if (dayPeriods.length === 0 && periods.length > 0) {
-      dayPeriods = periods;
-    }
+    let jpCounter = 1;
+    return dayPeriods.map((period) => {
+      const periodTitle = period.title || (period as any)?.name || "";
+      const isRoutine = period.type === LessonPeriodType.ROUTINE || 
+        /apel|upacara|halaqah|halaqoh|tahfidz|senam|sholat|dhuha|dzuhur|snack|briefing/i.test(periodTitle);
+      const isExplicitBreak = period.type === LessonPeriodType.BREAK || 
+        Boolean((period as any).isBreak) || 
+        /istirahat|rehat|snack|break/i.test(periodTitle);
+      const isSharedActivity = isRoutine || isExplicitBreak;
 
-    // 2. Schedules for this day
-    const daySchedules = schedules.filter((s) => s.day && normalizeDay(s.day).toLowerCase() === normDay);
-
-    // 3. Sequences
-    const seqSet = new Set<number>();
-    dayPeriods.forEach((p) => seqSet.add(p.sequence));
-    daySchedules.forEach((s) => seqSet.add(s.sequence));
-
-    if (seqSet.size === 0) {
-      for (let i = 1; i <= 8; i++) seqSet.add(i);
-    }
-
-    const sortedSeq = Array.from(seqSet).sort((a, b) => a - b);
-
-    return sortedSeq.map((seq) => {
-      const period = dayPeriods.find((p) => p.sequence === seq) || periods.find((p) => p.sequence === seq);
-      const timeRange = formatTimeSlot(period?.startTime, period?.endTime);
-
-      // Check slot for each master grade column
-      const slots: Record<string, ScenarioSchedule | undefined> = {};
-      let hasAnySlot = false;
-
-      masterGradeColumns.forEach((col) => {
-        const slot = findMasterSlot(col, dayName, seq);
-        if (slot) hasAnySlot = true;
-        slots[col.key] = slot;
-      });
-
-      const isExplicitBreak = period ? (period.type === LessonPeriodType.BREAK || Boolean((period as any).isBreak)) : false;
-      const periodTitle = period?.title || (period as any)?.name || "";
-      const isSharedActivityByTitle = Boolean(
-        periodTitle && /apel|upacara|halaqah|tahfidz|istirahat|sholat|dhuha|dzuhur|snack|senam/i.test(periodTitle)
-      );
-
-      // Shared activity across classes if explicitly break, or title denotes routine activity AND no regular class schedule overrides it
-      const isSharedActivity = (isExplicitBreak || isSharedActivityByTitle) && !hasAnySlot;
-
-      const title = periodTitle || (isExplicitBreak ? "ISTIRAHAT" : `JP ${seq}`);
+      const timeRange = formatTimeSlot(period.startTime, period.endTime);
+      const title = periodTitle || (isExplicitBreak ? "ISTIRAHAT" : "AGENDA");
       const sharedStyle = getSharedStyle(title, isExplicitBreak);
 
-      // JP display: if shared activity / break, show "-". Otherwise show sequence number or period.sequence
-      const jpDisplay = isSharedActivity || isExplicitBreak ? "-" : String(period?.sequence || seq);
+      let jpNumber: number | undefined = undefined;
+      const slots: Record<string, ScenarioSchedule | undefined> = {};
+
+      if (!isSharedActivity) {
+        jpNumber = (period as any).jpNumber || jpCounter++;
+        masterGradeColumns.forEach((col) => {
+          slots[col.key] = findMasterSlot(col, dayName, period, jpNumber);
+        });
+      }
+
+      const jpDisplay = isSharedActivity ? "-" : String(jpNumber || period.sequence);
 
       return {
-        sequence: seq,
+        sequence: period.sequence,
         period,
         timeRange,
         jpDisplay,
@@ -860,20 +1044,21 @@ export const ScenarioPrintModal: React.FC<Props> = ({
                               </thead>
                               <tbody>
                                 {slots.map((slot) => {
-                                  if (slot.isBreak) {
+                                  if (slot.isBreak || slot.isRoutine) {
+                                    const style = getSharedStyle(slot.title, slot.isBreak);
                                     return (
-                                      <tr key={slot.sequence} className="bg-slate-50 border-b border-slate-200">
-                                        <td className="py-1 px-1.5 text-center font-mono text-[10px] text-slate-400 border-r border-slate-200">
+                                      <tr key={`${slot.title}-${slot.sequence}-${slot.timeRange}`} className={`border-b border-slate-200 ${style.bg}`}>
+                                        <td className="py-1 px-1.5 text-center font-mono text-[10px] text-slate-500 border-r border-slate-200">
                                           -
                                         </td>
-                                        <td className="py-1 px-1.5 text-center font-mono text-[10px] text-slate-500 border-r border-slate-200">
+                                        <td className="py-1 px-1.5 text-center font-mono text-[10px] text-slate-600 border-r border-slate-200">
                                           {slot.timeRange}
                                         </td>
                                         <td
                                           colSpan={2}
-                                          className="py-1 px-2 text-center font-bold text-[10px] tracking-wider uppercase text-slate-500"
+                                          className={`py-1 px-2 text-center font-bold text-[10.5px] tracking-wider uppercase ${style.text}`}
                                         >
-                                          {slot.title || "ISTIRAHAT"}
+                                          {slot.title}
                                         </td>
                                       </tr>
                                     );
@@ -889,7 +1074,7 @@ export const ScenarioPrintModal: React.FC<Props> = ({
                                       }`}
                                     >
                                       <td className="py-1 px-1.5 text-center font-bold text-[10.5px] text-slate-800 border-r border-slate-200">
-                                        {slot.sequence}
+                                        {slot.jpDisplay || slot.sequence}
                                       </td>
                                       <td className="py-1 px-1.5 text-center font-mono text-[10px] text-slate-600 border-r border-slate-200">
                                         {slot.timeRange}
@@ -936,14 +1121,18 @@ export const ScenarioPrintModal: React.FC<Props> = ({
                         </thead>
                         <tbody>
                           {sortedPeriods.map((period) => {
-                            const isBreak = period.type === LessonPeriodType.BREAK || Boolean((period as any).isBreak);
-                            const timeRange = period.startTime && period.endTime
-                              ? `${period.startTime} - ${period.endTime}`
-                              : "-";
+                            const isRoutine = period.type === LessonPeriodType.ROUTINE || 
+                              /apel|upacara|halaqah|halaqoh|tahfidz|senam|sholat|dhuha/i.test(period.title || "");
+                            const isBreak = period.type === LessonPeriodType.BREAK || 
+                              Boolean((period as any).isBreak) || 
+                              /istirahat|rehat|break/i.test(period.title || "");
+                            const isShared = isBreak || isRoutine;
+                            const timeRange = formatTimeSlot(period.startTime, period.endTime);
+                            const style = getSharedStyle(period.title, isBreak);
 
-                            if (isBreak) {
+                            if (isShared) {
                               return (
-                                <tr key={period.id || period.sequence} className="bg-slate-100/70 border-b border-slate-800">
+                                <tr key={period.id || period.sequence} className={`${style.bg} border-b border-slate-800`}>
                                   <td className="border border-slate-800 py-1 px-2 text-center font-bold text-slate-500">
                                     -
                                   </td>
@@ -952,25 +1141,27 @@ export const ScenarioPrintModal: React.FC<Props> = ({
                                   </td>
                                   <td
                                     colSpan={daysToRender.length}
-                                    className="border border-slate-800 py-1 px-2 text-center font-bold uppercase tracking-wider text-slate-600 text-[10.5px]"
+                                    className={`border border-slate-800 py-1 px-2 text-center font-bold uppercase tracking-wider text-[10.5px] ${style.text}`}
                                   >
-                                    {period.title || (period as any).name || "ISTIRAHAT"}
+                                    {period.title || (isBreak ? "ISTIRAHAT" : "AGENDA")}
                                   </td>
                                 </tr>
                               );
                             }
 
+                            const jpNumber = (period as any).jpNumber || period.sequence;
+
                             return (
                               <tr key={period.id || period.sequence} className="border-b border-slate-800">
-                                <td className="border border-slate-800 py-1.5 px-2 text-center font-bold">
-                                  {period.sequence}
+                                <td className="border border-slate-800 py-1.5 px-2 text-center font-bold text-[11px]">
+                                  {jpNumber}
                                 </td>
                                 <td className="border border-slate-800 py-1.5 px-2 text-center font-mono text-[10px] text-slate-700">
                                   {timeRange}
                                 </td>
 
                                 {daysToRender.map((d) => {
-                                  const slot = findScheduleSlot(cls, d, period.sequence);
+                                  const slot = findScheduleSlot(cls, d, period, jpNumber);
                                   return (
                                     <td
                                       key={d}
