@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { 
   Printer, 
   X, 
@@ -121,7 +122,38 @@ export const ScenarioPrintModal: React.FC<Props> = ({
   // Filter day for GENERAL_SCHEDULE view ("ALL" or specific day)
   const [selectedDay, setSelectedDay] = useState<string>("ALL");
 
+  // Lifecycle to isolate print media and cleanly hide parent layout during print
+  useEffect(() => {
+    document.body.classList.add("scenario-print-active");
+
+    const handleBeforePrint = () => {
+      document.body.classList.add("scenario-print-active");
+    };
+
+    const handleAfterPrint = () => {
+      document.body.classList.add("scenario-print-active");
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    };
+
+    window.addEventListener("beforeprint", handleBeforePrint);
+    window.addEventListener("afterprint", handleAfterPrint);
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("beforeprint", handleBeforePrint);
+      window.removeEventListener("afterprint", handleAfterPrint);
+      window.removeEventListener("keydown", handleKeyDown);
+      document.body.classList.remove("scenario-print-active");
+    };
+  }, [onClose]);
+
   const handlePrint = () => {
+    document.body.classList.add("scenario-print-active");
     window.print();
   };
 
@@ -482,22 +514,83 @@ export const ScenarioPrintModal: React.FC<Props> = ({
 
   const isLandscape = (printView === "CLASS_SCHEDULE" && classScheduleFormat === "WEEKLY_MATRIX") || printView === "GENERAL_SCHEDULE";
 
-  return (
-    <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex flex-col items-center justify-start overflow-y-auto p-3 sm:p-6 print:p-0 print:bg-white print:overflow-visible print:static">
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
+    <div
+      id="scenario-print-portal-root"
+      className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex flex-col items-center justify-start overflow-y-auto p-3 sm:p-6 print:p-0 print:bg-white print:overflow-visible print:static"
+    >
       
-      {/* Dynamic Print CSS Rules */}
+      {/* Scoped Dynamic Print CSS Rules strictly for Scenario Print Modal */}
       <style>{`
         @media print {
           @page {
             size: ${isLandscape ? "A4 landscape" : "A4 portrait"};
             margin: 8mm 10mm;
           }
-          body {
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
+
+          /* 1. Sembunyikan seluruh UI web/aplikasi (di dalam #root) saat mode cetak skenario aktif */
+          body.scenario-print-active > #root,
+          body.scenario-print-active header,
+          body.scenario-print-active aside,
+          body.scenario-print-active footer,
+          body.scenario-print-active nav,
+          body.scenario-print-active main {
+            display: none !important;
+          }
+
+          /* 2. Format Body & Viewport */
+          html, body.scenario-print-active {
             background: white !important;
             color: #0f172a !important;
+            overflow: visible !important;
+            height: auto !important;
+            min-height: auto !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
+
+          /* 3. Sembunyikan kontrol toolbar, filter, dan tombol cetak */
+          .no-print,
+          .scenario-no-print,
+          body.scenario-print-active .no-print,
+          body.scenario-print-active .scenario-no-print {
+            display: none !important;
+          }
+
+          /* 4. Lepaskan modal overlay menjadi kontainer dokumen cetak biasa */
+          body.scenario-print-active #scenario-print-portal-root,
+          #scenario-print-portal-root {
+            position: static !important;
+            display: block !important;
+            background: transparent !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            overflow: visible !important;
+            width: 100% !important;
+            height: auto !important;
+            max-height: none !important;
+            box-shadow: none !important;
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
+          }
+
+          /* 5. Kontainer dokumen cetak utama */
+          body.scenario-print-active #scenario-printable-sheet,
+          #scenario-printable-sheet {
+            box-shadow: none !important;
+            border: none !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            max-width: 100% !important;
+            width: 100% !important;
+            background: white !important;
+            display: block !important;
+          }
+
           .print-page-break {
             page-break-after: always !important;
             break-after: page !important;
@@ -513,7 +606,7 @@ export const ScenarioPrintModal: React.FC<Props> = ({
       `}</style>
 
       {/* Top Floating Control Toolbar (Hidden during Print) */}
-      <div className={`w-full ${isLandscape ? "max-w-6xl" : "max-w-5xl"} bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl p-4 shadow-xl mb-4 flex flex-col md:flex-row md:items-center justify-between gap-3 print:hidden`}>
+      <div className={`w-full ${isLandscape ? "max-w-6xl" : "max-w-5xl"} bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl p-4 shadow-xl mb-4 flex flex-col md:flex-row md:items-center justify-between gap-3 print:hidden no-print scenario-no-print`}>
         {/* Left: View Mode Tabs */}
         <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-zinc-800 rounded-xl overflow-x-auto">
           <button
@@ -646,7 +739,10 @@ export const ScenarioPrintModal: React.FC<Props> = ({
       </div>
 
       {/* Printable Sheet Wrapper */}
-      <div className={`w-full ${isLandscape ? "max-w-6xl" : "max-w-5xl"} bg-white text-slate-900 rounded-2xl shadow-2xl p-6 sm:p-10 print:shadow-none print:p-0 print:max-w-none print:w-full print:rounded-none relative font-sans print:overflow-visible`}>
+      <div
+        id="scenario-printable-sheet"
+        className={`w-full ${isLandscape ? "max-w-6xl" : "max-w-5xl"} bg-white text-slate-900 rounded-2xl shadow-2xl p-6 sm:p-10 print:shadow-none print:p-0 print:max-w-none print:w-full print:rounded-none relative font-sans print:overflow-visible`}
+      >
         
         {/* BIG BACKGROUND WATERMARK FOR PRINT & PDF */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.035] select-none rotate-[-30deg]">
@@ -1431,6 +1527,7 @@ export const ScenarioPrintModal: React.FC<Props> = ({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
