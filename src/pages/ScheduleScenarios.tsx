@@ -1342,6 +1342,7 @@ export default function ScheduleScenariosPage() {
           teachers={teachers}
           periods={periods}
           conflicts={activeConflicts}
+          subjects={activeSubjects}
           onClose={() => setShowPrintModal(false)}
         />
       )}
