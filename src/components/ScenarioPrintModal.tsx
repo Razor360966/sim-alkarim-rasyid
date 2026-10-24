@@ -60,6 +60,31 @@ export const normalizeDay = (day?: string): string => {
   return day.trim().charAt(0).toUpperCase() + day.trim().slice(1);
 };
 
+/**
+ * Cleanly format time slots as HH.MM–HH.MM (e.g. 07.00–07.10, 07.30–08.10)
+ */
+export const formatTimeSlot = (startTime?: string, endTime?: string): string => {
+  if (!startTime && !endTime) return "-";
+  const clean = (t?: string) => {
+    if (!t) return "";
+    const trimmed = t.trim();
+    if (trimmed.includes(":")) {
+      const parts = trimmed.split(":");
+      return `${parts[0].padStart(2, "0")}.${parts[1].padStart(2, "0")}`;
+    }
+    if (trimmed.includes(".")) {
+      const parts = trimmed.split(".");
+      return `${parts[0].padStart(2, "0")}.${parts[1].padStart(2, "0")}`;
+    }
+    return trimmed;
+  };
+
+  const start = clean(startTime);
+  const end = clean(endTime);
+  if (start && end) return `${start}–${end}`;
+  return start || end || "-";
+};
+
 export interface ResolvedDaySlot {
   sequence: number;
   title: string;
@@ -223,6 +248,154 @@ export const ScenarioPrintModal: React.FC<Props> = ({
     });
   };
 
+  // Grade columns for Master Timetable (JADWAL MATA PELAJARAN INDUK: KELAS VII, KELAS VIII, KELAS IX)
+  const masterGradeColumns = useMemo(() => {
+    const grades: ("VII" | "VIII" | "IX")[] = ["VII", "VIII", "IX"];
+
+    // Check if sortedClasses has multiple rombels per grade (e.g. 7A, 7B)
+    const hasMultipleRombel = grades.some(
+      (g) => sortedClasses.filter((c) => toValidGradeLevel(c.gradeLevel || c.name) === g).length > 1
+    );
+
+    if (hasMultipleRombel) {
+      return sortedClasses.map((cls) => {
+        const nameUpper = cls.name.trim().toUpperCase();
+        return {
+          key: cls.id,
+          label: nameUpper.startsWith("KELAS") ? nameUpper : `KELAS ${nameUpper}`,
+          grade: toValidGradeLevel(cls.gradeLevel || cls.name) as "VII" | "VIII" | "IX",
+          classObj: cls
+        };
+      });
+    }
+
+    return grades.map((g) => {
+      const cls = sortedClasses.find((c) => toValidGradeLevel(c.gradeLevel || c.name) === g);
+      return {
+        key: g,
+        label: `KELAS ${g}`,
+        grade: g,
+        classObj: cls
+      };
+    });
+  }, [sortedClasses]);
+
+  // Helper to find schedule slot for master table column
+  const findMasterSlot = (col: (typeof masterGradeColumns)[number], day: string, sequence: number) => {
+    const normDay = normalizeDay(day).toLowerCase();
+    if (col.classObj) {
+      const direct = findScheduleSlot(col.classObj, day, sequence);
+      if (direct) return direct;
+    }
+    return schedules.find((s) => {
+      if (!s.day || normalizeDay(s.day).toLowerCase() !== normDay) return false;
+      if (s.sequence !== sequence) return false;
+      if (col.classObj && (s.classId === col.classObj.id || isClassMatch(s.classId, col.classObj, classes))) {
+        return true;
+      }
+      const schedGrade = normalizeGradeLevel(s.className || s.classId);
+      return schedGrade === col.grade;
+    });
+  };
+
+  const getSharedStyle = (title: string, isBreak: boolean) => {
+    const t = title.toLowerCase();
+    if (isBreak || /istirahat|snack|makan/i.test(t)) {
+      return {
+        bg: "bg-amber-50/70",
+        text: "text-amber-900"
+      };
+    }
+    if (/apel|upacara|briefing|upacara bendera/i.test(t)) {
+      return {
+        bg: "bg-sky-50/70",
+        text: "text-sky-900"
+      };
+    }
+    if (/halaqah|tahfidz|sholat|dhuha|dzuhur|ashar|doa/i.test(t)) {
+      return {
+        bg: "bg-emerald-50/70",
+        text: "text-emerald-900"
+      };
+    }
+    if (/senam|olahraga/i.test(t)) {
+      return {
+        bg: "bg-indigo-50/70",
+        text: "text-indigo-900"
+      };
+    }
+    return {
+      bg: "bg-slate-100/70",
+      text: "text-slate-800"
+    };
+  };
+
+  // Resolve all rows for a given day in the master timetable
+  const getMasterDayRows = (dayName: string) => {
+    const normDay = normalizeDay(dayName).toLowerCase();
+
+    // 1. Periods for this day (or general periods fallback)
+    let dayPeriods = periods.filter((p) => p.day && normalizeDay(p.day).toLowerCase() === normDay);
+    if (dayPeriods.length === 0 && periods.length > 0) {
+      dayPeriods = periods;
+    }
+
+    // 2. Schedules for this day
+    const daySchedules = schedules.filter((s) => s.day && normalizeDay(s.day).toLowerCase() === normDay);
+
+    // 3. Sequences
+    const seqSet = new Set<number>();
+    dayPeriods.forEach((p) => seqSet.add(p.sequence));
+    daySchedules.forEach((s) => seqSet.add(s.sequence));
+
+    if (seqSet.size === 0) {
+      for (let i = 1; i <= 8; i++) seqSet.add(i);
+    }
+
+    const sortedSeq = Array.from(seqSet).sort((a, b) => a - b);
+
+    return sortedSeq.map((seq) => {
+      const period = dayPeriods.find((p) => p.sequence === seq) || periods.find((p) => p.sequence === seq);
+      const timeRange = formatTimeSlot(period?.startTime, period?.endTime);
+
+      // Check slot for each master grade column
+      const slots: Record<string, ScenarioSchedule | undefined> = {};
+      let hasAnySlot = false;
+
+      masterGradeColumns.forEach((col) => {
+        const slot = findMasterSlot(col, dayName, seq);
+        if (slot) hasAnySlot = true;
+        slots[col.key] = slot;
+      });
+
+      const isExplicitBreak = period ? (period.type === LessonPeriodType.BREAK || Boolean((period as any).isBreak)) : false;
+      const periodTitle = period?.title || (period as any)?.name || "";
+      const isSharedActivityByTitle = Boolean(
+        periodTitle && /apel|upacara|halaqah|tahfidz|istirahat|sholat|dhuha|dzuhur|snack|senam/i.test(periodTitle)
+      );
+
+      // Shared activity across classes if explicitly break, or title denotes routine activity AND no regular class schedule overrides it
+      const isSharedActivity = (isExplicitBreak || isSharedActivityByTitle) && !hasAnySlot;
+
+      const title = periodTitle || (isExplicitBreak ? "ISTIRAHAT" : `JP ${seq}`);
+      const sharedStyle = getSharedStyle(title, isExplicitBreak);
+
+      // JP display: if shared activity / break, show "-". Otherwise show sequence number or period.sequence
+      const jpDisplay = isSharedActivity || isExplicitBreak ? "-" : String(period?.sequence || seq);
+
+      return {
+        sequence: seq,
+        period,
+        timeRange,
+        jpDisplay,
+        isSharedActivity,
+        sharedStyle,
+        title,
+        slots
+      };
+    });
+  };
+
   // Helper to determine whether an item belongs to Pesantren (Group B) or Umum (Group A / C)
   // Strictly follows ScenarioCurriculumEditor.tsx logic
   const isPesantrenItem = (item: ScenarioCurriculumMatrix): boolean => {
@@ -307,7 +480,7 @@ export const ScenarioPrintModal: React.FC<Props> = ({
   const totalViii = grandTotal.viii;
   const totalIx = grandTotal.ix;
 
-  const isLandscape = printView === "CLASS_SCHEDULE" && classScheduleFormat === "WEEKLY_MATRIX";
+  const isLandscape = (printView === "CLASS_SCHEDULE" && classScheduleFormat === "WEEKLY_MATRIX") || printView === "GENERAL_SCHEDULE";
 
   return (
     <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex flex-col items-center justify-start overflow-y-auto p-3 sm:p-6 print:p-0 print:bg-white print:overflow-visible print:static">
@@ -340,7 +513,7 @@ export const ScenarioPrintModal: React.FC<Props> = ({
       `}</style>
 
       {/* Top Floating Control Toolbar (Hidden during Print) */}
-      <div className="w-full max-w-5xl bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl p-4 shadow-xl mb-4 flex flex-col md:flex-row md:items-center justify-between gap-3 print:hidden">
+      <div className={`w-full ${isLandscape ? "max-w-6xl" : "max-w-5xl"} bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl p-4 shadow-xl mb-4 flex flex-col md:flex-row md:items-center justify-between gap-3 print:hidden`}>
         {/* Left: View Mode Tabs */}
         <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-zinc-800 rounded-xl overflow-x-auto">
           <button
@@ -473,7 +646,7 @@ export const ScenarioPrintModal: React.FC<Props> = ({
       </div>
 
       {/* Printable Sheet Wrapper */}
-      <div className="w-full max-w-5xl bg-white text-slate-900 rounded-2xl shadow-2xl p-6 sm:p-10 print:shadow-none print:p-0 print:max-w-none print:w-full print:rounded-none relative font-sans print:overflow-visible">
+      <div className={`w-full ${isLandscape ? "max-w-6xl" : "max-w-5xl"} bg-white text-slate-900 rounded-2xl shadow-2xl p-6 sm:p-10 print:shadow-none print:p-0 print:max-w-none print:w-full print:rounded-none relative font-sans print:overflow-visible`}>
         
         {/* BIG BACKGROUND WATERMARK FOR PRINT & PDF */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.035] select-none rotate-[-30deg]">
@@ -757,110 +930,143 @@ export const ScenarioPrintModal: React.FC<Props> = ({
         )}
 
         {/* =========================================================================
-            VIEW 2: JADWAL GABUNGAN UMUM (MATRIKS SELURUH ROMBEL VII–IX)
+            VIEW 2: JADWAL MATA PELAJARAN INDUK (GABUNGAN SEMUA KELAS VII–IX)
+            Format Master Timetable:
+            | Hari | Waktu | JP | KELAS VII | KELAS VIII | KELAS IX |
+            - Kolom Hari dengan vertical rowspan untuk seluruh baris pada hari tersebut
+            - Satu tabel master berkelanjutan untuk seluruh hari KBM
+            - Tepat satu blok tanda tangan di bagian paling bawah
            ========================================================================= */}
         {printView === "GENERAL_SCHEDULE" && (
-          <div className="space-y-12">
-            {targetDays.map((dayName, dayIdx) => (
-              <div
-                key={dayName}
-                className={`space-y-4 ${dayIdx < targetDays.length - 1 ? "print-page-break mb-8 pb-8" : ""}`}
-              >
-                {/* Warning Strip */}
-                <div className="border border-amber-400 bg-amber-50/90 rounded-lg p-2 text-center print:border-amber-500">
-                  <span className="text-[11px] font-black uppercase tracking-wider text-amber-900">
-                    ⚠️ DOKUMEN RANCANGAN JADWAL BAYANGAN — BUKAN JADWAL OPERASIONAL RESMI
-                  </span>
-                </div>
+          <div className="space-y-4">
+            {/* Warning Strip */}
+            <div className="border border-amber-400 bg-amber-50/90 rounded-lg p-2 text-center print:border-amber-500">
+              <span className="text-[11px] font-black uppercase tracking-wider text-amber-900">
+                ⚠️ DOKUMEN RANCANGAN JADWAL BAYANGAN — BUKAN JADWAL OPERASIONAL RESMI
+              </span>
+            </div>
 
-                {/* Header */}
-                <div className="border-b-2 border-slate-900 pb-3 flex items-start justify-between">
-                  <div>
-                    <h1 className="text-base sm:text-lg font-black uppercase tracking-tight text-slate-900 leading-tight">
-                      SMP ALKARIM RASYID — JADWAL GABUNGAN KELAS VII–IX
-                    </h1>
-                    <h2 className="text-xs sm:text-sm font-bold text-emerald-800 leading-tight">
-                      PONDOK PESANTREN QUR'AN DAN DAKWAH ALKARIM RASYID INDONESIA
-                    </h2>
-                    <p className="text-xs font-bold text-slate-800 mt-1 uppercase">
-                      HARI: {dayName} • TAHUN AJARAN: {scenario.academicYearName} • SEMESTER: {scenario.semesterName}
-                    </p>
-                  </div>
+            {/* Header: Jadwal Mata Pelajaran Induk */}
+            <div className="border-b-2 border-slate-900 pb-3 flex items-start justify-between">
+              <div>
+                <h1 className="text-base sm:text-lg font-black uppercase tracking-tight text-slate-900 leading-tight">
+                  JADWAL MATA PELAJARAN INDUK
+                </h1>
+                <h2 className="text-xs sm:text-sm font-bold text-emerald-800 leading-tight mt-0.5">
+                  SMP ALKARIM RASYID — PONDOK PESANTREN QUR'AN DAN DAKWAH ALKARIM RASYID INDONESIA
+                </h2>
+                <p className="text-xs font-bold text-slate-800 mt-1 uppercase">
+                  TAHUN AJARAN: {scenario.academicYearName} • SEMESTER: {scenario.semesterName}
+                </p>
+              </div>
 
-                  <div className="text-right">
-                    <span className="inline-block text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-900 text-white mb-0.5">
-                      RANCANGAN: {scenario.name}
-                    </span>
-                    <p className="text-[10px] text-slate-600">
-                      Status: <strong>{scenario.status}</strong>
-                    </p>
-                  </div>
-                </div>
+              <div className="text-right">
+                <span className="inline-block text-[10px] font-bold uppercase px-2.5 py-1 rounded bg-slate-900 text-white mb-0.5">
+                  RANCANGAN: {scenario.name}
+                </span>
+                <p className="text-[10px] text-slate-600">
+                  Status: <strong className="text-slate-900 uppercase">{scenario.status}</strong>
+                </p>
+              </div>
+            </div>
 
-                {/* Matrix Table */}
-                <div className="overflow-x-auto print-overflow-visible">
-                  <table className="w-full text-[11px] border-collapse border border-slate-800">
-                    <thead>
-                      <tr className="bg-slate-100 border-b border-slate-800 text-slate-900">
-                        <th className="border border-slate-800 py-1.5 px-2 text-center w-10 font-bold">JP</th>
-                        <th className="border border-slate-800 py-1.5 px-2 text-center w-24 font-bold">Waktu</th>
-                        {sortedClasses.map((cls) => (
-                          <th key={cls.id} className="border border-slate-800 py-1.5 px-2 text-center font-bold min-w-[110px]">
-                            Kelas {cls.name}
-                            <span className="block text-[9px] font-normal text-slate-500">
-                              ({cls.gradeLevel})
-                            </span>
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sortedPeriods.map((period) => {
-                        const isBreak = period.type === LessonPeriodType.BREAK || Boolean((period as any).isBreak);
-                        const timeRange = period.startTime && period.endTime
-                          ? `${period.startTime} - ${period.endTime}`
-                          : "-";
+            {/* Master Timetable Table */}
+            <div className="overflow-x-auto print-overflow-visible">
+              <table className="w-full text-[11px] border-collapse border border-slate-800">
+                <thead>
+                  <tr className="bg-slate-100 border-b-2 border-slate-900 text-slate-900">
+                    <th className="border border-slate-800 py-2 px-2 text-center w-24 font-extrabold uppercase text-[11px] tracking-wider">
+                      Hari
+                    </th>
+                    <th className="border border-slate-800 py-2 px-2 text-center w-28 font-extrabold uppercase text-[11px] tracking-wider">
+                      Waktu
+                    </th>
+                    <th className="border border-slate-800 py-2 px-1 text-center w-12 font-extrabold uppercase text-[11px] tracking-wider">
+                      JP
+                    </th>
+                    {masterGradeColumns.map((col) => (
+                      <th
+                        key={col.key}
+                        className="border border-slate-800 py-2 px-3 text-center font-extrabold uppercase text-[11px] tracking-wider min-w-[130px]"
+                      >
+                        {col.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {targetDays.map((dayName, dayIndex) => {
+                    const dayRows = getMasterDayRows(dayName);
+                    const isLastDay = dayIndex === targetDays.length - 1;
 
-                        if (isBreak) {
-                          return (
-                            <tr key={period.id || period.sequence} className="bg-slate-100/70 border-b border-slate-800">
-                              <td className="border border-slate-800 py-1 px-1.5 text-center font-bold text-slate-500">
-                                -
-                              </td>
-                              <td className="border border-slate-800 py-1 px-1.5 text-center font-mono text-[10px] text-slate-600">
-                                {timeRange}
-                              </td>
-                              <td
-                                colSpan={sortedClasses.length}
-                                className="border border-slate-800 py-1 px-2 text-center font-bold uppercase tracking-wider text-slate-600 text-[10px]"
-                              >
-                                {period.title || (period as any).name || "ISTIRAHAT"}
-                              </td>
-                            </tr>
-                          );
-                        }
+                    if (dayRows.length === 0) {
+                      return (
+                        <tr key={dayName} className="border-b border-slate-800">
+                          <td className="border border-slate-800 py-2 px-2 text-center font-bold uppercase text-slate-900 bg-slate-100/70">
+                            {dayName}
+                          </td>
+                          <td
+                            colSpan={2 + masterGradeColumns.length}
+                            className="border border-slate-800 py-2 px-4 text-center text-slate-400 italic text-xs"
+                          >
+                            Tidak ada jadwal untuk hari {dayName}
+                          </td>
+                        </tr>
+                      );
+                    }
 
-                        return (
-                          <tr key={period.id || period.sequence} className="border-b border-slate-800">
-                            <td className="border border-slate-800 py-1 px-1.5 text-center font-bold">
-                              {period.sequence}
+                    return dayRows.map((row, rowIdx) => {
+                      const isDayFirstRow = rowIdx === 0;
+                      const isDayLastRow = rowIdx === dayRows.length - 1;
+
+                      return (
+                        <tr
+                          key={`${dayName}-${row.sequence}-${rowIdx}`}
+                          className={`border-b ${isDayLastRow && !isLastDay ? "border-b-2 border-slate-900" : "border-slate-800"} ${
+                            row.isSharedActivity ? row.sharedStyle.bg : "hover:bg-slate-50/50"
+                          }`}
+                        >
+                          {/* Column 1: Hari (Vertical Rowspan spanning all rows of the day) */}
+                          {isDayFirstRow && (
+                            <td
+                              rowSpan={dayRows.length}
+                              className="border border-slate-800 bg-slate-100/90 font-black text-center align-middle uppercase tracking-wider text-xs px-2 text-slate-900 w-24 select-none"
+                            >
+                              {dayName}
                             </td>
-                            <td className="border border-slate-800 py-1 px-1.5 text-center font-mono text-[10px] text-slate-700">
-                              {timeRange}
-                            </td>
+                          )}
 
-                            {sortedClasses.map((cls) => {
-                              const slot = findScheduleSlot(cls, dayName, period.sequence);
+                          {/* Column 2: Waktu (Clean dynamic range e.g. 07.00–07.10) */}
+                          <td className="border border-slate-800 py-1 px-1.5 text-center font-mono text-[10px] sm:text-[10.5px] text-slate-700 whitespace-nowrap">
+                            {row.timeRange}
+                          </td>
+
+                          {/* Column 3: JP (Lesson Period number or '-' for shared routines/breaks) */}
+                          <td className="border border-slate-800 py-1 px-1 text-center font-bold text-[11px] text-slate-800">
+                            {row.jpDisplay}
+                          </td>
+
+                          {/* Columns 4..N: Classes or Horizontal Merged Shared Activity */}
+                          {row.isSharedActivity ? (
+                            <td
+                              colSpan={masterGradeColumns.length}
+                              className={`border border-slate-800 py-1.5 px-3 text-center font-bold uppercase tracking-wider text-[11px] ${row.sharedStyle.text}`}
+                            >
+                              {row.title}
+                            </td>
+                          ) : (
+                            masterGradeColumns.map((col) => {
+                              const slot = row.slots[col.key];
                               return (
                                 <td
-                                  key={cls.id}
-                                  className={`border border-slate-800 p-1 text-center align-middle ${
-                                    slot ? "bg-white" : "bg-slate-50/40"
+                                  key={col.key}
+                                  className={`border border-slate-800 p-1.5 text-center align-middle ${
+                                    slot ? "bg-white" : "bg-slate-50/30"
                                   }`}
                                 >
                                   {slot ? (
                                     <div className="space-y-0.5">
-                                      <div className="font-bold text-slate-900 leading-tight">
+                                      <div className="font-bold text-slate-900 text-[11px] leading-tight">
                                         {slot.subjectName}
                                       </div>
                                       <div className="text-[9.5px] text-emerald-800 font-medium leading-tight">
@@ -868,38 +1074,38 @@ export const ScenarioPrintModal: React.FC<Props> = ({
                                       </div>
                                     </div>
                                   ) : (
-                                    <span className="text-slate-300 italic text-[10px]">-</span>
+                                    <span className="text-slate-300 italic text-[11px]">-</span>
                                   )}
                                 </td>
                               );
-                            })}
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                            })
+                          )}
+                        </tr>
+                      );
+                    });
+                  })}
+                </tbody>
+              </table>
+            </div>
 
-                {/* Signatures */}
-                <div className="pt-6 border-t border-slate-200 grid grid-cols-3 gap-6 text-center text-xs print-avoid-break">
-                  <div>
-                    <p className="font-semibold text-slate-700">Wakakur / Tim Kurikulum,</p>
-                    <div className="h-16" />
-                    <p className="font-bold underline text-slate-900">{scenario.createdByName}</p>
-                  </div>
-                  <div>
-                    <p className="font-semibold text-slate-700">Mengetahui, Kepala Sekolah</p>
-                    <div className="h-16" />
-                    <p className="font-bold underline text-slate-900">Ustadz Kepala Sekolah, M.Pd.</p>
-                  </div>
-                  <div>
-                    <p className="font-semibold text-slate-700">Pimpinan Pondok Pesantren</p>
-                    <div className="h-16" />
-                    <p className="font-bold underline text-slate-900">Mudir / Pengasuh Pondok</p>
-                  </div>
-                </div>
+            {/* Single Master Signature Block at bottom of timetable */}
+            <div className="mt-8 pt-4 border-t border-slate-300 grid grid-cols-3 gap-6 text-center text-xs print-avoid-break">
+              <div>
+                <p className="font-semibold text-slate-700">Wakakur / Tim Kurikulum,</p>
+                <div className="h-16" />
+                <p className="font-bold underline text-slate-900">{scenario.createdByName}</p>
               </div>
-            ))}
+              <div>
+                <p className="font-semibold text-slate-700">Mengetahui, Kepala Sekolah</p>
+                <div className="h-16" />
+                <p className="font-bold underline text-slate-900">Ustadz Kepala Sekolah, M.Pd.</p>
+              </div>
+              <div>
+                <p className="font-semibold text-slate-700">Pimpinan Pondok Pesantren</p>
+                <div className="h-16" />
+                <p className="font-bold underline text-slate-900">Mudir / Pengasuh Pondok</p>
+              </div>
+            </div>
           </div>
         )}
 
