@@ -51,7 +51,7 @@ interface Props {
   periods: LessonPeriod[];
   conflicts: ScenarioConflict[];
   onSaveSlot: (slot: Partial<ScenarioSchedule> & { scenarioId: string; classId: string; day: string; sequence: number }) => Promise<void>;
-  onClearSlot: (slotId: string) => Promise<void>;
+  onClearSlot: (slotId: string, context?: { classId: string; day: string; sequence: number }) => Promise<void>;
   onMoveOrSwapSlot?: (data: {
     sourceSlot: {
       id?: string;
@@ -176,9 +176,10 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
       classes,
       targetClassId: activeSlotData.classId,
       targetClassName: activeSlotData.className,
-      currentSlot: activeSlotData
+      currentSlot: activeSlotData,
+      periods
     });
-  }, [activeSlotData, curriculums, schedules, classes]);
+  }, [activeSlotData, curriculums, schedules, classes, periods]);
 
   // Information of the currently chosen subject in the modal
   const selectedSubjectOption = useMemo(() => {
@@ -312,10 +313,14 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
   };
 
   const handleClearModal = async () => {
-    if (!activeSlotData?.slotId) return;
+    if (!activeSlotData) return;
     try {
       setIsSaving(true);
-      await onClearSlot(activeSlotData.slotId);
+      await onClearSlot(activeSlotData.slotId || "", {
+        classId: activeSlotData.classId,
+        day: activeSlotData.day,
+        sequence: activeSlotData.sequence
+      });
       setActiveSlotData(null);
     } finally {
       setIsSaving(false);

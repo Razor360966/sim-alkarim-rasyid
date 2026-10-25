@@ -40,6 +40,7 @@ import { classService } from "./classService";
 import { lessonPeriodService } from "./lessonPeriod.service";
 import { teacherAssignmentService } from "./teacherAssignment.service";
 import { isClassMatch, normalizeGradeLevel, getCanonicalSlotKey } from "../utils/gradeLevelHelper";
+import { deduplicateSchedules, getScheduleSlotJpCount, isSlotMatchingCurriculum } from "../utils/scenarioScheduleHelper";
 
 export function safeNormalizeGrade(val?: string | number | null): "VII" | "VIII" | "IX" | null {
   if (val === null || val === undefined) return null;
@@ -1624,31 +1625,14 @@ export const scenarioService = {
         const targetTeacherName =
           res.teacherName && res.teacherName !== "Belum Ditugaskan" ? res.teacherName : "Belum Ditugaskan";
 
-        const matchingSlots = clsSchedules.filter((s) => {
-          const isNotEmpty =
-            s.subjectName &&
-            s.subjectName !== "Kosong" &&
-            s.subjectName !== "Belum Ditugaskan" &&
-            s.subjectName.trim() !== "";
-          if (!isNotEmpty) return false;
+        const matchingSlots = deduplicateSchedules(clsSchedules).filter((s) =>
+          isSlotMatchingCurriculum(s, cur)
+        );
 
-          // 1. Direct ID matches
-          if (s.subjectId && cur.subjectId && s.subjectId === cur.subjectId) return true;
-          if (s.subjectId && cur.originalCurriculumId && s.subjectId === cur.originalCurriculumId) return true;
-          if (s.subjectId && cur.id && s.subjectId === cur.id) return true;
-
-          // 2. Name match (case-insensitive trim and sub-string / aliases)
-          if (s.subjectName && cur.subjectName) {
-            const sName = s.subjectName.trim().toLowerCase();
-            const cName = cur.subjectName.trim().toLowerCase();
-            if (sName === cName) return true;
-            if (sName.startsWith(cName) || cName.startsWith(sName)) return true;
-          }
-
-          return false;
-        });
-
-        const currentJp = matchingSlots.length;
+        const currentJp = matchingSlots.reduce(
+          (sum, s) => sum + getScheduleSlotJpCount(s, instructionalPeriods),
+          0
+        );
         const diff = targetJp - currentJp;
 
         if (diff < 0) {
@@ -2116,7 +2100,7 @@ export const scenarioService = {
     const snap = await getDocs(q);
     const items: ScenarioSchedule[] = [];
     snap.forEach((d) => items.push({ id: d.id, ...d.data() } as ScenarioSchedule));
-    return items;
+    return deduplicateSchedules(items);
   },
 
   /**
@@ -2127,7 +2111,15 @@ export const scenarioService = {
     user: { uid: string; displayName?: string }
   ): Promise<void> {
     const now = new Date().toISOString();
-    const slotId = slot.id || `${slot.scenarioId}_sc_${slot.classId}_${slot.day}_${slot.sequence}`;
+    const canonicalId = `${slot.scenarioId}_sc_${slot.classId}_${slot.day}_${slot.sequence}`;
+    const slotId = slot.id || canonicalId;
+
+    const isSlotEmpty =
+      !slot.subjectId ||
+      slot.subjectId === "Kosong" ||
+      !slot.subjectName ||
+      slot.subjectName === "Kosong" ||
+      slot.subjectName === "Belum Ditugaskan";
 
     const payload: ScenarioSchedule = {
       id: slotId,
@@ -2141,25 +2133,76 @@ export const scenarioService = {
       lessonPeriodId: slot.lessonPeriodId || "",
       sequence: slot.sequence,
       jp: slot.jp || `JP ${slot.sequence}`,
-      subjectId: slot.subjectId || "",
-      subjectName: slot.subjectName || "",
-      teacherId: slot.teacherId || "",
-      teacherName: slot.teacherName || "",
+      subjectId: isSlotEmpty ? "" : (slot.subjectId || ""),
+      subjectName: isSlotEmpty ? "Kosong" : (slot.subjectName || ""),
+      teacherId: isSlotEmpty ? "" : (slot.teacherId || ""),
+      teacherName: isSlotEmpty ? "Belum Ditugaskan" : (slot.teacherName || ""),
       isLocked: Boolean(slot.isLocked),
       createdAt: slot.createdAt || now,
       updatedAt: now
     };
 
-    await setDoc(doc(db, SCENARIO_SCHEDULES_COL, slotId), payload);
+    const batch = writeBatch(db);
+    batch.set(doc(db, SCENARIO_SCHEDULES_COL, slotId), payload);
+
+    // If slotId is different from canonicalId, clean up canonicalId to avoid duplicate records
+    if (slot.id && slot.id !== canonicalId) {
+      batch.delete(doc(db, SCENARIO_SCHEDULES_COL, canonicalId));
+    }
+
+    await batch.commit();
     await this.checkAndResetApprovalIfModified(slot.scenarioId, user, "perubahan slot jadwal");
     await this.refreshScenarioSummary(slot.scenarioId, user);
   },
 
   /**
-   * Clear an assigned slot in the scenario
+   * Clear an assigned slot in the scenario.
+   * Completely removes the slot document, canonical ID, and any lingering duplicate documents in Firestore.
    */
-  async clearScenarioScheduleSlot(slotId: string, scenarioId: string, user: { uid: string; displayName?: string }): Promise<void> {
-    await deleteDoc(doc(db, SCENARIO_SCHEDULES_COL, slotId));
+  async clearScenarioScheduleSlot(
+    slotId: string, 
+    scenarioId: string, 
+    user: { uid: string; displayName?: string },
+    context?: { classId?: string; day?: string; sequence?: number }
+  ): Promise<void> {
+    const batch = writeBatch(db);
+    let hasDeletes = false;
+
+    if (slotId && slotId.trim()) {
+      batch.delete(doc(db, SCENARIO_SCHEDULES_COL, slotId.trim()));
+      hasDeletes = true;
+    }
+
+    // Clean up canonical ID and any duplicate documents matching (scenarioId, classId, day, sequence)
+    if (context?.classId && context?.day && context?.sequence !== undefined) {
+      const canonicalId = `${scenarioId}_sc_${context.classId}_${context.day}_${context.sequence}`;
+      if (canonicalId !== slotId) {
+        batch.delete(doc(db, SCENARIO_SCHEDULES_COL, canonicalId));
+        hasDeletes = true;
+      }
+
+      try {
+        const q = query(
+          collection(db, SCENARIO_SCHEDULES_COL),
+          where("scenarioId", "==", scenarioId),
+          where("classId", "==", context.classId),
+          where("day", "==", context.day),
+          where("sequence", "==", context.sequence)
+        );
+        const snap = await getDocs(q);
+        snap.forEach((d) => {
+          batch.delete(d.ref);
+          hasDeletes = true;
+        });
+      } catch (err) {
+        console.warn("Could not query duplicate scenario slots for cleanup:", err);
+      }
+    }
+
+    if (hasDeletes) {
+      await batch.commit();
+    }
+
     await this.checkAndResetApprovalIfModified(scenarioId, user, "pengosongan slot jadwal");
     await this.refreshScenarioSummary(scenarioId, user);
   },
@@ -2364,30 +2407,10 @@ export const scenarioService = {
         ) || 0;
         if (targetJp <= 0) return;
 
-        // Count how many slots are scheduled for this subject in this class
-        const actualJp = clsSchedules.filter((s) => {
-          const isNotEmpty =
-            s.subjectName &&
-            s.subjectName !== "Kosong" &&
-            s.subjectName !== "Belum Ditugaskan" &&
-            s.subjectName.trim() !== "";
-          if (!isNotEmpty) return false;
-
-          // 1. Direct ID match
-          if (s.subjectId && cur.subjectId && s.subjectId === cur.subjectId) return true;
-          if (s.subjectId && cur.originalCurriculumId && s.subjectId === cur.originalCurriculumId) return true;
-          if (s.subjectId && cur.id && s.subjectId === cur.id) return true;
-
-          // 2. Name match (case-insensitive trim and sub-string / aliases)
-          if (s.subjectName && cur.subjectName) {
-            const sName = s.subjectName.trim().toLowerCase();
-            const cName = cur.subjectName.trim().toLowerCase();
-            if (sName === cName) return true;
-            if (sName.startsWith(cName) || cName.startsWith(sName)) return true;
-          }
-
-          return false;
-        }).length;
+        // Count actual scheduled JP accurately using slot weight and deduplication
+        const deduplicatedClsSchedules = deduplicateSchedules(clsSchedules);
+        const matchingSlots = deduplicatedClsSchedules.filter((s) => isSlotMatchingCurriculum(s, cur));
+        const actualJp = matchingSlots.reduce((sum, s) => sum + getScheduleSlotJpCount(s, periods), 0);
 
         if (actualJp > targetJp) {
           conflicts.push({

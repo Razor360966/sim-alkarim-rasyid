@@ -1,37 +1,142 @@
 import { 
   ScenarioSchedule, 
   ScenarioCurriculumMatrix, 
-  Class 
+  Class,
+  LessonPeriod
 } from "../types";
 import { isClassMatch } from "./gradeLevelHelper";
 import { toValidGradeLevel } from "../services/scenario.service";
 
 /**
+ * Deduplicates schedule records for a class, day, and sequence.
+ * Guarantees that no duplicate Firestore records for the same slot key
+ * are double-counted or linger in memory.
+ */
+export function deduplicateSchedules(schedules: ScenarioSchedule[]): ScenarioSchedule[] {
+  const map = new Map<string, ScenarioSchedule>();
+  for (const s of schedules) {
+    if (!s.classId || !s.day || s.sequence === undefined || s.sequence === null) {
+      map.set(s.id || `sch_${Math.random()}`, s);
+      continue;
+    }
+    const key = `${(s.classId || "").trim().toLowerCase()}__${(s.day || "").trim().toLowerCase()}__${s.sequence}`;
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, s);
+    } else {
+      // Prioritize active subject assignment over empty slot
+      const existingHasSubject = Boolean(
+        existing.subjectId &&
+        existing.subjectName &&
+        existing.subjectName !== "Kosong" &&
+        existing.subjectName !== "Belum Ditugaskan"
+      );
+      const currentHasSubject = Boolean(
+        s.subjectId &&
+        s.subjectName &&
+        s.subjectName !== "Kosong" &&
+        s.subjectName !== "Belum Ditugaskan"
+      );
+
+      const existingTime = new Date(existing.updatedAt || existing.createdAt || 0).getTime();
+      const currentTime = new Date(s.updatedAt || s.createdAt || 0).getTime();
+
+      if (currentHasSubject && !existingHasSubject) {
+        map.set(key, s);
+      } else if (!currentHasSubject && existingHasSubject) {
+        // Keep existing active assignment
+      } else if (currentTime >= existingTime) {
+        map.set(key, s);
+      }
+    }
+  }
+  return Array.from(map.values());
+}
+
+/**
  * Calculates the JP count represented by a schedule slot.
- * Handles single JP, explicit jpCount, and ranged titles like "JP 1-2", "1–2", etc.
+ * Handles single JP, explicit jpCount, ranged titles (e.g. "JP 1-2", "1–2"),
+ * explicit duration/JP titles (e.g. "2 JP"), and LessonPeriod duration.
  */
 export function getScheduleSlotJpCount(
-  slot?: { jp?: string; sequence?: number; jpCount?: number } | null
+  slot?: { jp?: string; sequence?: number; jpCount?: number; lessonPeriodId?: string; day?: string; duration?: number } | null,
+  periods?: LessonPeriod[]
 ): number {
   if (!slot) return 1;
+
+  // 1. Explicit numeric jpCount on schedule
   if (typeof (slot as any).jpCount === "number" && (slot as any).jpCount > 0) {
     return (slot as any).jpCount;
   }
-  if (slot.jp) {
-    const match = slot.jp.match(/(\d+)\s*[-–]\s*(\d+)/);
-    if (match) {
-      const start = parseInt(match[1], 10);
-      const end = parseInt(match[2], 10);
+
+  // Helper to extract JP from text string (e.g. "JP 1-2", "1–2", "2 JP", "JP 3-4")
+  const parseTextJp = (text?: string): number | null => {
+    if (!text) return null;
+    // Ranged JP: "JP 1-2", "1 - 2", "1–2"
+    const rangeMatch = text.match(/(\d+)\s*[-–]\s*(\d+)/);
+    if (rangeMatch) {
+      const start = parseInt(rangeMatch[1], 10);
+      const end = parseInt(rangeMatch[2], 10);
       if (!isNaN(start) && !isNaN(end) && end >= start) {
         return Math.max(1, end - start + 1);
       }
     }
+    // Explicit count: "2 JP", "3JP", "2 Jam Pelajaran", "2 Jam"
+    const countMatch = text.match(/(\d+)\s*(?:JP|Jam)/i);
+    if (countMatch) {
+      const count = parseInt(countMatch[1], 10);
+      if (!isNaN(count) && count > 0) {
+        return count;
+      }
+    }
+    return null;
+  };
+
+  // 2. Check slot.jp string
+  const parsedFromSlotJp = parseTextJp(slot.jp);
+  if (parsedFromSlotJp !== null) {
+    return parsedFromSlotJp;
   }
+
+  // 3. Check explicit slot duration in minutes (standard JP is 40-45 minutes)
+  const slotDuration = typeof slot.duration === "number" ? slot.duration : (slot as any).durationMinutes;
+  if (typeof slotDuration === "number" && slotDuration >= 70) {
+    return Math.max(1, Math.round(slotDuration / 40));
+  }
+
+  // 4. Check corresponding LessonPeriod if periods provided
+  if (periods && periods.length > 0) {
+    const matchedPeriod = periods.find((p) => {
+      if (slot.lessonPeriodId && p.id && slot.lessonPeriodId === p.id) return true;
+      if (
+        slot.day &&
+        slot.sequence !== undefined &&
+        p.day.toLowerCase() === slot.day.toLowerCase() &&
+        p.sequence === slot.sequence
+      ) {
+        return true;
+      }
+      return false;
+    });
+
+    if (matchedPeriod) {
+      const parsedFromPeriodTitle = parseTextJp(matchedPeriod.title);
+      if (parsedFromPeriodTitle !== null) {
+        return parsedFromPeriodTitle;
+      }
+      if (typeof matchedPeriod.duration === "number" && matchedPeriod.duration >= 70) {
+        return Math.max(1, Math.round(matchedPeriod.duration / 40));
+      }
+    }
+  }
+
   return 1;
 }
 
 /**
  * Robust matcher between a schedule slot and a scenario curriculum item.
+ * Strictly guarantees that any slot with empty subject, "Kosong", or "Belum Ditugaskan"
+ * is NEVER matched to any curriculum.
  * Prioritizes stable ID matching (subjectId, doc id, originalCurriculumId).
  * Only falls back to exact normalized name when slot has no subjectId (legacy data),
  * strictly preventing confusion between subjects with similar names.
@@ -43,17 +148,25 @@ export function isSlotMatchingCurriculum(
   if (!slot || !cur) return false;
 
   const slotSubName = slot.subjectName?.trim() || "";
-  // Empty or unassigned slots do not match any curriculum
-  if (!slot.subjectId && (!slotSubName || slotSubName === "Kosong" || slotSubName === "Belum Ditugaskan")) {
+  const slotSubId = slot.subjectId?.trim() || "";
+
+  // 1. Any slot that is marked as empty or unassigned MUST be ignored
+  if (
+    !slotSubId ||
+    slotSubId.toLowerCase() === "kosong" ||
+    slotSubId.toLowerCase() === "belum ditugaskan" ||
+    !slotSubName ||
+    slotSubName.toLowerCase() === "kosong" ||
+    slotSubName.toLowerCase() === "belum ditugaskan"
+  ) {
     return false;
   }
 
-  const slotSubId = slot.subjectId?.trim();
   const curSubId = cur.subjectId?.trim();
   const curDocId = cur.id?.trim();
   const curOrigId = cur.originalCurriculumId?.trim();
 
-  // 1. Stable ID check (primary & authoritative)
+  // 2. Stable ID check (primary & authoritative)
   if (slotSubId) {
     if (curSubId && slotSubId === curSubId) return true;
     if (curDocId && slotSubId === curDocId) return true;
@@ -63,7 +176,7 @@ export function isSlotMatchingCurriculum(
     return false;
   }
 
-  // 2. Exact Case-Insensitive Name Match Fallback ONLY when slot.subjectId is missing (legacy)
+  // 3. Exact Case-Insensitive Name Match Fallback ONLY when slot.subjectId is missing (legacy)
   if (slotSubName && cur.subjectName) {
     return slotSubName.toLowerCase() === cur.subjectName.trim().toLowerCase();
   }
@@ -93,6 +206,7 @@ export interface AvailableSubjectOption {
   isCustomSubject?: boolean;
   allocatedJp: number;
   scheduledJpInOtherSlots: number;
+  totalScheduledInClass: number;
   remainingJp: number;
   isCurrentlyInSlot: boolean;
   isOverAllocated: boolean;
@@ -115,6 +229,7 @@ export function calculateAvailableSubjectsForSlot(params: {
   curriculums: ScenarioCurriculumMatrix[];
   schedules: ScenarioSchedule[];
   classes: Class[];
+  periods?: LessonPeriod[];
   targetClassId: string;
   targetClassName: string;
   currentSlot: {
@@ -130,6 +245,7 @@ export function calculateAvailableSubjectsForSlot(params: {
     curriculums,
     schedules,
     classes,
+    periods,
     targetClassId,
     targetClassName,
     currentSlot
@@ -141,10 +257,11 @@ export function calculateAvailableSubjectsForSlot(params: {
     targetClass?.gradeLevel || targetClass?.name || targetClassName
   );
 
-  // 2. Identify all existing schedules for this specific class
-  const classSchedules = schedules.filter((s) =>
+  // 2. Identify all existing schedules for this specific class and deduplicate them
+  const rawClassSchedules = schedules.filter((s) =>
     isClassMatch(s.classId, targetClassId, classes)
   );
+  const classSchedules = deduplicateSchedules(rawClassSchedules);
 
   // 3. Exclude the slot currently being edited
   const otherClassSchedules = classSchedules.filter((s) => {
@@ -176,11 +293,12 @@ export function calculateAvailableSubjectsForSlot(params: {
     // Calculate total JP already scheduled for this subject in other slots of this class
     const scheduledJpInOtherSlots = otherClassSchedules
       .filter((s) => isSlotMatchingCurriculum(s, cur))
-      .reduce((sum, s) => sum + getScheduleSlotJpCount(s), 0);
+      .reduce((sum, s) => sum + getScheduleSlotJpCount(s, periods), 0);
 
     const remainingJp = allocatedJp - scheduledJpInOtherSlots;
-    const totalWithCurrent = scheduledJpInOtherSlots + (isCurrentlyInSlot ? getScheduleSlotJpCount(currentSlot) : 0);
-    const isOverAllocated = totalWithCurrent > allocatedJp;
+    const currentSlotJp = isCurrentlyInSlot ? getScheduleSlotJpCount(currentSlot, periods) : 0;
+    const totalScheduledInClass = scheduledJpInOtherSlots + currentSlotJp;
+    const isOverAllocated = totalScheduledInClass > allocatedJp;
 
     // Rule: Jika sisa JP sudah 0, mapel tidak ditampilkan lagi dalam daftar pilihan.
     // Namun jika mapel tersebut adalah mapel yang sedang ada di slot ini, tetap tampilkan agar
@@ -213,6 +331,7 @@ export function calculateAvailableSubjectsForSlot(params: {
       isCustomSubject: cur.isCustomSubject,
       allocatedJp,
       scheduledJpInOtherSlots,
+      totalScheduledInClass,
       remainingJp,
       isCurrentlyInSlot,
       isOverAllocated,

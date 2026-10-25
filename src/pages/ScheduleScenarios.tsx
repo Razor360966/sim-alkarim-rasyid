@@ -417,24 +417,34 @@ export default function ScheduleScenariosPage() {
 
   // Handlers for Schedule
   const handleSaveSlot = async (slot: any) => {
-    if (!user) return;
+    if (!user || !activeScenarioId) return;
     await scenarioService.saveScenarioScheduleSlot(slot, {
       uid: user.uid,
       displayName: user.displayName
     });
-    refetchSchedules();
-    queryClient.invalidateQueries({ queryKey: ["schedule_scenarios"] });
+    await refetchSchedules();
+    await queryClient.invalidateQueries({ queryKey: ["scenario_schedules", activeScenarioId] });
+    await queryClient.invalidateQueries({ queryKey: ["schedule_scenarios"] });
     showToast("Slot jadwal simulasi berhasil disimpan", "success");
   };
 
-  const handleClearSlot = async (slotId: string) => {
+  const handleClearSlot = async (
+    slotId: string,
+    context?: { classId: string; day: string; sequence: number }
+  ) => {
     if (!user || !activeScenarioId) return;
-    await scenarioService.clearScenarioScheduleSlot(slotId, activeScenarioId, {
-      uid: user.uid,
-      displayName: user.displayName
-    });
-    refetchSchedules();
-    queryClient.invalidateQueries({ queryKey: ["schedule_scenarios"] });
+    await scenarioService.clearScenarioScheduleSlot(
+      slotId,
+      activeScenarioId,
+      {
+        uid: user.uid,
+        displayName: user.displayName
+      },
+      context
+    );
+    await refetchSchedules();
+    await queryClient.invalidateQueries({ queryKey: ["scenario_schedules", activeScenarioId] });
+    await queryClient.invalidateQueries({ queryKey: ["schedule_scenarios"] });
     showToast("Slot jadwal simulasi dikosongkan", "info");
   };
 
