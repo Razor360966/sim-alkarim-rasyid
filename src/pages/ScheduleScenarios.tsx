@@ -448,6 +448,23 @@ export default function ScheduleScenariosPage() {
     showToast("Slot jadwal simulasi dikosongkan", "info");
   };
 
+  const handleClearAllSchedules = async (scope: { classId?: string; className?: string }) => {
+    if (!user || !activeScenarioId) throw new Error("Sesi login Anda tidak valid.");
+    const res = await scenarioService.clearAllScenarioSchedules({
+      scenarioId: activeScenarioId,
+      classId: scope.classId,
+      user: {
+        uid: user.uid,
+        displayName: user.displayName
+      }
+    });
+    await refetchSchedules();
+    await queryClient.invalidateQueries({ queryKey: ["scenario_schedules", activeScenarioId] });
+    await queryClient.invalidateQueries({ queryKey: ["schedule_scenarios"] });
+    await queryClient.invalidateQueries({ queryKey: ["scenario", activeScenarioId] });
+    return res;
+  };
+
   const handleMoveOrSwapSlot = async (data: any) => {
     if (!user || !activeScenarioId) return;
     try {
@@ -1011,6 +1028,7 @@ export default function ScheduleScenariosPage() {
               conflicts={activeConflicts}
               onSaveSlot={handleSaveSlot}
               onClearSlot={handleClearSlot}
+              onClearAllSchedules={handleClearAllSchedules}
               onMoveOrSwapSlot={handleMoveOrSwapSlot}
               onSyncCurriculumToSchedules={handleOpenSyncModal}
               isReadOnly={!isCurriculumOrAdmin}

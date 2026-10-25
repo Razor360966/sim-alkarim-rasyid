@@ -5,7 +5,7 @@ import {
   LessonPeriod
 } from "../types";
 import { isClassMatch } from "./gradeLevelHelper";
-import { toValidGradeLevel } from "../services/scenario.service";
+import { toValidGradeLevel, safeNormalizeGrade } from "../services/scenario.service";
 
 /**
  * Deduplicates schedule records for a class, day, and sequence.
@@ -187,14 +187,27 @@ export function isSlotMatchingCurriculum(
 /**
  * Returns the allocated JP for a specific grade level ("VII" | "VIII" | "IX")
  * from the Shadow Curriculum Matrix.
+ * Handles multiple case variations (jp_viii, jp_VIII, jpViii, jp_8), string conversions,
+ * and safe grade level normalization.
  */
 export function getCurriculumJpForGrade(
-  cur: ScenarioCurriculumMatrix,
-  grade: "VII" | "VIII" | "IX"
+  cur: ScenarioCurriculumMatrix | any,
+  grade: "VII" | "VIII" | "IX" | string
 ): number {
-  if (grade === "VII") return Number(cur.jp_vii) || 0;
-  if (grade === "VIII") return Number(cur.jp_viii) || 0;
-  if (grade === "IX") return Number(cur.jp_ix) || 0;
+  if (!cur) return 0;
+  const normGrade = safeNormalizeGrade(grade) || "VII";
+  if (normGrade === "VII") {
+    const val = cur.jp_vii ?? cur.jp_VII ?? cur.jpVii ?? cur.jp_7 ?? cur.jp7;
+    return typeof val === "number" ? val : Number(val) || 0;
+  }
+  if (normGrade === "VIII") {
+    const val = cur.jp_viii ?? cur.jp_VIII ?? cur.jpViii ?? cur.jp_8 ?? cur.jp8;
+    return typeof val === "number" ? val : Number(val) || 0;
+  }
+  if (normGrade === "IX") {
+    const val = cur.jp_ix ?? cur.jp_IX ?? cur.jpIx ?? cur.jp_9 ?? cur.jp9;
+    return typeof val === "number" ? val : Number(val) || 0;
+  }
   return 0;
 }
 
@@ -203,6 +216,7 @@ export interface AvailableSubjectOption {
   subjectId: string;
   subjectName: string;
   subjectGroup?: string;
+  category: "Umum" | "Kepesantrenan" | "Khusus";
   isCustomSubject?: boolean;
   allocatedJp: number;
   scheduledJpInOtherSlots: number;
@@ -221,9 +235,10 @@ export interface AvailableSubjectOption {
  * - Excludes the slot being edited from already placed JP so current subject or replacements
  *   can be evaluated without counting the active slot against quota.
  * - Subjects with allocated JP <= 0 or invalid are not offered (unless already in slot).
- * - If remaining JP > 0: subject is offered with "sisa X JP".
+ * - If remaining JP > 0: subject is offered with clear "sisa X JP (target Y JP)".
  * - If remaining JP === 0: subject is hidden from options (unless currently in slot).
  * - Isolated per class and grade level (VII, VIII, IX).
+ * - Categorizes subjects into Umum (A/C) and Kepesantrenan (B) with robust grade level detection.
  */
 export function calculateAvailableSubjectsForSlot(params: {
   curriculums: ScenarioCurriculumMatrix[];
@@ -239,6 +254,7 @@ export function calculateAvailableSubjectsForSlot(params: {
     subjectId?: string;
     subjectName?: string;
     jp?: string;
+    gradeLevel?: string;
   };
 }): AvailableSubjectOption[] {
   const {
@@ -251,11 +267,23 @@ export function calculateAvailableSubjectsForSlot(params: {
     currentSlot
   } = params;
 
-  // 1. Identify target class & grade level
-  const targetClass = classes.find((c) => isClassMatch(c.id, targetClassId, classes));
-  const targetGrade = toValidGradeLevel(
-    targetClass?.gradeLevel || targetClass?.name || targetClassName
+  // 1. Identify target class & grade level with comprehensive multi-criteria lookup
+  const targetClass = classes.find(
+    (c) =>
+      c.id === targetClassId ||
+      c.classId === targetClassId ||
+      isClassMatch(c.id, targetClassId, classes) ||
+      (targetClassName && c.name && c.name.toLowerCase().trim() === targetClassName.toLowerCase().trim())
   );
+
+  const rawGradeCandidate =
+    currentSlot.gradeLevel ||
+    targetClass?.gradeLevel ||
+    targetClass?.name ||
+    targetClassName ||
+    targetClassId;
+
+  const targetGrade = toValidGradeLevel(rawGradeCandidate, "VII");
 
   // 2. Identify all existing schedules for this specific class and deduplicate them
   const rawClassSchedules = schedules.filter((s) =>
@@ -307,20 +335,32 @@ export function calculateAvailableSubjectsForSlot(params: {
       continue;
     }
 
-    // Label formatting:
-    let label = `${cur.subjectName}`;
-    if (cur.isCustomSubject) {
-      label += " (Mapel Baru)";
-    } else if (cur.subjectGroup) {
-      label += ` (Kel. ${cur.subjectGroup})`;
-    }
+    // Category determination: Group B is Kepesantrenan, A/C is Umum, isCustomSubject is Khusus
+    const category: "Umum" | "Kepesantrenan" | "Khusus" = cur.isCustomSubject
+      ? "Khusus"
+      : cur.subjectGroup === "B"
+      ? "Kepesantrenan"
+      : "Umum";
+
+    // Transparent and unambiguous label formatting
+    const categoryTag = cur.isCustomSubject
+      ? "Mapel Baru"
+      : cur.subjectGroup === "B"
+      ? "Kel. B - Pesantren"
+      : `Kel. ${cur.subjectGroup || "A"} - Umum`;
+
+    let label = `${cur.subjectName} (${categoryTag})`;
 
     if (remainingJp > 0) {
-      label += ` — sisa ${remainingJp} JP`;
+      if (scheduledJpInOtherSlots === 0) {
+        label += ` — sisa ${remainingJp} JP (Belum Terjadwal / Alokasi ${allocatedJp} JP)`;
+      } else {
+        label += ` — sisa ${remainingJp} JP (Terjadwal ${scheduledJpInOtherSlots} dari ${allocatedJp} JP)`;
+      }
     } else if (remainingJp === 0) {
-      label += ` — alokasi penuh (0 JP tersisa)`;
+      label += ` — alokasi penuh (${allocatedJp} JP Terjadwal)`;
     } else {
-      label += ` — alokasi berlebih (+${Math.abs(remainingJp)} JP)`;
+      label += ` — alokasi berlebih (+${Math.abs(remainingJp)} JP dari Target ${allocatedJp} JP)`;
     }
 
     options.push({
@@ -328,6 +368,7 @@ export function calculateAvailableSubjectsForSlot(params: {
       subjectId: cur.subjectId || cur.id,
       subjectName: cur.subjectName,
       subjectGroup: cur.subjectGroup,
+      category,
       isCustomSubject: cur.isCustomSubject,
       allocatedJp,
       scheduledJpInOtherSlots,
@@ -339,11 +380,17 @@ export function calculateAvailableSubjectsForSlot(params: {
     });
   }
 
-  // Sort options: available remaining JP first, then alphabetically by subject name
+  // Sort options: available remaining JP first, then by category (Umum then Kepesantrenan then Khusus), then alphabetically
   return options.sort((a, b) => {
     // If one has remaining JP and another doesn't
     if (a.remainingJp > 0 && b.remainingJp <= 0) return -1;
     if (a.remainingJp <= 0 && b.remainingJp > 0) return 1;
+
+    // Group order: Umum (0), Kepesantrenan (1), Khusus (2)
+    const catOrder: Record<string, number> = { Umum: 0, Kepesantrenan: 1, Khusus: 2 };
+    const orderDiff = (catOrder[a.category] ?? 0) - (catOrder[b.category] ?? 0);
+    if (orderDiff !== 0) return orderDiff;
+
     return a.subjectName.localeCompare(b.subjectName, "id");
   });
 }

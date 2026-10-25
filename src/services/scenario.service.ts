@@ -2208,6 +2208,49 @@ export const scenarioService = {
   },
 
   /**
+   * Clears all schedule slots for an active scenario (optionally filtered by classId if class-specific).
+   * Strictly deletes only documents in scenario_schedules collection matching scenarioId (and classId).
+   * Does NOT touch scenario_curriculum_matrix, live schedules, teachers, or master subjects.
+   */
+  async clearAllScenarioSchedules(params: {
+    scenarioId: string;
+    classId?: string;
+    user: { uid: string; displayName?: string };
+  }): Promise<{ deletedCount: number }> {
+    const { scenarioId, classId, user } = params;
+    let q = query(collection(db, SCENARIO_SCHEDULES_COL), where("scenarioId", "==", scenarioId));
+    if (classId) {
+      q = query(
+        collection(db, SCENARIO_SCHEDULES_COL),
+        where("scenarioId", "==", scenarioId),
+        where("classId", "==", classId)
+      );
+    }
+    const snap = await getDocs(q);
+    const docs = snap.docs;
+    let deletedCount = 0;
+    const BATCH_SIZE = 450;
+
+    for (let i = 0; i < docs.length; i += BATCH_SIZE) {
+      const batch = writeBatch(db);
+      const chunk = docs.slice(i, i + BATCH_SIZE);
+      chunk.forEach((d) => {
+        batch.delete(d.ref);
+        deletedCount++;
+      });
+      await batch.commit();
+    }
+
+    const reason = classId
+      ? "pengosongan seluruh slot jadwal kelas"
+      : "pengosongan seluruh slot jadwal skenario (kelas VII, VIII, IX)";
+    await this.checkAndResetApprovalIfModified(scenarioId, user, reason);
+    await this.refreshScenarioSummary(scenarioId, user);
+
+    return { deletedCount };
+  },
+
+  /**
    * Move or swap scenario schedule slots atomically via Firestore writeBatch.
    */
   async moveOrSwapScenarioScheduleSlot(params: {

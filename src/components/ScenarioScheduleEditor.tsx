@@ -52,6 +52,7 @@ interface Props {
   conflicts: ScenarioConflict[];
   onSaveSlot: (slot: Partial<ScenarioSchedule> & { scenarioId: string; classId: string; day: string; sequence: number }) => Promise<void>;
   onClearSlot: (slotId: string, context?: { classId: string; day: string; sequence: number }) => Promise<void>;
+  onClearAllSchedules?: (scope: { classId?: string; className?: string }) => Promise<{ deletedCount: number }>;
   onMoveOrSwapSlot?: (data: {
     sourceSlot: {
       id?: string;
@@ -95,6 +96,7 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
   conflicts,
   onSaveSlot,
   onClearSlot,
+  onClearAllSchedules,
   onMoveOrSwapSlot,
   onSyncCurriculumToSchedules,
   isReadOnly = false
@@ -133,6 +135,7 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
     slotId?: string;
     classId: string;
     className: string;
+    gradeLevel?: string;
     day: string;
     sequence: number;
     jp: string;
@@ -145,6 +148,11 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
   } | null>(null);
 
   const [isSaving, setIsSaving] = useState(false);
+
+  // Clear All Schedules Confirmation Modal State
+  const [showClearAllModal, setShowClearAllModal] = useState(false);
+  const [clearAllScope, setClearAllScope] = useState<"all" | "class">("all");
+  const [isClearingAll, setIsClearingAll] = useState(false);
 
   // Group periods by day
   const periodsByDay = useMemo(() => {
@@ -180,6 +188,19 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
       periods
     });
   }, [activeSlotData, curriculums, schedules, classes, periods]);
+
+  // Group options by Category (Umum, Kepesantrenan, Khusus)
+  const umumSubjectOptions = useMemo(() => {
+    return availableSubjectOptions.filter((opt) => opt.category === "Umum");
+  }, [availableSubjectOptions]);
+
+  const pesantrenSubjectOptions = useMemo(() => {
+    return availableSubjectOptions.filter((opt) => opt.category === "Kepesantrenan");
+  }, [availableSubjectOptions]);
+
+  const khususSubjectOptions = useMemo(() => {
+    return availableSubjectOptions.filter((opt) => opt.category === "Khusus");
+  }, [availableSubjectOptions]);
 
   // Information of the currently chosen subject in the modal
   const selectedSubjectOption = useMemo(() => {
@@ -261,6 +282,7 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
       slotId: existing?.id,
       classId: targetClass.id || targetClass.classId,
       className: targetClass.name,
+      gradeLevel: targetGrade,
       day,
       sequence: period.sequence,
       jp: period.title || `JP ${period.sequence}`,
@@ -716,6 +738,21 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
 
         {/* Actions & Conflict Quick Badge */}
         <div className="flex flex-wrap items-center gap-2">
+          {!isReadOnly && onClearAllSchedules && (
+            <button
+              type="button"
+              onClick={() => {
+                setClearAllScope(viewMode === "class" ? "class" : "all");
+                setShowClearAllModal(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800 text-xs font-bold transition-all shadow-2xs"
+              title="Hapus seluruh slot jadwal bayangan pada skenario ini"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Hapus Semua Jadwal</span>
+            </button>
+          )}
+
           {!isReadOnly && onSyncCurriculumToSchedules && (
             <button
               type="button"
@@ -1286,11 +1323,39 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
                   className="w-full text-sm font-semibold border border-slate-300 dark:border-zinc-700 rounded-lg px-3 py-2 bg-white dark:bg-zinc-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 >
                   <option value="">-- [Slot Kosong / Belum Ditugaskan] --</option>
-                  {availableSubjectOptions.map((opt) => (
-                    <option key={opt.curriculumId} value={opt.subjectId}>
-                      {opt.label}
-                    </option>
-                  ))}
+
+                  {/* Kelompok Umum (A & C) */}
+                  {umumSubjectOptions.length > 0 && (
+                    <optgroup label="── KELOMPOK UMUM (A & C) ──">
+                      {umumSubjectOptions.map((opt) => (
+                        <option key={opt.curriculumId} value={opt.subjectId}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+
+                  {/* Kelompok Kepesantrenan (B) */}
+                  {pesantrenSubjectOptions.length > 0 && (
+                    <optgroup label="── KELOMPOK KEPESANTRENAN (B) ──">
+                      {pesantrenSubjectOptions.map((opt) => (
+                        <option key={opt.curriculumId} value={opt.subjectId}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+
+                  {/* Mapel Khusus Simulasi */}
+                  {khususSubjectOptions.length > 0 && (
+                    <optgroup label="── MAPEL KHUSUS SIMULASI ──">
+                      {khususSubjectOptions.map((opt) => (
+                        <option key={opt.curriculumId} value={opt.subjectId}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
 
                 {/* Status Card for Selected Subject / Allocation Warning */}
@@ -1418,6 +1483,150 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
                   {isSaving ? "Menyimpan..." : "Simpan Slot"}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: KONFIRMASI HAPUS SEMUA JADWAL */}
+      {showClearAllModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-zinc-800 pb-3">
+              <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
+                <Trash2 className="w-5 h-5" />
+                <h3 className="font-bold text-slate-900 dark:text-white text-base">
+                  Konfirmasi Hapus Semua Jadwal Bayangan
+                </h3>
+              </div>
+              <button
+                disabled={isClearingAll}
+                onClick={() => setShowClearAllModal(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-zinc-200 disabled:opacity-50"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-3.5 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/80 rounded-xl space-y-2 text-xs text-rose-900 dark:text-rose-200">
+              <p className="font-bold text-sm">
+                Apakah Anda yakin ingin menghapus seluruh slot Jadwal Bayangan pada skenario ini? Tindakan ini tidak dapat dibatalkan.
+              </p>
+              <p className="leading-relaxed">
+                Penghapusan ini akan mengosongkan slot jadwal yang telah disusun pada skenario rancangan aktif ini sehingga total JP terjadwal kembali menjadi 0 JP dan seluruh alokasi JP kembali tersedia di daftar pilihan mapel.
+              </p>
+            </div>
+
+            {/* Scope Selection */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700 dark:text-zinc-300 uppercase">
+                Pilih Cakupan Penghapusan Slot:
+              </label>
+              <div className="space-y-2">
+                <label className="flex items-start gap-2.5 p-3 rounded-xl border border-slate-200 dark:border-zinc-700 bg-slate-50 dark:bg-zinc-800/50 cursor-pointer hover:border-rose-400 transition-colors">
+                  <input
+                    type="radio"
+                    name="clearScope"
+                    value="all"
+                    checked={clearAllScope === "all"}
+                    onChange={() => setClearAllScope("all")}
+                    className="mt-0.5 text-rose-600 focus:ring-rose-500"
+                  />
+                  <div>
+                    <strong className="text-xs text-slate-900 dark:text-white block">
+                      Seluruh Kelas VII, VIII, dan IX dalam Skenario Aktif
+                    </strong>
+                    <span className="text-[11px] text-slate-500 dark:text-zinc-400 block mt-0.5">
+                      Mengosongkan semua slot jadwal untuk seluruh jenjang (Kelas VII, Kelas VIII, dan Kelas IX) di skenario ini secara serentak.
+                    </span>
+                  </div>
+                </label>
+
+                {activeClass && (
+                  <label className="flex items-start gap-2.5 p-3 rounded-xl border border-slate-200 dark:border-zinc-700 bg-slate-50 dark:bg-zinc-800/50 cursor-pointer hover:border-rose-400 transition-colors">
+                    <input
+                      type="radio"
+                      name="clearScope"
+                      value="class"
+                      checked={clearAllScope === "class"}
+                      onChange={() => setClearAllScope("class")}
+                      className="mt-0.5 text-rose-600 focus:ring-rose-500"
+                    />
+                    <div>
+                      <strong className="text-xs text-slate-900 dark:text-white block">
+                        Hanya {activeClass.name} (Tingkat {activeClass.gradeLevel})
+                      </strong>
+                      <span className="text-[11px] text-slate-500 dark:text-zinc-400 block mt-0.5">
+                        Hanya mengosongkan slot jadwal pada kelas {activeClass.name}. Jadwal kelas lainnya tetap dipertahankan.
+                      </span>
+                    </div>
+                  </label>
+                )}
+              </div>
+            </div>
+
+            {/* Protections clarification */}
+            <div className="p-3 bg-slate-50 dark:bg-zinc-800/60 rounded-xl border border-slate-200 dark:border-zinc-700 text-[11px] text-slate-600 dark:text-zinc-400 space-y-1">
+              <span className="font-bold text-slate-700 dark:text-zinc-300 block">Jaminan Perlindungan Data:</span>
+              <ul className="list-disc pl-4 space-y-0.5">
+                <li>Struktur Kurikulum Bayangan (target JP dan guru pengampu) <strong>TIDAK AKAN</strong> terhapus.</li>
+                <li>Jadwal Operasional Sekolah resmi <strong>TIDAK AKAN</strong> terpengaruh sama sekali.</li>
+                <li>Data guru dan master mata pelajaran tetap aman.</li>
+              </ul>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100 dark:border-zinc-800">
+              <button
+                type="button"
+                disabled={isClearingAll}
+                onClick={() => setShowClearAllModal(false)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800 rounded-lg transition-colors disabled:opacity-50"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                disabled={isClearingAll}
+                onClick={async () => {
+                  if (!onClearAllSchedules) return;
+                  try {
+                    setIsClearingAll(true);
+                    const scopeParam = clearAllScope === "class" && activeClass
+                      ? { classId: activeClass.id || activeClass.classId, className: activeClass.name }
+                      : {};
+                    const res = await onClearAllSchedules(scopeParam);
+                    setShowClearAllModal(false);
+                    showToast(
+                      clearAllScope === "class" && activeClass
+                        ? `Berhasil mengosongkan seluruh slot jadwal (${res.deletedCount} slot) pada kelas ${activeClass.name}.`
+                        : `Berhasil mengosongkan seluruh slot jadwal (${res.deletedCount} slot) untuk kelas VII, VIII, dan IX pada skenario ini.`,
+                      "info"
+                    );
+                  } catch (err: any) {
+                    console.error("Gagal menghapus semua jadwal bayangan:", err);
+                    showToast(err?.message || "Gagal menghapus seluruh slot jadwal bayangan.", "error");
+                  } finally {
+                    setIsClearingAll(false);
+                  }
+                }}
+                className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs disabled:opacity-50"
+              >
+                {isClearingAll ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Menghapus Jadwal...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>
+                      {clearAllScope === "class" && activeClass
+                        ? `Ya, Hapus Jadwal ${activeClass.name}`
+                        : "Ya, Hapus Seluruh Jadwal (VII, VIII, IX)"}
+                    </span>
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>
