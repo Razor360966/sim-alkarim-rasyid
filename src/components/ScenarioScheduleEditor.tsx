@@ -33,6 +33,11 @@ import { isClassMatch } from "../utils/gradeLevelHelper";
 import { ScenarioTeacherSelect } from "./ScenarioTeacherSelect";
 import { getScenarioCurriculumTeacherForClass, toValidGradeLevel } from "../services/scenario.service";
 import { useToast } from "../contexts/ToastContext";
+import { 
+  calculateAvailableSubjectsForSlot, 
+  AvailableSubjectOption,
+  isSlotMatchingCurriculum 
+} from "../utils/scenarioScheduleHelper";
 
 interface Props {
   scenarioId: string;
@@ -161,6 +166,30 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
     return curriculums.filter((c) => c.isActiveInScenario);
   }, [curriculums]);
 
+  // Dynamic available subject options strictly from Shadow Curriculum Matrix,
+  // excluding the active slot being edited, and isolated per class and grade level.
+  const availableSubjectOptions = useMemo<AvailableSubjectOption[]>(() => {
+    if (!activeSlotData) return [];
+    return calculateAvailableSubjectsForSlot({
+      curriculums,
+      schedules,
+      classes,
+      targetClassId: activeSlotData.classId,
+      targetClassName: activeSlotData.className,
+      currentSlot: activeSlotData
+    });
+  }, [activeSlotData, curriculums, schedules, classes]);
+
+  // Information of the currently chosen subject in the modal
+  const selectedSubjectOption = useMemo(() => {
+    if (!activeSlotData?.subjectId) return null;
+    return (
+      availableSubjectOptions.find(
+        (opt) => opt.subjectId === activeSlotData.subjectId || opt.curriculumId === activeSlotData.subjectId
+      ) || null
+    );
+  }, [availableSubjectOptions, activeSlotData?.subjectId]);
+
   // Helper to reliably resolve curriculum matrix record for any slot (by ID or subject name)
   const findCurriculumForSlot = (subId?: string, subName?: string) => {
     if (!subId && !subName) return undefined;
@@ -246,9 +275,21 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
 
   const handleSaveModal = async () => {
     if (!activeSlotData) return;
+    const isSlotEmpty = !activeSlotData.subjectId || activeSlotData.subjectName === "Kosong" || activeSlotData.subjectName === "Belum Ditugaskan";
+
+    // Validation: Prevent over-allocation beyond Shadow Curriculum target
+    if (!isSlotEmpty && selectedSubjectOption) {
+      if (selectedSubjectOption.remainingJp <= 0 && !selectedSubjectOption.isCurrentlyInSlot) {
+        showToast(
+          `Gagal menyimpan: Alokasi JP untuk mapel ${activeSlotData.subjectName} sudah habis di kelas ini (${selectedSubjectOption.allocatedJp} JP telah terjadwal).`,
+          "error"
+        );
+        return;
+      }
+    }
+
     try {
       setIsSaving(true);
-      const isSlotEmpty = !activeSlotData.subjectId || activeSlotData.subjectName === "Kosong" || activeSlotData.subjectName === "Belum Ditugaskan";
       await onSaveSlot({
         id: activeSlotData.slotId,
         scenarioId,
@@ -1222,15 +1263,16 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
                         teacherName: "Belum Ditugaskan"
                       });
                     } else {
-                      const sub = availableSubjects.find((s) => s.subjectId === subId || s.id === subId);
+                      const selectedOpt = availableSubjectOptions.find((s) => s.subjectId === subId || s.curriculumId === subId);
+                      const sub = curriculums.find((s) => s.subjectId === subId || s.id === subId);
                       const cls = classes.find((c) => isClassMatch(c.id, activeSlotData.classId, classes));
                       const slotGrade = toValidGradeLevel(cls?.gradeLevel || cls?.name || activeSlotData.className);
                       const resolved = sub ? getScenarioCurriculumTeacherForClass(sub, slotGrade) : { teacherId: "", teacherName: "" };
 
                       setActiveSlotData({
                         ...activeSlotData,
-                        subjectId: subId,
-                        subjectName: sub ? sub.subjectName : "",
+                        subjectId: selectedOpt?.subjectId || subId,
+                        subjectName: selectedOpt?.subjectName || (sub ? sub.subjectName : ""),
                         teacherId: resolved.teacherId || sub?.teacherId || activeSlotData.teacherId,
                         teacherName: resolved.teacherId ? resolved.teacherName : (sub?.teacherName || activeSlotData.teacherName)
                       });
@@ -1239,12 +1281,67 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
                   className="w-full text-sm font-semibold border border-slate-300 dark:border-zinc-700 rounded-lg px-3 py-2 bg-white dark:bg-zinc-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 >
                   <option value="">-- [Slot Kosong / Belum Ditugaskan] --</option>
-                  {availableSubjects.map((sub) => (
-                    <option key={sub.id} value={sub.subjectId}>
-                      {sub.subjectName} ({sub.isCustomSubject ? "Mapel Baru" : `Kel. ${sub.subjectGroup}`})
+                  {availableSubjectOptions.map((opt) => (
+                    <option key={opt.curriculumId} value={opt.subjectId}>
+                      {opt.label}
                     </option>
                   ))}
                 </select>
+
+                {/* Status Card for Selected Subject / Allocation Warning */}
+                {selectedSubjectOption ? (
+                  <div
+                    className={`mt-2 p-2.5 rounded-xl border text-xs space-y-1 transition-all ${
+                      selectedSubjectOption.isOverAllocated
+                        ? "bg-rose-50 border-rose-300 dark:bg-rose-950/40 dark:border-rose-800 text-rose-800 dark:text-rose-300"
+                        : selectedSubjectOption.remainingJp === 0
+                        ? "bg-amber-50 border-amber-300 dark:bg-amber-950/40 dark:border-amber-800 text-amber-800 dark:text-amber-300"
+                        : "bg-emerald-50 border-emerald-300 dark:bg-emerald-950/30 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between font-bold text-[11px]">
+                      <span className="flex items-center gap-1.5">
+                        {selectedSubjectOption.isOverAllocated ? (
+                          <AlertTriangle className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 shrink-0" />
+                        ) : selectedSubjectOption.remainingJp === 0 ? (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                        ) : (
+                          <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                        )}
+                        <span>{selectedSubjectOption.subjectName}</span>
+                      </span>
+                      <span className="font-mono">
+                        {selectedSubjectOption.remainingJp > 0
+                          ? `Sisa ${selectedSubjectOption.remainingJp} JP`
+                          : selectedSubjectOption.remainingJp === 0
+                          ? "Alokasi Pas (0 JP sisa)"
+                          : `Melebihi target (+${Math.abs(selectedSubjectOption.remainingJp)} JP)`}
+                      </span>
+                    </div>
+                    <div className="text-[10px] opacity-85 flex flex-wrap items-center justify-between gap-1 pt-0.5">
+                      <span>
+                        Target Kurikulum Bayangan: <strong>{selectedSubjectOption.allocatedJp} JP</strong>
+                      </span>
+                      <span>
+                        Terjadwal di slot lain: <strong>{selectedSubjectOption.scheduledJpInOtherSlots} JP</strong>
+                      </span>
+                    </div>
+                    {selectedSubjectOption.isOverAllocated && (
+                      <p className="text-[10px] font-semibold text-rose-600 dark:text-rose-400 pt-1">
+                        ⚠️ Total jadwal mapel ini telah melampaui target alokasi struktur kurikulum bayangan.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  availableSubjectOptions.length === 0 && (
+                    <div className="mt-2 p-2.5 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 text-xs flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                      <span className="text-[11px]">
+                        Semua mata pelajaran pada kelas ini telah memenuhi kuota alokasi JP dari Struktur Kurikulum Bayangan.
+                      </span>
+                    </div>
+                  )
+                )}
               </div>
 
               {/* Select Teacher */}
