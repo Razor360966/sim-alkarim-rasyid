@@ -32,7 +32,8 @@ import {
   RoutineActivity
 } from "../types";
 import { isClassMatch, normalizeGradeLevel } from "../utils/gradeLevelHelper";
-import { toValidGradeLevel } from "../services/scenario.service";
+import { toValidGradeLevel, getScenarioCurriculumTeacherForClass } from "../services/scenario.service";
+import { formatTeacherFullNameWithTitles } from "../utils/teacherFilterHelper";
 import { schoolSettingsService } from "../services/schoolSettings.service";
 import { schoolAgendaService } from "../services/schoolAgenda.service";
 import { generateDailySchedule, getDefaultDailyStructures, timeToMinutes } from "../utils/scheduleCalculator";
@@ -695,6 +696,104 @@ export const ScenarioPrintModal: React.FC<Props> = ({
   const totalVii = grandTotal.vii;
   const totalViii = grandTotal.viii;
   const totalIx = grandTotal.ix;
+
+  // Rekapitulasi Beban Mengajar Guru strictly derived from ScenarioCurriculumMatrix (Struktur Kurikulum Bayangan)
+  const teacherRecapList = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        teacherId: string;
+        teacherName: string;
+        totalJp: number;
+        subjectsSet: Set<string>;
+      }
+    >();
+
+    const activeCurriculums = curriculums.filter((c) => c.isActiveInScenario !== false);
+    const grades: ("VII" | "VIII" | "IX")[] = ["VII", "VIII", "IX"];
+
+    for (const item of activeCurriculums) {
+      const rawSubjectName = (item.subjectName || "").trim();
+      if (!rawSubjectName) continue;
+
+      for (const grade of grades) {
+        let gradeJp = 0;
+        if (grade === "VII") gradeJp = Number(item.jp_vii) || 0;
+        else if (grade === "VIII") gradeJp = Number(item.jp_viii) || 0;
+        else if (grade === "IX") gradeJp = Number(item.jp_ix) || 0;
+
+        if (gradeJp <= 0) continue;
+
+        const teacherInfo = getScenarioCurriculumTeacherForClass(item, grade);
+        const rawTeacherId = (teacherInfo.teacherId || "").trim();
+        const rawTeacherName = (teacherInfo.teacherName || "").trim();
+
+        // Check if unassigned
+        if (
+          !rawTeacherId &&
+          (!rawTeacherName || /belum\s*ditugaskan|guru\s*pengampu|^-$|^$/i.test(rawTeacherName))
+        ) {
+          continue;
+        }
+
+        // Match teacher in teachers list for full name with degree/title
+        let matchedTeacher: Teacher | undefined = undefined;
+        if (rawTeacherId) {
+          matchedTeacher = teachers.find(
+            (t) => (t.id && t.id === rawTeacherId) || (t.teacherId && t.teacherId === rawTeacherId)
+          );
+        }
+        if (!matchedTeacher && rawTeacherName) {
+          matchedTeacher = teachers.find(
+            (t) => t.name && t.name.trim().toLowerCase() === rawTeacherName.toLowerCase()
+          );
+        }
+
+        const stableKey = matchedTeacher?.id || matchedTeacher?.teacherId || rawTeacherId || rawTeacherName;
+        if (!stableKey) continue;
+
+        let displayName = "";
+        if (matchedTeacher) {
+          displayName = formatTeacherFullNameWithTitles(matchedTeacher) || matchedTeacher.name;
+        } else {
+          displayName = rawTeacherName || rawTeacherId;
+        }
+        displayName = displayName.trim();
+
+        if (!map.has(stableKey)) {
+          map.set(stableKey, {
+            teacherId: stableKey,
+            teacherName: displayName,
+            totalJp: 0,
+            subjectsSet: new Set<string>()
+          });
+        }
+
+        const entry = map.get(stableKey)!;
+        entry.totalJp += gradeJp;
+        entry.subjectsSet.add(rawSubjectName);
+        if (matchedTeacher && (!entry.teacherName || entry.teacherName.length < displayName.length)) {
+          entry.teacherName = displayName;
+        }
+      }
+    }
+
+    const result = Array.from(map.values()).map((entry) => ({
+      teacherId: entry.teacherId,
+      teacherName: entry.teacherName,
+      totalJp: entry.totalJp,
+      subjects: Array.from(entry.subjectsSet).sort((a, b) => a.localeCompare(b, "id"))
+    }));
+
+    // Sort alphabetically by teacherName
+    result.sort((a, b) => a.teacherName.localeCompare(b.teacherName, "id"));
+
+    return result;
+  }, [curriculums, teachers]);
+
+  const totalTeacherRecapJp = useMemo(() => {
+    return teacherRecapList.reduce((sum, item) => sum + item.totalJp, 0);
+  }, [teacherRecapList]);
 
   const isLandscape = (printView === "CLASS_SCHEDULE" && classScheduleFormat === "WEEKLY_MATRIX") || printView === "GENERAL_SCHEDULE";
 
@@ -1403,7 +1502,7 @@ export const ScenarioPrintModal: React.FC<Props> = ({
             Desain hemat halaman: muat 1 halaman A4 portrait secara efisien & profesional
            ========================================================================= */}
         {printView === "CURRICULUM_MATRIX" && (
-          <div className="space-y-3 print-avoid-break">
+          <div className="space-y-3.5">
             {/* Warning Strip */}
             <div className="border border-amber-400 bg-amber-50/90 rounded-md py-1 px-3 text-center print:border-amber-500">
               <span className="text-[10px] font-black uppercase tracking-wider text-amber-900">
@@ -1695,6 +1794,73 @@ export const ScenarioPrintModal: React.FC<Props> = ({
                   ))}
                 </div>
               )}
+            </div>
+
+            {/* =================================================================
+                REKAPITULASI GURU DAN BEBAN MENGAJAR
+                Derived strictly from ScenarioCurriculumMatrix (Struktur Kurikulum Bayangan)
+               ================================================================= */}
+            <div className="space-y-1.5 print-avoid-break">
+              <div className="flex items-center justify-between border-b border-slate-700 pb-1">
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
+                  REKAPITULASI GURU DAN BEBAN MENGAJAR
+                </h3>
+                <span className="text-[10px] text-slate-600 font-semibold">
+                  Total {teacherRecapList.length} Guru • {totalTeacherRecapJp} JP Terdistribusi
+                </span>
+              </div>
+
+              <div className="overflow-x-auto print-overflow-visible">
+                <table className="w-full text-xs border-collapse border border-slate-700">
+                  <thead>
+                    <tr className="bg-slate-100 border-b border-slate-700 text-slate-900 text-[10.5px]">
+                      <th className="border border-slate-700 py-1 px-1.5 text-center w-10 font-bold">No.</th>
+                      <th className="border border-slate-700 py-1 px-2.5 text-left font-bold w-64 sm:w-72">Nama Guru</th>
+                      <th className="border border-slate-700 py-1 px-2 text-right font-bold w-24">Jumlah JP</th>
+                      <th className="border border-slate-700 py-1 px-2.5 text-left font-bold">Mata Pelajaran yang Diampu</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {teacherRecapList.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="border border-slate-300 py-3 text-center text-slate-400 italic">
+                          Belum ada penugasan guru yang tercatat pada struktur kurikulum ini.
+                        </td>
+                      </tr>
+                    ) : (
+                      teacherRecapList.map((item, idx) => (
+                        <tr key={item.teacherId || idx} className="border-b border-slate-300 text-[10.5px] hover:bg-slate-50">
+                          <td className="border border-slate-300 py-1 px-1.5 text-center font-bold text-slate-700">
+                            {idx + 1}
+                          </td>
+                          <td className="border border-slate-300 py-1 px-2.5 font-semibold text-slate-900">
+                            {item.teacherName}
+                          </td>
+                          <td className="border border-slate-300 py-1 px-2 text-right font-bold text-slate-900 bg-slate-50/50">
+                            {item.totalJp} JP
+                          </td>
+                          <td className="border border-slate-300 py-1 px-2.5 text-slate-700 leading-snug">
+                            {item.subjects.join(", ")}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                    {teacherRecapList.length > 0 && (
+                      <tr className="bg-slate-100 font-bold border-t border-b border-slate-700 text-[10.5px]">
+                        <td colSpan={2} className="border border-slate-400 py-1 px-2.5 text-right text-slate-800 uppercase font-bold">
+                          Total Beban Mengajar Terdistribusi:
+                        </td>
+                        <td className="border border-slate-400 py-1 px-2 text-right font-black text-slate-900 bg-slate-200/60">
+                          {totalTeacherRecapJp} JP
+                        </td>
+                        <td className="border border-slate-400 py-1 px-2.5 text-[10px] text-slate-500 font-normal italic">
+                          {teacherRecapList.length} guru pengampu terdaftar
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
 
             {/* Signature Box (Compact for 1-Page Fit) */}
