@@ -291,6 +291,95 @@ export const ScenarioPrintModal: React.FC<Props> = ({
     });
   }, [sortedClasses]);
 
+  // Dynamically calculate proportional column width percentages for master timetable (Jadwal Umum)
+  // based on the actual maximum subject name length and single-word length in each class column
+  const masterGradeColumnWidths = useMemo(() => {
+    if (masterGradeColumns.length === 0) return {};
+
+    const weights: Record<string, number> = {};
+
+    masterGradeColumns.forEach((col) => {
+      // Find all active schedules relevant to this column
+      const colSchedules = schedules.filter((s) => {
+        if (col.classObj) {
+          return (
+            (s.classId === col.classObj.id || isClassMatch(s.classId, col.classObj, classes)) &&
+            isSlotActiveSubject(s)
+          );
+        }
+        const targetClass = sortedClasses.find((c) => toValidGradeLevel(c.gradeLevel || c.name) === col.grade);
+        return targetClass
+          ? (s.classId === targetClass.id || isClassMatch(s.classId, targetClass, classes)) && isSlotActiveSubject(s)
+          : false;
+      });
+
+      // Find maximum subject length and longest individual word
+      let maxSubLen = 0;
+      let maxWordLen = 0;
+
+      colSchedules.forEach((s) => {
+        let name = (s.subjectName || "").trim();
+        if (!name && s.subjectId) {
+          const cur = curriculums.find((c) => c.id === s.subjectId || c.subjectId === s.subjectId);
+          if (cur?.subjectName) name = cur.subjectName.trim();
+        }
+        if (name.length > maxSubLen) {
+          maxSubLen = name.length;
+        }
+        const words = name.split(/\s+/);
+        words.forEach((w) => {
+          if (w.length > maxWordLen) {
+            maxWordLen = w.length;
+          }
+        });
+      });
+
+      // Also consider curriculums allocated to this grade if schedules is still sparse
+      if (maxSubLen === 0) {
+        curriculums.forEach((c) => {
+          let gradeJp = 0;
+          if (col.grade === "VII") gradeJp = Number(c.jp_vii) || 0;
+          else if (col.grade === "VIII") gradeJp = Number(c.jp_viii) || 0;
+          else if (col.grade === "IX") gradeJp = Number(c.jp_ix) || 0;
+
+          if (gradeJp > 0 && c.subjectName) {
+            const name = c.subjectName.trim();
+            if (name.length > maxSubLen) maxSubLen = name.length;
+            name.split(/\s+/).forEach((w) => {
+              if (w.length > maxWordLen) maxWordLen = w.length;
+            });
+          }
+        });
+      }
+
+      // Base weight guarantees minimum readable width for class label & teacher name
+      // Boost weight based on length of subject name (e.g. Pendidikan Pancasila) and long single words
+      const headerLen = (col.label || "").length;
+      const effectiveLen = Math.max(headerLen, maxSubLen);
+      const computedWeight = 14 + (effectiveLen * 0.75) + (maxWordLen * 0.5);
+
+      weights[col.key] = Math.max(18, computedWeight);
+    });
+
+    const totalWeight = Object.values(weights).reduce((a, b) => a + b, 0);
+
+    const percents: Record<string, number> = {};
+    let allocatedTotal = 0;
+
+    masterGradeColumns.forEach((col, idx) => {
+      if (idx === masterGradeColumns.length - 1) {
+        // Last column gets exact remaining percent to guarantee 100% sum
+        percents[col.key] = Math.max(10, 100 - allocatedTotal);
+      } else {
+        const p = Math.round((weights[col.key] / totalWeight) * 100);
+        percents[col.key] = p;
+        allocatedTotal += p;
+      }
+    });
+
+    return percents;
+  }, [masterGradeColumns, schedules, classes, sortedClasses, curriculums]);
+
   // Helper to find schedule slot strictly from shadow schedules using canonical matcher
   const findScheduleSlot = (cls: Class, day: string, period: LessonPeriod, jpNumber?: number) => {
     return findMatchingScenarioSchedule(schedules, {
@@ -718,6 +807,11 @@ export const ScenarioPrintModal: React.FC<Props> = ({
           }
           .print-overflow-visible {
             overflow: visible !important;
+          }
+          .master-timetable {
+            table-layout: auto !important;
+            width: 100% !important;
+            border-collapse: collapse !important;
           }
         }
       `}</style>
@@ -1210,22 +1304,43 @@ export const ScenarioPrintModal: React.FC<Props> = ({
 
             {/* Master Timetable Table */}
             <div className="overflow-x-auto print-overflow-visible">
-              <table className="w-full text-[11px] border-collapse border border-slate-800">
+              <table className="w-full text-[11px] border-collapse border border-slate-800 table-auto master-timetable">
+                <colgroup>
+                  <col style={{ width: "70px" }} />
+                  <col style={{ width: "82px" }} />
+                  <col style={{ width: "36px" }} />
+                  {masterGradeColumns.map((col) => (
+                    <col
+                      key={col.key}
+                      style={{ width: `${masterGradeColumnWidths[col.key] || 33}%` }}
+                    />
+                  ))}
+                </colgroup>
                 <thead>
                   <tr className="bg-slate-100 border-b-2 border-slate-900 text-slate-900">
-                    <th className="border border-slate-800 py-2 px-2 text-center w-24 font-extrabold uppercase text-[11px] tracking-wider">
+                    <th
+                      className="border border-slate-800 py-2 px-1 text-center font-extrabold uppercase text-[11px] tracking-wider whitespace-nowrap"
+                      style={{ width: "70px", minWidth: "65px", maxWidth: "75px" }}
+                    >
                       Hari
                     </th>
-                    <th className="border border-slate-800 py-2 px-2 text-center w-28 font-extrabold uppercase text-[11px] tracking-wider">
+                    <th
+                      className="border border-slate-800 py-2 px-1 text-center font-extrabold uppercase text-[11px] tracking-wider whitespace-nowrap"
+                      style={{ width: "82px", minWidth: "78px", maxWidth: "88px" }}
+                    >
                       Waktu
                     </th>
-                    <th className="border border-slate-800 py-2 px-1 text-center w-12 font-extrabold uppercase text-[11px] tracking-wider">
+                    <th
+                      className="border border-slate-800 py-2 px-0.5 text-center font-extrabold uppercase text-[11px] tracking-wider whitespace-nowrap"
+                      style={{ width: "36px", minWidth: "32px", maxWidth: "40px" }}
+                    >
                       JP
                     </th>
                     {masterGradeColumns.map((col) => (
                       <th
                         key={col.key}
-                        className="border border-slate-800 py-2 px-3 text-center font-extrabold uppercase text-[11px] tracking-wider min-w-[130px]"
+                        className="border border-slate-800 py-2 px-2 text-center font-extrabold uppercase text-[11px] tracking-wider"
+                        style={{ width: `${masterGradeColumnWidths[col.key] || 33}%` }}
                       >
                         {col.label}
                       </th>
@@ -1240,7 +1355,7 @@ export const ScenarioPrintModal: React.FC<Props> = ({
                     if (dayRows.length === 0) {
                       return (
                         <tr key={dayName} className="border-b border-slate-800">
-                          <td className="border border-slate-800 py-2 px-2 text-center font-bold uppercase text-slate-900 bg-slate-100/70">
+                          <td className="border border-slate-800 py-2 px-1 text-center font-bold uppercase text-slate-900 bg-slate-100/70 whitespace-nowrap">
                             {dayName}
                           </td>
                           <td
@@ -1268,19 +1383,26 @@ export const ScenarioPrintModal: React.FC<Props> = ({
                           {isDayFirstRow && (
                             <td
                               rowSpan={dayRows.length}
-                              className="border border-slate-800 bg-slate-100/90 font-black text-center align-middle uppercase tracking-wider text-xs px-2 text-slate-900 w-24 select-none"
+                              className="border border-slate-800 bg-slate-100/90 font-black text-center align-middle uppercase tracking-wider text-xs px-1 text-slate-900 select-none whitespace-nowrap"
+                              style={{ width: "70px", minWidth: "65px", maxWidth: "75px" }}
                             >
                               {dayName}
                             </td>
                           )}
 
                           {/* Column 2: Waktu (Clean dynamic range e.g. 07.00–07.10) */}
-                          <td className="border border-slate-800 py-1 px-1.5 text-center font-mono text-[10px] sm:text-[10.5px] text-slate-700 whitespace-nowrap">
+                          <td
+                            className="border border-slate-800 py-1 px-1 text-center font-mono text-[10px] sm:text-[10.5px] text-slate-700 whitespace-nowrap"
+                            style={{ width: "82px", minWidth: "78px", maxWidth: "88px" }}
+                          >
                             {row.timeRange}
                           </td>
 
                           {/* Column 3: JP (Lesson Period number or '-' for shared routines/breaks) */}
-                          <td className="border border-slate-800 py-1 px-1 text-center font-bold text-[11px] text-slate-800">
+                          <td
+                            className="border border-slate-800 py-1 px-0.5 text-center font-bold text-[11px] text-slate-800 whitespace-nowrap"
+                            style={{ width: "36px", minWidth: "32px", maxWidth: "40px" }}
+                          >
                             {row.jpDisplay}
                           </td>
 
@@ -1310,13 +1432,14 @@ export const ScenarioPrintModal: React.FC<Props> = ({
                                   className={`border border-slate-800 p-1.5 text-center align-middle ${
                                     hasMapel ? "bg-white" : "bg-slate-50/30"
                                   }`}
+                                  style={{ width: `${masterGradeColumnWidths[col.key] || 33}%` }}
                                 >
                                   {hasMapel && slot ? (
                                     <div className="space-y-0.5">
-                                      <div className="font-bold text-slate-900 text-[11px] leading-tight">
+                                      <div className="font-bold text-slate-900 text-[11px] leading-tight break-words hyphens-auto">
                                         {slot.subjectName}
                                       </div>
-                                      <div className="text-[9.5px] text-emerald-800 font-medium leading-tight">
+                                      <div className="text-[9.5px] text-emerald-800 font-medium leading-tight break-words">
                                         {teacherNameDisplay}
                                       </div>
                                     </div>
