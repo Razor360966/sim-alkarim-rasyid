@@ -29,14 +29,22 @@ import {
   LessonPeriodType,
   ScenarioConflict 
 } from "../types";
+import { useQuery } from "@tanstack/react-query";
 import { isClassMatch } from "../utils/gradeLevelHelper";
 import { ScenarioTeacherSelect } from "./ScenarioTeacherSelect";
 import { getScenarioCurriculumTeacherForClass, toValidGradeLevel } from "../services/scenario.service";
 import { useToast } from "../contexts/ToastContext";
+import { schoolSettingsService } from "../services/schoolSettings.service";
+import { schoolAgendaService } from "../services/schoolAgenda.service";
 import { 
   calculateAvailableSubjectsForSlot, 
   AvailableSubjectOption,
-  isSlotMatchingCurriculum 
+  isSlotMatchingCurriculum,
+  findMatchingScenarioSchedule,
+  isSlotActiveSubject,
+  parseJpNumber,
+  resolveCompleteDayPeriods,
+  normalizeDay
 } from "../utils/scenarioScheduleHelper";
 
 interface Props {
@@ -154,20 +162,26 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
   const [clearAllScope, setClearAllScope] = useState<"all" | "class">("all");
   const [isClearingAll, setIsClearingAll] = useState(false);
 
-  // Group periods by day
+  // Fetch active school settings and agendas for harmonized period generation
+  const { data: fetchedSettings } = useQuery({
+    queryKey: ["schoolSettings"],
+    queryFn: () => schoolSettingsService.getSettings()
+  });
+
+  const { data: fetchedAgendas = [] } = useQuery({
+    queryKey: ["active_school_agendas"],
+    queryFn: () => schoolAgendaService.getActiveAgendas()
+  });
+
+  // Group periods by day using resolved complete day periods (harmonized with print modal)
   const periodsByDay = useMemo(() => {
     const map = new Map<string, LessonPeriod[]>();
-    DAYS_OF_WEEK.forEach((d) => map.set(d, []));
-    periods.forEach((p) => {
-      const day = p.day;
-      if (map.has(day)) {
-        map.get(day)!.push(p);
-      }
+    DAYS_OF_WEEK.forEach((d) => {
+      const resolved = resolveCompleteDayPeriods(d, periods, fetchedSettings, fetchedAgendas);
+      map.set(d, resolved);
     });
-    // Sort chronologically
-    map.forEach((list) => list.sort((a, b) => a.sequence - b.sequence));
     return map;
-  }, [periods]);
+  }, [periods, fetchedSettings, fetchedAgendas]);
 
   // Active subjects in scenario
   const availableSubjects = useMemo(() => {
@@ -244,21 +258,21 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
     if ((viewMode === "class" || viewMode === "general") && !currentClass) return;
 
     // Find existing schedule for this slot
-    const existing = schedules.find((s) => {
-      if (viewMode === "teacher") {
-        return (
-          s.teacherId === selectedTeacherId &&
-          s.day.toLowerCase() === day.toLowerCase() &&
-          s.sequence === period.sequence
-        );
-      } else {
-        return (
-          isClassMatch(s.classId, currentClass.id || currentClass.classId, classes) &&
-          s.day.toLowerCase() === day.toLowerCase() &&
-          s.sequence === period.sequence
-        );
-      }
-    });
+    const existing = viewMode === "teacher"
+      ? schedules.find((s) => {
+          if (s.teacherId !== selectedTeacherId) return false;
+          if (normalizeDay(s.day).toLowerCase() !== day.toLowerCase()) return false;
+          const targetJp = parseJpNumber(period.title);
+          const sJp = parseJpNumber(s.jp);
+          if (targetJp !== null && sJp !== null) return targetJp === sJp;
+          return s.sequence === period.sequence;
+        })
+      : findMatchingScenarioSchedule(schedules, {
+          classId: currentClass.id || currentClass.classId,
+          day,
+          period,
+          classes
+        });
 
     const targetClass = existing ? classes.find((c) => isClassMatch(c.id, existing.classId, classes)) || currentClass : currentClass;
     const targetGrade = toValidGradeLevel(targetClass?.gradeLevel || targetClass?.name);
@@ -278,6 +292,9 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
       }
     }
 
+    const jpNumber = (period as any).jpNumber ?? parseJpNumber(period.title);
+    const jpTitle = jpNumber ? `JP ${jpNumber}` : (period.title || `JP ${period.sequence}`);
+
     setActiveSlotData({
       slotId: existing?.id,
       classId: targetClass.id || targetClass.classId,
@@ -285,7 +302,7 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
       gradeLevel: targetGrade,
       day,
       sequence: period.sequence,
-      jp: period.title || `JP ${period.sequence}`,
+      jp: existing?.jp || jpTitle,
       lessonPeriodId: period.id || "",
       subjectId: existing?.subjectId || "",
       subjectName: existing?.subjectName || "",
@@ -516,12 +533,12 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
       }
 
       // 5. Find existing schedule in target slot
-      const existingTarget = schedules.find(
-        (s) =>
-          isClassMatch(s.classId, targetClassId, classes) &&
-          s.day.toLowerCase() === targetDayLower &&
-          s.sequence === targetPeriod.sequence
-      );
+      const existingTarget = findMatchingScenarioSchedule(schedules, {
+        classId: targetClassId,
+        day: targetDay,
+        period: targetPeriod,
+        classes
+      });
 
       // Check if target is locked
       if (existingTarget?.isLocked) {
@@ -906,12 +923,12 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
 
                                   {/* Slot per Class */}
                                   {generalClasses.map((cls) => {
-                                    const matched = schedules.find(
-                                      (s) =>
-                                        isClassMatch(s.classId, cls.id || cls.classId, classes) &&
-                                        s.day.toLowerCase() === day.toLowerCase() &&
-                                        s.sequence === period.sequence
-                                    );
+                                    const matched = findMatchingScenarioSchedule(schedules, {
+                                      classId: cls.id || cls.classId,
+                                      day,
+                                      period,
+                                      classes
+                                    });
 
                                     const slotConflicts = conflicts.filter(
                                       (cf) =>
@@ -920,15 +937,7 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
                                         cf.sequence === period.sequence
                                     );
 
-                                    const isIntentionalEmpty = Boolean(
-                                      matched &&
-                                        (!matched.subjectId ||
-                                          matched.subjectName === "Kosong" ||
-                                          matched.subjectName === "Belum Ditugaskan")
-                                    );
-
-                                    const hasValidSubject =
-                                      Boolean(matched?.subjectId) && !isIntentionalEmpty;
+                                    const hasValidSubject = isSlotActiveSubject(matched);
 
                                     // Resolve teacher name with canonical fallback to curriculum
                                     const teacherDisplay = (() => {
@@ -1087,21 +1096,21 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
                     <div className="space-y-2">
                       {dayPeriods.map((period) => {
                         // Find matched schedule slot
-                        const matched = schedules.find((s) => {
-                          if (viewMode === "class") {
-                            return (
-                              isClassMatch(s.classId, activeClass?.id || activeClass?.classId, classes) &&
-                              s.day.toLowerCase() === day.toLowerCase() &&
-                              s.sequence === period.sequence
-                            );
-                          } else {
-                            return (
-                              s.teacherId === selectedTeacherId &&
-                              s.day.toLowerCase() === day.toLowerCase() &&
-                              s.sequence === period.sequence
-                            );
-                          }
-                        });
+                        const matched = viewMode === "class"
+                          ? findMatchingScenarioSchedule(schedules, {
+                              classId: activeClass?.id || activeClass?.classId,
+                              day,
+                              period,
+                              classes
+                            })
+                          : schedules.find((s) => {
+                              if (s.teacherId !== selectedTeacherId) return false;
+                              if (normalizeDay(s.day).toLowerCase() !== day.toLowerCase()) return false;
+                              const targetJp = parseJpNumber(period.title);
+                              const sJp = parseJpNumber(s.jp);
+                              if (targetJp !== null && sJp !== null) return targetJp === sJp;
+                              return s.sequence === period.sequence;
+                            });
 
                         // Check for conflicts on this slot
                         const slotConflicts = conflicts.filter(
@@ -1109,7 +1118,9 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
                         );
 
                         const isRoutineOrBreak =
-                          period.type === LessonPeriodType.ROUTINE || period.type === LessonPeriodType.BREAK;
+                          period.type === LessonPeriodType.ROUTINE || 
+                          period.type === LessonPeriodType.BREAK ||
+                          /apel|upacara|halaqah|halaqoh|tahfidz|senam|sholat|istirahat|rehat/i.test(period.title || "");
 
                         if (isRoutineOrBreak) {
                           return (
@@ -1127,10 +1138,8 @@ export const ScenarioScheduleEditor: React.FC<Props> = ({
                           );
                         }
 
-                        const isIntentionalEmpty = Boolean(
-                          matched && (!matched.subjectId || matched.subjectName === "Kosong" || matched.subjectName === "Belum Ditugaskan")
-                        );
-                        const hasValidSubject = Boolean(matched?.subjectId) && !isIntentionalEmpty;
+                        const hasValidSubject = isSlotActiveSubject(matched);
+                        const isIntentionalEmpty = Boolean(matched && !hasValidSubject);
 
                         const slotKey = `${activeClass?.id || activeClass?.classId}_${day.toLowerCase()}_${period.sequence}`;
                         const isDropTarget = dragOverTargetKey === slotKey;

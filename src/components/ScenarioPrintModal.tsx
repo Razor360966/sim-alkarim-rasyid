@@ -37,6 +37,14 @@ import { formatTeacherFullNameWithTitles } from "../utils/teacherFilterHelper";
 import { schoolSettingsService } from "../services/schoolSettings.service";
 import { schoolAgendaService } from "../services/schoolAgenda.service";
 import { generateDailySchedule, getDefaultDailyStructures, timeToMinutes } from "../utils/scheduleCalculator";
+import { 
+  findMatchingScenarioSchedule, 
+  isSlotActiveSubject, 
+  parseJpNumber, 
+  resolveCompleteDayPeriods 
+} from "../utils/scenarioScheduleHelper";
+
+export { resolveCompleteDayPeriods };
 
 interface Props {
   scenario: ScheduleScenario;
@@ -104,171 +112,6 @@ export interface ResolvedDaySlot {
   isRoutine?: boolean;
   jpDisplay?: string;
   schedule?: ScenarioSchedule;
-}
-
-/**
- * Helper to dynamically resolve the complete, authentic daily period structure for any day.
- * Ensures Apel Pagi, Halaqoh Qur'an, breaks, and KBM hours strictly match school operations.
- */
-export function resolveCompleteDayPeriods(
-  dayName: string,
-  rawPeriods: LessonPeriod[],
-  settings?: SchoolSettings | null,
-  agendas: SchoolAgenda[] = []
-): LessonPeriod[] {
-  const normDay = normalizeDay(dayName).toLowerCase();
-
-  // 1. Check if rawPeriods already has routine activities and lesson periods specifically for this day
-  const existingForDay = rawPeriods.filter((p) => p.day && normalizeDay(p.day).toLowerCase() === normDay);
-  const hasExistingRoutine = existingForDay.some((p) => 
-    p.type === LessonPeriodType.ROUTINE || 
-    /apel|upacara|halaqah|halaqoh|tahfidz|senam|sholat|dhuha/i.test(p.title || "")
-  );
-
-  if (existingForDay.length > 0 && hasExistingRoutine) {
-    return [...existingForDay].sort((a, b) => {
-      const startDiff = timeToMinutes(a.startTime) - timeToMinutes(b.startTime);
-      if (startDiff !== 0) return startDiff;
-      return a.sequence - b.sequence;
-    });
-  }
-
-  // 2. Otherwise, use the core calculation engine generateDailySchedule with active settings and active agendas
-  const dayAgendas = (agendas || []).filter(
-    (a) => a.day && normalizeDay(a.day).toLowerCase() === normDay && a.active !== false
-  );
-  const mappedAgendas: RoutineActivity[] = dayAgendas.map((a) => ({
-    id: a.id || `agenda-${normDay}-${a.name}`,
-    name: a.name,
-    enabled: a.active !== false,
-    days: [a.day],
-    startTime: a.startTime,
-    duration: a.duration || (timeToMinutes(a.endTime) - timeToMinutes(a.startTime)) || 10,
-    autoEndTime: a.endTime,
-    priority: 3,
-    description: a.notes,
-    agendaType: a.agendaType
-  }));
-
-  // Build dailyStructures with dayAgendas overlaid
-  let baseStructures = settings?.dailyStructures ? [...settings.dailyStructures] : getDefaultDailyStructures(settings || undefined);
-  if (dayAgendas.length > 0) {
-    baseStructures = baseStructures.map((ds) => {
-      if (ds.day.toLowerCase() !== normDay) return ds;
-      const acts = [...(ds.activities || [])];
-      dayAgendas.forEach((da) => {
-        const daLower = da.name.toLowerCase();
-        const existingIdx = acts.findIndex(
-          (a) => a.name.toLowerCase() === daLower || (da.agendaType && a.type === da.agendaType)
-        );
-        if (existingIdx >= 0) {
-          acts[existingIdx] = {
-            ...acts[existingIdx],
-            name: da.name,
-            startTime: da.startTime,
-            endTime: da.endTime,
-            isActive: da.active !== false,
-            durationMinutes: timeToMinutes(da.endTime) - timeToMinutes(da.startTime)
-          };
-        } else {
-          acts.push({
-            id: da.id || `act-${normDay}-${da.name}`,
-            name: da.name,
-            type: da.agendaType || "KEGIATAN_SEKOLAH",
-            startTime: da.startTime,
-            endTime: da.endTime,
-            isActive: da.active !== false,
-            durationMinutes: timeToMinutes(da.endTime) - timeToMinutes(da.startTime),
-            order: acts.length + 1
-          });
-        }
-      });
-      return { ...ds, activities: acts };
-    });
-  }
-
-  const mergedSettings: SchoolSettings = {
-    ...(settings || {
-      settingId: "school_settings_doc",
-      startTime: "07:00",
-      endTime: "14:00",
-      activeDays: CANONICAL_DAYS,
-      jpDuration: 40,
-      lessonPeriod: 40,
-      dailyStructures: baseStructures,
-      routineActivities: [],
-      breakTimes: [],
-      morningAssembly: {
-        enabled: true,
-        start: "07:00",
-        duration: 10,
-        end: "07:10"
-      },
-      specialActivities: [],
-      jpStructure: [],
-      schoolHours: {
-        startTime: "07:00",
-        endTime: "14:00"
-      }
-    }),
-    dailyStructures: baseStructures,
-    routineActivities: [
-      ...(settings?.routineActivities || []),
-      ...mappedAgendas
-    ]
-  };
-
-  const blocks = generateDailySchedule(mergedSettings, dayName);
-  
-  let dailySeq = 1;
-  let jpSeq = 1;
-  const computedPeriods: LessonPeriod[] = [];
-
-  for (const block of blocks) {
-    if (block.type === "gap" || block.type === "end") continue;
-
-    let type: LessonPeriodType = LessonPeriodType.LESSON;
-    let instructional = false;
-    let jpNumber: number | undefined = undefined;
-
-    if (block.type === "assembly" || block.type === "special") {
-      type = LessonPeriodType.ROUTINE;
-    } else if (block.type === "break") {
-      type = LessonPeriodType.BREAK;
-    } else if (block.type === "jp") {
-      type = LessonPeriodType.LESSON;
-      instructional = true;
-      jpNumber = block.jpNumber || jpSeq++;
-    }
-
-    computedPeriods.push({
-      day: dayName,
-      sequence: dailySeq++,
-      periodCode: `${dayName.substring(0, 3).toUpperCase()}-${type}-${jpNumber || dailySeq}`,
-      type,
-      title: block.name,
-      startTime: block.start,
-      endTime: block.end,
-      duration: block.duration,
-      instructional,
-      generatedAt: new Date().toISOString(),
-      ...(jpNumber ? { jpNumber } : {})
-    } as any);
-  }
-
-  // Link existing database IDs if available for lesson periods
-  if (existingForDay.length > 0) {
-    const existingLessons = existingForDay.filter((p) => p.type === LessonPeriodType.LESSON || p.instructional);
-    let lIdx = 0;
-    computedPeriods.forEach((cp) => {
-      if (cp.instructional && existingLessons[lIdx]) {
-        cp.id = existingLessons[lIdx].id;
-        lIdx++;
-      }
-    });
-  }
-
-  return computedPeriods;
 }
 
 export const ScenarioPrintModal: React.FC<Props> = ({
@@ -448,22 +291,27 @@ export const ScenarioPrintModal: React.FC<Props> = ({
     });
   }, [sortedClasses]);
 
-  // Helper to find schedule slot strictly from shadow schedules (case-insensitive day and sequence/jp)
+  // Helper to find schedule slot strictly from shadow schedules using canonical matcher
   const findScheduleSlot = (cls: Class, day: string, period: LessonPeriod, jpNumber?: number) => {
-    const normDay = normalizeDay(day).toLowerCase();
-    return schedules.find((s) => {
-      const matchesClass = s.classId === cls.id || isClassMatch(s.classId, cls, classes);
-      const matchesDay = normalizeDay(s.day).toLowerCase() === normDay;
-      if (!matchesClass || !matchesDay) return false;
+    return findMatchingScenarioSchedule(schedules, {
+      classId: cls.id,
+      day,
+      period,
+      jpNumber,
+      classes
+    });
+  };
 
-      // 1. Match by exact lessonPeriodId
-      if (period.id && s.lessonPeriodId === period.id) return true;
-      // 2. Match by exact period sequence
-      if (s.sequence === period.sequence) return true;
-      // 3. Match by instructional jpNumber (e.g. s.sequence === 1 for JP 1 or s.jp === 'JP 1')
-      if (jpNumber !== undefined) {
-        if (s.sequence === jpNumber) return true;
-        if (s.jp && (s.jp === `JP ${jpNumber}` || s.jp === String(jpNumber) || s.jp === `JP${jpNumber}`)) return true;
+  // Helper to reliably resolve curriculum matrix record for any slot (by ID or subject name)
+  const findCurriculumForSlot = (subId?: string, subName?: string) => {
+    if (!subId && !subName) return undefined;
+    return curriculums.find((c) => {
+      if (subId && (c.id === subId || c.subjectId === subId || c.originalCurriculumId === subId)) return true;
+      if (subName && c.subjectName) {
+        const sName = subName.trim().toLowerCase();
+        const cName = c.subjectName.trim().toLowerCase();
+        if (sName === cName) return true;
+        if (sName.startsWith(cName) || cName.startsWith(sName)) return true;
       }
       return false;
     });
@@ -514,28 +362,14 @@ export const ScenarioPrintModal: React.FC<Props> = ({
     period: LessonPeriod,
     jpNumber?: number
   ) => {
-    const normDay = normalizeDay(day).toLowerCase();
     if (col.classObj) {
-      const direct = findScheduleSlot(col.classObj, day, period, jpNumber);
-      if (direct) return direct;
+      return findScheduleSlot(col.classObj, day, period, jpNumber);
     }
-    return schedules.find((s) => {
-      if (!s.day || normalizeDay(s.day).toLowerCase() !== normDay) return false;
-      if (col.classObj) {
-        if (!isClassMatch(s.classId, col.classObj, classes)) return false;
-      } else {
-        const schedGrade = normalizeGradeLevel(s.className || s.classId);
-        if (schedGrade !== col.grade) return false;
-      }
-
-      if (period.id && s.lessonPeriodId === period.id) return true;
-      if (s.sequence === period.sequence) return true;
-      if (jpNumber !== undefined) {
-        if (s.sequence === jpNumber) return true;
-        if (s.jp && (s.jp === `JP ${jpNumber}` || s.jp === String(jpNumber) || s.jp === `JP${jpNumber}`)) return true;
-      }
-      return false;
-    });
+    const targetClass = sortedClasses.find((c) => toValidGradeLevel(c.gradeLevel || c.name) === col.grade);
+    if (targetClass) {
+      return findScheduleSlot(targetClass, day, period, jpNumber);
+    }
+    return undefined;
   };
 
   const getSharedStyle = (title: string, isBreak: boolean) => {
@@ -1045,7 +879,7 @@ export const ScenarioPrintModal: React.FC<Props> = ({
 
               // Check if class has ANY saved schedules in the active scenario
               const classSchedules = schedules.filter((s) => {
-                return s.classId === cls.id || isClassMatch(s.classId, cls, classes);
+                return (s.classId === cls.id || isClassMatch(s.classId, cls, classes)) && isSlotActiveSubject(s);
               });
               const hasAnySavedSchedule = classSchedules.length > 0;
 
@@ -1113,7 +947,7 @@ export const ScenarioPrintModal: React.FC<Props> = ({
                     <div className="grid grid-cols-1 md:grid-cols-2 print:grid-cols-2 gap-4">
                       {daysToRender.map((dayName) => {
                         const slots = getResolvedDaySlots(cls, dayName);
-                        const filledSlotsCount = slots.filter((sl) => sl.schedule && !sl.isBreak).length;
+                        const filledSlotsCount = slots.filter((sl) => sl.schedule && isSlotActiveSubject(sl.schedule) && !sl.isBreak).length;
 
                         return (
                           <div
@@ -1163,7 +997,16 @@ export const ScenarioPrintModal: React.FC<Props> = ({
                                     );
                                   }
 
-                                  const hasMapel = Boolean(slot.schedule?.subjectName);
+                                  const hasMapel = isSlotActiveSubject(slot.schedule);
+                                  const teacherNameDisplay = (() => {
+                                    if (!hasMapel || !slot.schedule) return "-";
+                                    if (slot.schedule.teacherName && slot.schedule.teacherName !== "Belum Ditugaskan") {
+                                      return slot.schedule.teacherName;
+                                    }
+                                    const cur = findCurriculumForSlot(slot.schedule.subjectId, slot.schedule.subjectName);
+                                    const res = cur ? getScenarioCurriculumTeacherForClass(cur, classGrade) : null;
+                                    return res?.teacherName && res.teacherName !== "Belum Ditugaskan" ? res.teacherName : "-";
+                                  })();
 
                                   return (
                                     <tr
@@ -1186,8 +1029,8 @@ export const ScenarioPrintModal: React.FC<Props> = ({
                                         )}
                                       </td>
                                       <td className="py-1 px-2 text-[10.5px] text-emerald-800 font-medium leading-tight">
-                                        {hasMapel && slot.schedule!.teacherName ? (
-                                          slot.schedule!.teacherName
+                                        {hasMapel ? (
+                                          teacherNameDisplay
                                         ) : (
                                           <span className="text-slate-300 italic font-normal">-</span>
                                         )}
@@ -1261,20 +1104,29 @@ export const ScenarioPrintModal: React.FC<Props> = ({
 
                                 {daysToRender.map((d) => {
                                   const slot = findScheduleSlot(cls, d, period, jpNumber);
+                                  const hasMapel = isSlotActiveSubject(slot);
+                                  const teacherNameDisplay = (() => {
+                                    if (!hasMapel || !slot) return "-";
+                                    if (slot.teacherName && slot.teacherName !== "Belum Ditugaskan") return slot.teacherName;
+                                    const cur = findCurriculumForSlot(slot.subjectId, slot.subjectName);
+                                    const res = cur ? getScenarioCurriculumTeacherForClass(cur, classGrade) : null;
+                                    return res?.teacherName && res.teacherName !== "Belum Ditugaskan" ? res.teacherName : "-";
+                                  })();
+
                                   return (
                                     <td
                                       key={d}
                                       className={`border border-slate-800 p-1.5 text-center align-middle ${
-                                        slot ? "bg-white" : "bg-slate-50/50"
+                                        hasMapel ? "bg-white" : "bg-slate-50/50"
                                       }`}
                                     >
-                                      {slot ? (
+                                      {hasMapel && slot ? (
                                         <div className="space-y-0.5">
                                           <div className="font-bold text-slate-900 leading-tight">
                                             {slot.subjectName}
                                           </div>
                                           <div className="text-[9.5px] text-emerald-800 font-medium leading-tight">
-                                            {slot.teacherName || "-"}
+                                            {teacherNameDisplay}
                                           </div>
                                         </div>
                                       ) : (
@@ -1443,20 +1295,29 @@ export const ScenarioPrintModal: React.FC<Props> = ({
                           ) : (
                             masterGradeColumns.map((col) => {
                               const slot = row.slots[col.key];
+                              const hasMapel = isSlotActiveSubject(slot);
+                              const teacherNameDisplay = (() => {
+                                if (!hasMapel || !slot) return "-";
+                                if (slot.teacherName && slot.teacherName !== "Belum Ditugaskan") return slot.teacherName;
+                                const cur = findCurriculumForSlot(slot.subjectId, slot.subjectName);
+                                const res = cur ? getScenarioCurriculumTeacherForClass(cur, col.grade) : null;
+                                return res?.teacherName && res.teacherName !== "Belum Ditugaskan" ? res.teacherName : "-";
+                              })();
+
                               return (
                                 <td
                                   key={col.key}
                                   className={`border border-slate-800 p-1.5 text-center align-middle ${
-                                    slot ? "bg-white" : "bg-slate-50/30"
+                                    hasMapel ? "bg-white" : "bg-slate-50/30"
                                   }`}
                                 >
-                                  {slot ? (
+                                  {hasMapel && slot ? (
                                     <div className="space-y-0.5">
                                       <div className="font-bold text-slate-900 text-[11px] leading-tight">
                                         {slot.subjectName}
                                       </div>
                                       <div className="text-[9.5px] text-emerald-800 font-medium leading-tight">
-                                        {slot.teacherName || "-"}
+                                        {teacherNameDisplay}
                                       </div>
                                     </div>
                                   ) : (
